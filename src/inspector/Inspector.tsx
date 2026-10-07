@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { evalCurve } from '../model/curve'
 import { evaluateClip } from '../model/evaluate'
 import type { Interp } from '../model/types'
@@ -20,7 +20,8 @@ export default function Inspector() {
   const [deg, setDeg] = useState(true)
   const [lenMsg, setLenMsg] = useState(false)
   const [tol, setTol] = useState(0.001)
-  const [simpMsg, setSimpMsg] = useState<number | null>(null)
+  const [simpMsg, setSimpMsg] = useState<{ n: number; at: number } | null>(null)
+  useEffect(() => { if (!simpMsg) return; const t = setTimeout(() => setSimpMsg(null), 3000); return () => clearTimeout(t) }, [simpMsg])
   const actor = project.actors.find(a => a.id === sel.actorId)
   if (!actor) return <div className="insp-empty">무대에서 링크를 클릭하거나 타임라인에서 채널을 고르세요.</div>
 
@@ -98,9 +99,9 @@ export default function Inspector() {
         <label>허용 오차
           <input type="number" min={0.00001} step={0.0001} value={tol} onChange={e => setTol(e.target.valueAsNumber)} />
         </label>
-        <button disabled={!(tol >= 0.00001)} onClick={() => { setSimpMsg(act.simplifyClip(clipId, tol, tol)); setTimeout(() => setSimpMsg(null), 3000) }}>키 줄이기</button>
+        <button disabled={!(tol >= 0.00001)} onClick={() => setSimpMsg({ n: act.simplifyClip(clipId, tol, tol), at: Date.now() })}>키 줄이기</button>
       </div>
-      {simpMsg !== null && <p className="insp-hint" role="status">{simpMsg > 0 ? `키 ${simpMsg}개를 줄였습니다` : '줄일 키가 없습니다'}</p>}
+      {simpMsg && <p className="insp-hint" role="status">{simpMsg.n > 0 ? `키 ${simpMsg.n}개를 줄였습니다` : '줄일 키가 없습니다'}</p>}
       {lenMsg && <p className="insp-hint" role="status">다른 클립과 겹쳐서 길이를 바꿀 수 없습니다</p>}
       {channels.length > 0 && (
         <>

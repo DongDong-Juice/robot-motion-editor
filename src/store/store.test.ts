@@ -565,3 +565,19 @@ test('simplifyClip: reduces dense keys across channels, returns count, one undo;
   expect(curve(ch).keys).toHaveLength(100)
   expect(curve('root.x').keys).toHaveLength(100)
 })
+
+test('simplifyClip: sparse bezier clip returns 0 and makes no edit', () => {
+  for (const f of [0, 30, 90, 119]) s().setKey(c, ch, f, f / 100)
+  const p = s().project
+  expect(s().simplifyClip(c)).toBe(0)
+  expect(s().project).toBe(p)
+})
+
+test('simplifyClip: mixed clip changes only the dense channel', () => {
+  for (const f of [0, 30, 90, 119]) s().setKey(c, ch, f, f / 100)
+  for (let f = 0; f < 100; f++) s().setKey(c, 'root.x', f, 0.001 * f)
+  const sparse = curve(ch)
+  expect(s().simplifyClip(c)).toBe(98)
+  expect(curve(ch)).toBe(sparse)
+  expect(curve('root.x').keys).toHaveLength(2)
+})

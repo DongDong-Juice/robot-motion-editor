@@ -49,3 +49,10 @@ test('5000 samples is fast', () => {
   expect(performance.now() - t).toBeLessThan(500)
   expect(maxErr(c, r)).toBeLessThanOrEqual(0.001)
 })
+
+test('sparse bezier/hold curve returned as the same object (never grows)', () => {
+  const bez = freeze({ keys: [makeKey(0, 0), makeKey(30, 1), makeKey(90, -0.5), makeKey(120, 0.2)] })
+  expect(simplifyCurve(bez, 0.001)).toBe(bez)
+  const hold = freeze({ keys: [0, 20, 40, 60].map(f => makeKey(f, f % 40 ? 1 : 0, 'hold')) })
+  expect(simplifyCurve(hold, 0.001)).toBe(hold)
+})

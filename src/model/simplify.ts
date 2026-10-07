@@ -20,17 +20,8 @@ export function simplifyCurve(c: Curve, tol: number): Curve {
     for (let i = a + 1; i < b; i++) { const d = Math.abs(v[i] - at(a, b, i)); if (d > worst) { worst = d; wi = i } }
     if (wi >= 0 && worst > tol) { keep[wi] = 1; stack.push([a, wi], [wi, b]) }
   }
-  for (;;) { // guard (RDP already bounds it; this catches float edge cases)
-    let worst = 0, wi = -1, a = 0
-    for (let i = 1; i < n; i++) {
-      if (keep[i]) { a = i; continue }
-      let b = i + 1; while (!keep[b]) b++
-      const d = Math.abs(v[i] - at(a, b, i)); if (d > worst) { worst = d; wi = i }
-    }
-    if (wi < 0 || worst <= tol) break
-    keep[wi] = 1
-  }
+  // No separate re-sample guard: RDP bounds |sample - linear| <= tol at every integer frame, which is exactly the error measured.
   const keys = []
   for (let i = 0; i < n; i++) if (keep[i]) keys.push(makeKey(f0 + i, v[i], 'linear'))
-  return { keys }
+  return keys.length < c.keys.length ? { keys } : c // never grow a sparse curve or drop its easing
 }
