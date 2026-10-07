@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { evalCurve } from '../model/curve'
 import { evaluateClip } from '../model/evaluate'
 import type { Interp } from '../model/types'
-import { editLock, editTarget, getEditor, useEditor } from '../store/store'
+import { clipLocked, editLock, editTarget, getEditor, trackLocked, useEditor } from '../store/store'
 import { playRange } from '../transport'
 
 const ROOT = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw']
@@ -32,6 +32,7 @@ export default function Inspector() {
   const clip = project.clips[clipId]
   const item = project.sequence.tracks.flatMap(t => t.items).find(i => i.id === target.itemId)!
   const pose = evaluateClip(clip, def, f)
+  const lockedTrack = trackLocked(project, actor.id) || clipLocked(project, clipId)
 
   const channels = sel.channel === 'root' ? ROOT : sel.channel && !sel.channel.startsWith('group:') ? [sel.channel] : []
   const info = (ch: string) => {
@@ -62,7 +63,7 @@ export default function Inspector() {
   const groupLocks = groupNames.map(lockOf)
   const xfade = locks.includes('crossfade') || groupLocks.includes('crossfade')
   const stitch = locks.includes('stitch') || groupLocks.includes('stitch')
-  const anyLock = locks.some(Boolean)
+  const anyLock = lockedTrack || locks.some(Boolean)
 
   const num = (v: number, d: boolean) => (d ? (v * 180) / Math.PI : v).toFixed(d ? 1 : 3)
   const set = (ch: string, v: number) => ed.getState().setValue(actor.id, ch, v)
@@ -88,14 +89,14 @@ export default function Inspector() {
       </div>
       <div className="insp-row">
         <label>클립 이름
-          <input key={`n${clip.name}`} defaultValue={clip.name}
+          <input key={`n${clip.name}`} disabled={lockedTrack} defaultValue={clip.name}
             onBlur={e => act.setClip(clipId, { name: e.target.value })}
             onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} />
         </label>
       </div>
       <div className="insp-row">
         <label>길이 (프레임)
-          <input type="number" min={1} step={1} key={`l${clip.length}`} defaultValue={clip.length}
+          <input type="number" min={1} step={1} key={`l${clip.length}`} disabled={lockedTrack} defaultValue={clip.length}
             onBlur={e => {
               if (!act.setClip(clipId, { length: e.target.valueAsNumber })) { setLenMsg(true); setTimeout(() => setLenMsg(false), 3000) }
               e.target.value = String(ed.getState().project.clips[clipId].length) }}
@@ -107,8 +108,9 @@ export default function Inspector() {
         <label>허용 오차
           <input type="number" min={0.00001} step={0.0001} value={tol} onChange={e => setTol(e.target.valueAsNumber)} />
         </label>
-        <button disabled={!(tol >= 0.00001)} onClick={() => setSimpMsg({ n: act.simplifyClip(clipId, tol, tol), at: Date.now() })}>키 줄이기</button>
+        <button disabled={lockedTrack || !(tol >= 0.00001)} onClick={() => setSimpMsg({ n: act.simplifyClip(clipId, tol, tol), at: Date.now() })}>키 줄이기</button>
       </div>
+      {lockedTrack && <p className="insp-hint" role="status">잠긴 트랙입니다</p>}
       {simpMsg && <p className="insp-hint" role="status">{simpMsg.n > 0 ? `키 ${simpMsg.n}개를 줄였습니다` : '줄일 키가 없습니다'}</p>}
       {lenMsg && <p className="insp-hint" role="status">다른 클립과 겹쳐서 길이를 바꿀 수 없습니다</p>}
       {xfade && <p className="insp-hint" role="status">크로스페이드 구간에서는 클립 보기에서 편집하세요</p>}
@@ -129,14 +131,14 @@ export default function Inspector() {
             return (
               <div className="insp-ch" key={ch}>
                 <div className="insp-name">{ch}</div>
-                  <input type="range" className={near ? 'near' : ''} min={lo} max={hi} step={0.001} value={v} disabled={!autoKey || !!lockOf(ch)}
+                  <input type="range" className={near ? 'near' : ''} min={lo} max={hi} step={0.001} value={v} disabled={!autoKey || lockedTrack || !!lockOf(ch)}
                     aria-label={ch}
                     onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); act.beginGesture() }}
                     onPointerUp={() => act.endGesture()}
                     onPointerCancel={() => act.endGesture()}
                     onChange={e => set(ch, +e.target.value)} />
                 <div className="insp-row">
-                  <input type="number" key={`${f}-${v}-${d}`} defaultValue={num(v, d)} step={d ? 1 : 0.001} disabled={!autoKey || !!lockOf(ch)}
+                  <input type="number" key={`${f}-${v}-${d}`} defaultValue={num(v, d)} step={d ? 1 : 0.001} disabled={!autoKey || lockedTrack || !!lockOf(ch)}
                     aria-label={`${ch} 값`}
                     onBlur={e => { const n = e.target.valueAsNumber; if (!Number.isFinite(n)) return; const a = d ? n * Math.PI / 180 : n, r = joint ? Math.min(Math.max(a, lo), hi) : a; set(ch, r); e.target.value = num(r, d) }}
                     onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} />
@@ -157,7 +159,7 @@ export default function Inspector() {
           </div>
         </>
       )}
-      {group && <button className="insp-group" disabled={groupLocks.some(Boolean)} onClick={() => act.keyGroup(actor.id, group)}>{group} 전체 키</button>}
+      {group && <button className="insp-group" disabled={lockedTrack || groupLocks.some(Boolean)} onClick={() => act.keyGroup(actor.id, group)}>{group} 전체 키</button>}
     </div>
   )
 }

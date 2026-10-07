@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { clampDf, editingItem, editTarget, getEditor, type KeyRef } from '../store/store'
+import { clampDf, clipLocked, editingItem, editTarget, getEditor, type KeyRef } from '../store/store'
 import type { Interp, Sequence } from '../model/types'
 import { tv } from './viewState'
 import { buildRows, frameToX, hitKey, keysIn, rowKey, xToFrame, type TimeScale } from './timeScale'
@@ -165,6 +165,7 @@ export default function TrackCanvas() {
           if (selected(k.hit)) s.selectKeys(ed.getState().sel.keys.filter(q => !k.hit.some(h => sameKey(q, h))), false)
           else s.selectKeys(k.hit, true)
         } else if (!selected(k.hit)) s.selectKeys(k.hit, false)
+        if (clipLocked(ed.getState().project, k.clipId)) return // selection works; moving is blocked (Timeline shows the message)
         const clipLen = ed.getState().project.clips[k.clipId].length
         drag(m => { u.dragDf = clampDf(clipLen, ed.getState().sel.keys, (pos(m).x - x) / tv.ppf); schedule() }, m => {
           const df = Math.round((pos(m).x - x) / tv.ppf), st = ed.getState()
@@ -226,6 +227,7 @@ export default function TrackCanvas() {
       if (!k) return
       if (s.sel.actorId !== k.actorId) s.select(k.actorId, k.channel)
       if (!selected(k.hit)) s.selectKeys(k.hit, false)
+      if (clipLocked(s.project, k.clipId)) return
       setMenu({ x: e.clientX, y: e.clientY })
     }
 
@@ -239,8 +241,9 @@ export default function TrackCanvas() {
       if (!target) return
       const { clipId, f } = target
       const keys = s.sel.keys, mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase()
+      const frozen = clipLocked(s.project, clipId)
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (keys.length) { e.preventDefault(); s.deleteKeys(clipId, keys) }
+        if (keys.length && !frozen) { e.preventDefault(); s.deleteKeys(clipId, keys) }
       } else if (mod && k === 'c') {
         const clip = s.project.clips[clipId]
         const items = keys.flatMap(r => {
@@ -252,7 +255,7 @@ export default function TrackCanvas() {
         const first = Math.min(...items.map(i => i.f))
         clipboard = items.map(i => ({ channel: i.channel, dfFromFirst: i.f - first, v: i.v, interp: i.interp }))
       } else if (mod && k === 'v') {
-        if (!clipboard.length) return
+        if (!clipboard.length || frozen) return
         e.preventDefault()
         s.beginGesture()
         for (const c of clipboard) s.setKey(clipId, c.channel, f + c.dfFromFirst, c.v)

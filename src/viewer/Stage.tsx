@@ -6,8 +6,8 @@ import { evalCurve } from '../model/curve'
 import { evaluate, evaluateItem, evaluateRoot } from '../model/evaluate'
 import { nearestAngle } from '../model/rootMath'
 import { stitchTransforms, worldToClipRoot } from '../model/sequence'
-import type { Clip } from '../model/types'
-import { editingItem, editTarget, getEditor, gizmoLock } from '../store/store'
+import type { Clip, Project } from '../model/types'
+import { editingItem, editTarget, getEditor, gizmoLock, trackLocked } from '../store/store'
 import { sequenceEnd } from '../transport'
 import { buildRobot, pivotAngle, type RobotRig } from './buildRobot'
 
@@ -72,6 +72,8 @@ export default function Stage() {
     let rootMode: 'translate' | 'rotate' = 'translate'
     let last: number[] = []
 
+    // hidden track: stage-only (rig, trail, dot, picking, gizmo); evaluation and export are untouched
+    const isHidden = (p: Project, id: string) => !!p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === id)?.hidden
     const applyAll = () => {
       const s = store.getState()
       const ei = editingItem(s)
@@ -83,6 +85,7 @@ export default function Stage() {
         const t = ei && !ghost ? editTarget(s, a.id) : null
         const pose = t ? evaluateItem(s.project, s.defs, t.itemId, t.f) : evaluate(s.project, s.defs, a.id, s.frame)
         e.rig.applyPose(pose)
+        e.rig.root.visible = e.trail.visible = e.dot.visible = !isHidden(s.project, a.id)
         e.dot.position.set(pose.rootPos[0], pose.rootPos[1], 0.002)
       }
       dirty = true
@@ -136,7 +139,10 @@ export default function Stage() {
     }
 
     // crossfade (displayed pose is a blend, not invertible) or stitched first frame (root x/y/yaw pinned): no gizmo
-    const locked = () => gizmoLock(store.getState()) !== null
+    const locked = () => {
+      const s = store.getState(), id = s.sel.actorId
+      return gizmoLock(s) !== null || (!!id && (isHidden(s.project, id) || trackLocked(s.project, id)))
+    }
     const syncSelection = () => {
       const s = store.getState()
       const { sel } = s
@@ -222,7 +228,7 @@ export default function Stage() {
       ray.setFromCamera(ndc, camera)
       let best: { id: string; via: string; d: number } | null = null
       for (const [id, e] of entries) {
-        if (e.ghost) continue
+        if (e.ghost || !e.rig.root.visible) continue
         const hit = ray.intersectObject(e.rig.root, true)[0]
         const via = hit && e.rig.linkToJoint.get(hit.object)
         if (via && (!best || hit.distance < best.d)) best = { id, via, d: hit.distance }

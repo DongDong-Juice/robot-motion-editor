@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { mediaUrl, subscribeMedia } from '../media/registry'
-import { videoTimeAt } from '../model/video'
+import { videoTimeAt, videoTrack } from '../model/video'
 import { getEditor, useEditor } from '../store/store'
 import { syncAction } from './videoSync'
 
@@ -13,7 +13,7 @@ export default function VideoOverlay() {
     const v = ref.current!, store = getEditor()
     const run = () => {
       const s = store.getState()
-      const t = s.videoMode === 'off' ? null : videoTimeAt(s.project, s.frame)
+      const t = s.videoMode === 'off' || videoTrack(s.project)?.hidden ? null : videoTimeAt(s.project, s.frame)
       const url = t && mediaUrl(t.mediaId)
       // split keeps its slot (visibility) so the 3D canvas width stays put; overlay/off use display none
       const keep = s.videoMode === 'split'

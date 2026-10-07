@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { getEditor } from '../store/store'
+import { getEditor, useEditor } from '../store/store'
 import { itemLen, sortedItems } from '../model/sequence'
 import type { Item, Track } from '../model/types'
 import { tv } from './viewState'
@@ -10,6 +10,25 @@ import { frameToX, xToFrame, type TimeScale } from './timeScale'
 const ROW_H = 28, EDGE = 6
 const ROBOT = { g1: 'G1', go2: 'GO2' } as const
 const DENY = '이 위치에 놓을 수 없습니다'
+const LOCKED = '잠긴 트랙입니다'
+const ICON_HIT = 18 // hit area; icons are drawn 14px, eye then padlock at the label column's right edge
+const EYE_X = LABEL_W - 36, LOCK_X = LABEL_W - 16
+
+// Eye (slashed when the track is hidden) and padlock (shackle open when unlocked); `on` = accent, off = line.
+function drawEye(ctx: CanvasRenderingContext2D, cx: number, cy: number, on: boolean, col: string) {
+  ctx.save(); ctx.strokeStyle = ctx.fillStyle = col; ctx.lineWidth = 1.5
+  ctx.beginPath(); ctx.ellipse(cx, cy, 7, 4.5, 0, 0, Math.PI * 2); ctx.stroke()
+  ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI * 2); ctx.fill()
+  if (on) { ctx.beginPath(); ctx.moveTo(cx - 6, cy + 6); ctx.lineTo(cx + 6, cy - 6); ctx.stroke() }
+  ctx.restore()
+}
+function drawLock(ctx: CanvasRenderingContext2D, cx: number, cy: number, on: boolean, col: string) {
+  ctx.save(); ctx.strokeStyle = ctx.fillStyle = col; ctx.lineWidth = 1.5
+  ctx.fillRect(cx - 5, cy - 1, 10, 7)
+  ctx.beginPath(); ctx.moveTo(cx - 3, cy - 1); ctx.lineTo(cx - 3, cy - 4); ctx.arc(cx, cy - 4, 3, Math.PI, 0)
+  ctx.lineTo(cx + 3, on ? cy - 1 : cy - 5); ctx.stroke()
+  ctx.restore()
+}
 const isVideo = (t: Track) => t.kind === 'video'
 
 // In-progress drag preview; the store is untouched until mouseup.
@@ -69,11 +88,13 @@ export default function SequenceCanvas() {
         const color = actor?.color ?? C.text
         ctx.fillStyle = C.line; ctx.fillRect(0, y + ROW_H - 1, W, 1)
         ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, y, W - LABEL_W, ROW_H); ctx.clip()
+        const ga = t.locked ? 0.5 : 1 // locked bars: half transparent, no hatch
+        ctx.globalAlpha = ga
         const items = sortedItems({ ...t, items: shown(t) })
         for (const it of items) {
           const x = frameToX(sc, it.start), w = itemLen(it) * tv.ppf, by = y + 2, bh = ROW_H - 5
           if (video) { ctx.fillStyle = C.panel; ctx.fillRect(x, by, w, bh) }
-          else { ctx.fillStyle = color; ctx.globalAlpha = 0.18; ctx.fillRect(x, by, w, bh); ctx.globalAlpha = 1 }
+          else { ctx.fillStyle = color; ctx.globalAlpha = 0.18 * ga; ctx.fillRect(x, by, w, bh); ctx.globalAlpha = ga }
           if (video && !mediaUrl(it.refId)) hatch(x, x + w, y, 0.25) // offline
           ctx.strokeStyle = it.id === s.selItem ? C.accent : video ? C.line : color; ctx.lineWidth = 1
           ctx.strokeRect(x + 0.5, by + 0.5, w - 1, bh - 1)
@@ -91,7 +112,11 @@ export default function SequenceCanvas() {
         }
         ctx.restore()
         ctx.fillStyle = C.bg; ctx.fillRect(0, y, LABEL_W, ROW_H - 1)
-        ctx.fillStyle = color; ctx.fillText(video ? 'V1 참조영상' : actor?.name ?? '', 8, y + ROW_H / 2, LABEL_W - 12)
+        ctx.globalAlpha = t.hidden ? 0.4 : 1
+        ctx.fillStyle = color; ctx.fillText(video ? 'V1 참조영상' : actor?.name ?? '', 8, y + ROW_H / 2, EYE_X - 9 - 12)
+        ctx.globalAlpha = 1
+        drawEye(ctx, EYE_X, y + ROW_H / 2, t.hidden, t.hidden ? C.accent : C.line)
+        drawLock(ctx, LOCK_X, y + ROW_H / 2, t.locked, t.locked ? C.accent : C.line)
       })
       drawRuler(ctx, sc, W, RULER_H, s.project.sequence, s.frame, C)
       const px = Math.round(frameToX(sc, s.frame)) + 0.5
@@ -143,7 +168,14 @@ export default function SequenceCanvas() {
         s.setFrame(frameAt(x)); track(m => s.setFrame(frameAt(pos(m).x)), () => {})
         return
       }
-      if (x < LABEL_W) { const t = tracks()[row]; if (t?.actorId) s.select(t.actorId); return }
+      if (x < LABEL_W) {
+        const t = tracks()[row]
+        if (!t) return
+        if (Math.abs(x - EYE_X) <= ICON_HIT / 2) s.setTrackFlag(t.id, 'hidden', !t.hidden)
+        else if (Math.abs(x - LOCK_X) <= ICON_HIT / 2) s.setTrackFlag(t.id, 'locked', !t.locked)
+        else if (t.actorId) s.select(t.actorId)
+        return
+      }
       const hit = itemAt(x, y)
       if (!hit) {
         s.selectItem(null); s.setFrame(frameAt(x))
@@ -161,7 +193,7 @@ export default function SequenceCanvas() {
         drag = null
         if (df !== 0) {
           const ok = mode === 'move' ? st.moveItem(it.id, Math.max(0, it.start + df)) : st.trimItem(it.id, mode, df)
-          if (!ok) flash(DENY, row)
+          if (!ok) flash(t.locked ? LOCKED : DENY, row)
         }
         schedule()
       })
@@ -208,6 +240,7 @@ export default function SequenceCanvas() {
       e.preventDefault()
       const { x, y } = pos(e), row = rowAt(y), t = tracks()[row], s = ed.getState()
       if (!t || y < RULER_H || x < LABEL_W) return
+      if (t.locked) { flash(LOCKED, row); return }
       if (mediaId) {
         if (!isVideo(t)) flash('영상은 V1 트랙에만 놓을 수 있습니다', row)
         else if (!s.addVideoItem(mediaId, frameAt(x))) flash('영상 클립은 겹칠 수 없습니다', row)
@@ -246,9 +279,19 @@ export default function SequenceCanvas() {
     }
     setRename(null)
   }
+  const project = useEditor(s => s.project)
+  const rows = project.sequence.tracks.filter(t => t.kind === 'motion' || (isVideo(t) && project.media.length > 0))
   return (
     <div className="tl-body" style={{ height: '100%' }}>
       <canvas ref={cv} tabIndex={0} className="track-canvas seq-canvas" />
+      <div className="sr-only">
+        {rows.map(t => {
+          const name = isVideo(t) ? 'V1 참조영상' : project.actors.find(a => a.id === t.actorId)?.name ?? ''
+          const flag = (f: 'hidden' | 'locked', label: string) =>
+            <button aria-pressed={t[f]} onClick={() => getEditor().getState().setTrackFlag(t.id, f, !t[f])}>{name} {label}</button>
+          return <span key={t.id}>{flag('hidden', '숨기기')}{flag('locked', '잠그기')}</span>
+        })}
+      </div>
       {msg && <div className="seq-msg" style={{ left: msg.left, top: msg.top }}>{msg.text}</div>}
       {rename && (
         <input className="seq-rename" autoFocus value={rename.value} style={{ left: rename.left }}

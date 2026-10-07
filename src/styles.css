@@ -115,3 +115,5 @@ body {
 .pp-dlg label { display: block; margin: 2px 0; }
 .pp-dlg p, .pp-msg p { margin: 0 0 4px; }
 .mb-msg { color: var(--accent); }
+.sr-only:not(:focus-within) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.sr-only:focus-within { position: absolute; z-index: 3; left: 0; top: 0; background: var(--panel); }

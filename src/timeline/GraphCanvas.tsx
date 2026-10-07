@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { clampDf, editingItem, editTarget, getEditor, type KeyRef } from '../store/store'
+import { clampDf, clipLocked, editingItem, editTarget, getEditor, type KeyRef } from '../store/store'
 import type { Curve, Key, Sequence } from '../model/types'
 import { evalCurve } from '../model/curve'
 import { fitView, handlePoints, valueToY, velocityViolations, yToValue, type ValueScale } from './graph'
@@ -204,13 +204,13 @@ export default function GraphCanvas() {
       const { x, y } = pos(e), c = ctxOf(), st = ed.getState()
       if (y < RULER_H) { st.setFrame(seqFrame(x)); track(m => st.setFrame(seqFrame(pos(m).x)), () => {}); return }
       if (!c || x < LABEL_W) return
-      const { clip, def, cs, clipId } = c, chs = shown()
+      const { clip, def, cs, clipId } = c, chs = shown(), frozen = clipLocked(st.project, clipId) // locked: select only (Timeline shows the message)
       const near = (px: number, py: number) => Math.abs(px - x) <= 6 && Math.abs(py - y) <= 6
 
       // handle of a selected bezier key
       for (const ref of st.sel.keys) {
         const k: Key | undefined = clip.channels[ref.channel]?.keys.find(q => q.f === ref.f)
-        if (!k || k.interp !== 'bezier' || !chs.includes(ref.channel)) continue
+        if (frozen || !k || k.interp !== 'bezier' || !chs.includes(ref.channel)) continue
         const h = handlePoints(k, cs, vs)
         const side = near(h.out[0], h.out[1]) ? 'out' : near(h.in[0], h.in[1]) ? 'in' : null
         if (!side) continue
@@ -233,7 +233,7 @@ export default function GraphCanvas() {
       if (e.shiftKey) st.selectKeys(isSel ? st.sel.keys.filter(q => !sameKey(q, ref)) : [ref], !isSel)
       else if (!isSel) st.selectKeys([ref], false)
       const keys = ed.getState().sel.keys
-      if (!keys.length) return
+      if (!keys.length || frozen) return
       const orig = new Map(keys.map(k => [k.channel + '@' + k.f, clip.channels[k.channel].keys.find(q => q.f === k.f)!.v]))
       const delta = (m: MouseEvent) => {
         const p = pos(m)

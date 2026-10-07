@@ -28,6 +28,7 @@ export interface EditorState {
   setInterp(clipId: string, keys: KeyRef[], interp: Interp): void
   setTangent(clipId: string, channel: string, f: number, side: 'in' | 'out', t: Tan, linked: boolean): void
   keyGroup(actorId: string, group: string): void
+  setTrackFlag(trackId: string, flag: 'hidden' | 'locked', on: boolean): void
   setClip(clipId: string, patch: { name?: string; length?: number }): boolean
   setPlacement(actorId: string, pl: Partial<Actor['placement']>): void
   setColor(actorId: string, hex: string): void
@@ -56,6 +57,10 @@ export interface EditorState {
 
 const MAX_UNDO = 200
 const ROOT = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw']
+
+// Lock rules: an actor's motion track locked; a clip is locked if ANY item referencing it sits on a locked track.
+export const trackLocked = (p: Project, actorId: string) => p.sequence.tracks.some(t => t.kind === 'motion' && t.actorId === actorId && t.locked)
+export const clipLocked = (p: Project, clipId: string) => p.sequence.tracks.some(t => t.locked && t.items.some(i => i.refId === clipId))
 
 // Which clip and clip frame edits for `actorId` go to. Clip view: the open item (trims ignored); else the item covering the frame.
 export function editTarget(s: Pick<EditorState, 'project' | 'frame' | 'editing'>, actorId: string):
@@ -235,11 +240,11 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       setValue: (actorId, channel, v) => {
         if (!get().autoKey) return
         const t = editTarget(get(), actorId)
-        if (!t || editLock(get(), actorId, channel)) return
+        if (!t || editLock(get(), actorId, channel) || trackLocked(get().project, actorId)) return
         get().setKey(t.clipId, channel, t.f, v)
       },
-      setKey: (clipId, channel, f, v) => edit(p => putKey(p.clips[clipId], channel, f, v), [{ clipId, channels: [channel] }]),
-      deleteKeys: (clipId, keys) => edit(p => {
+      setKey: (clipId, channel, f, v) => clipLocked(get().project, clipId) ? undefined : edit(p => putKey(p.clips[clipId], channel, f, v), [{ clipId, channels: [channel] }]),
+      deleteKeys: (clipId, keys) => clipLocked(get().project, clipId) ? undefined : edit(p => {
         const clip = p.clips[clipId]
         for (const r of keys) {
           const c = clip.channels[r.channel]
@@ -248,6 +253,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         set(s => ({ sel: { ...s.sel, keys: s.sel.keys.filter(k => !keys.some(r => r.channel === k.channel && r.f === k.f)) } }))
       }, [{ clipId, channels: chans(keys) }]),
       moveKeys: (clipId, keys, df) => {
+        if (clipLocked(get().project, clipId)) return
         const moved: KeyRef[] = []
         edit(p => {
           const clip = p.clips[clipId]
@@ -266,7 +272,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         }, [{ clipId, channels: chans(keys) }])
         set(s => ({ sel: { ...s.sel, keys: moved } }))
       },
-      setInterp: (clipId, keys, interp) => edit(p => {
+      setInterp: (clipId, keys, interp) => clipLocked(get().project, clipId) ? undefined : edit(p => {
         for (const r of keys) {
           const k = findKey(p.clips[clipId], r)
           if (!k) continue
@@ -274,7 +280,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
           if (interp === 'bezier') { k.inTan.dv = 0; k.outTan.dv = 0 }
         }
       }, [{ clipId, channels: chans(keys) }]),
-      setTangent: (clipId, channel, f, side, t, linked) => edit(p => {
+      setTangent: (clipId, channel, f, side, t, linked) => clipLocked(get().project, clipId) ? undefined : edit(p => {
         const k = findKey(p.clips[clipId], { channel, f })
         if (!k) return
         const [mine, other] = side === 'out' ? [k.outTan, k.inTan] : [k.inTan, k.outTan]
@@ -285,7 +291,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         const actor = get().project.actors.find(a => a.id === actorId)!
         const def = defs[actor.robot]
         const t = editTarget(get(), actorId)
-        if (!t) return
+        if (!t || trackLocked(get().project, actorId) || clipLocked(get().project, t.clipId)) return
         const { clipId, f } = t
         const names = group === '루트' ? ROOT : def.groups.find(g => g.name === group)?.joints
         if (!names) throw new Error(`unknown group ${group}`)
@@ -301,7 +307,9 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
           }
         }, [{ clipId, channels: names }])
       },
+      setTrackFlag: (trackId, flag, on) => edit(p => { const t = p.sequence.tracks.find(t => t.id === trackId); if (t) t[flag] = on }, []),
       setClip: (clipId, patch) => {
+        if (clipLocked(get().project, clipId)) return false
         const name = patch.name?.trim() || undefined
         const len = patch.length === undefined ? undefined : Math.round(patch.length)
         if (len !== undefined && !(len >= 1)) return get().setClip(clipId, { name })
@@ -350,7 +358,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       }, []),
       simplifyClip: (clipId, rot = 0.001, pos = 0.001) => {
         const clip = get().project.clips[clipId]
-        if (!clip) return 0
+        if (!clip || clipLocked(get().project, clipId)) return 0
         const next: Record<string, Curve> = {}
         let cut = 0
         for (const [ch, c] of Object.entries(clip.channels)) {
@@ -386,7 +394,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       }),
       addVideoItem: (mediaId, start) => tryEdit(p => {
         const m = p.media.find(m => m.id === mediaId), t = videoTrack(p)
-        if (!m || !t) return false
+        if (!m || !t || t.locked) return false
         t.items.push({ id: crypto.randomUUID(), refId: mediaId, start: Math.round(start), trimIn: 0, trimOut: m.durationF })
         return validItems(p, t)
       }),
@@ -394,26 +402,26 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         const clip = p.clips[clipId]
         const track = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actorId)
         const actor = p.actors.find(a => a.id === actorId)
-        if (!clip || !track || !actor || actor.robot !== clip.robot) return false
+        if (!clip || !track || track.locked || !actor || actor.robot !== clip.robot) return false
         track.items.push({ id: crypto.randomUUID(), refId: clipId, start: Math.round(start), trimIn: 0, trimOut: clip.length })
         return validTrack(track.items)
       }),
       moveItem: (itemId, start) => tryEdit(p => {
         const f = findItem(p, itemId)
-        if (!f) return false
+        if (!f || f.t.locked) return false
         f.it.start = Math.round(start)
         return validItems(p, f.t)
       }),
       trimItem: (itemId, side, df) => tryEdit(p => {
         const f = findItem(p, itemId)
-        if (!f) return false
+        if (!f || f.t.locked) return false
         const d = Math.round(df), it = f.it
         if (side === 'in') { it.start += d; it.trimIn += d } else it.trimOut += d
         return it.trimIn >= 0 && it.trimIn < it.trimOut && it.trimOut <= refLen(p, f.t, it) && validItems(p, f.t)
       }),
       splitItem: (itemId, frame) => tryEdit(p => {
         const f = findItem(p, itemId)
-        if (!f) return false
+        if (!f || f.t.locked) return false
         const it = f.it, cut = Math.round(frame) - it.start + it.trimIn
         if (!(cut > it.trimIn && cut < it.trimOut)) return false
         const right: Item = { id: crypto.randomUUID(), refId: it.refId, start: Math.round(frame), trimIn: cut, trimOut: it.trimOut }
@@ -424,7 +432,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       deleteItem: itemId => {
         const ok = tryEdit(p => {
           const f = findItem(p, itemId)
-          if (!f) return false
+          if (!f || f.t.locked) return false
           f.t.items = f.t.items.filter(i => i.id !== itemId)
           return true
         })
