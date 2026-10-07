@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { clampDf, editTarget, getEditor, type KeyRef } from '../store/store'
-import type { Interp } from '../model/types'
+import { clampDf, editingItem, editTarget, getEditor, type KeyRef } from '../store/store'
+import type { Interp, Sequence } from '../model/types'
 import { tv } from './viewState'
-import { buildRows, formatTimecode, frameToX, hitKey, rowKey, xToFrame, type TimeScale } from './timeScale'
+import { buildRows, frameToX, hitKey, rowKey, xToFrame, type TimeScale } from './timeScale'
+import { drawRuler, LABEL_W, RULER_H } from './ruler'
 
-const ROW_H = 20, LABEL_W = 160, RULER_H = 24, KEY = 7
+const ROW_H = 20, KEY = 7
+const NO_SEQ: Sequence = { tracks: [], markers: [], inF: null, outF: null }
 const sameKey = (a: KeyRef, b: KeyRef) => a.channel === b.channel && a.f === b.f
 
 // {channel, dfFromFirst, v, interp}[] - survives view switches
@@ -34,13 +36,13 @@ export default function TrackCanvas() {
       const item = t && s.project.sequence.tracks.flatMap(tr => tr.items).find(i => i.id === t.itemId)
       return item ? { item, clip: s.project.clips[item.refId] } : null
     }
-    // clip frame -> x for an actor, through its item placement
-    const clipScale = (actorId: string): TimeScale | null => {
-      const it = itemOf(actorId)
-      if (!it) return null
-      return { x0: scale().x0 + (it.item.start - it.item.trimIn) * tv.ppf, pxPerFrame: tv.ppf }
+    // clip view: the time axis is clip frames, so the clip scale is the view scale
+    const clipScale = (actorId: string): TimeScale | null => itemOf(actorId) ? scale() : null
+    const toSeq = (clipF: number) => { // clip frame -> sequence frame of the open item
+      const e = editingItem(ed.getState())
+      return e ? e.item.start - e.item.trimIn + Math.min(Math.max(clipF, 0), e.clip.length - 1) : 0
     }
-    const rows = () => { const s = ed.getState(); return buildRows(s.project, s.defs, u.expanded) }
+    const rows = () => { const s = ed.getState(), a = editingItem(s)?.actorId; return buildRows(s.project, s.defs, u.expanded).filter(r => r.actorId === a) }
     const rowAt = (y: number) => Math.floor((y - RULER_H + u.scrollY) / ROW_H)
     const rowY = (i: number) => RULER_H + i * ROW_H - u.scrollY
 
@@ -85,26 +87,23 @@ export default function TrackCanvas() {
       })
       ctx.restore()
 
-      // ruler: bold tick + timecode each second
-      ctx.fillStyle = C.panel; ctx.fillRect(0, 0, W, RULER_H)
-      ctx.fillStyle = C.line; ctx.fillRect(0, RULER_H - 1, W, 1)
-      const fMin = Math.floor(tv.scrollF / 60) * 60, fMax = tv.scrollF + (W - LABEL_W) / tv.ppf
-      ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, 0, W - LABEL_W, RULER_H); ctx.clip()
-      const step = tv.ppf >= 3 ? 10 : tv.ppf >= 1 ? 30 : 60
-      for (let f = fMin; f <= fMax; f += step) {
-        const x = Math.round(frameToX(sc, f)) + 0.5, big = f % 60 === 0
-        ctx.fillStyle = big ? C.text : C.line
-        ctx.fillRect(x, big ? 10 : 16, 1, big ? 14 : 8)
-        if (big) { ctx.fillStyle = C.text; ctx.fillText(formatTimecode(f), x + 3, 6) }
+      const e = editingItem(s)
+      if (e) { // dim the trimmed-away part of the clip
+        ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, RULER_H, W - LABEL_W, H - RULER_H); ctx.clip()
+        ctx.fillStyle = 'rgba(0,0,0,0.4)'
+        const xa = frameToX(sc, e.item.trimIn), xb = frameToX(sc, e.item.trimOut)
+        ctx.fillRect(LABEL_W, RULER_H, xa - LABEL_W, H - RULER_H); ctx.fillRect(xb, RULER_H, W - xb, H - RULER_H)
+        ctx.restore()
       }
-      ctx.restore()
+      const tg = s.sel.actorId ? editTarget(s, s.sel.actorId) : null, cf = tg?.f ?? 0
+      drawRuler(ctx, sc, W, RULER_H, NO_SEQ, cf, C)
 
       if (u.box) {
         const b = u.box
         ctx.strokeStyle = C.accent; ctx.lineWidth = 1
         ctx.strokeRect(Math.min(b.x0, b.x1) + 0.5, Math.min(b.y0, b.y1) + 0.5, Math.abs(b.x1 - b.x0), Math.abs(b.y1 - b.y0))
       }
-      const px = Math.round(frameToX(sc, s.frame)) + 0.5
+      const px = Math.round(frameToX(sc, cf)) + 0.5
       if (px >= LABEL_W) { ctx.fillStyle = C.accent; ctx.fillRect(px - 0.5, 0, 1, H) }
       ctx.fillStyle = C.line; ctx.fillRect(LABEL_W - 1, 0, 1, H)
     }
@@ -121,7 +120,7 @@ export default function TrackCanvas() {
 
     // ---- mouse ----
     const pos = (e: MouseEvent) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top } }
-    const frameAtX = (x: number) => Math.max(0, xToFrame(scale(), x))
+    const frameAtX = (x: number) => toSeq(xToFrame(scale(), x))
     const drag = (mv: (e: MouseEvent) => void, up: (e: MouseEvent) => void) => {
       const end = (e: MouseEvent) => { removeEventListener('mousemove', mv); removeEventListener('mouseup', end); up(e) }
       addEventListener('mousemove', mv); addEventListener('mouseup', end)

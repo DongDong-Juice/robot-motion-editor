@@ -376,3 +376,10 @@ test('markers add/rename/delete undoable, sorted, numbered', () => {
   s().undo(); s().undo(); s().undo()
   expect(m()).toEqual([{ f: 10, name: '마커 2' }, { f: 50, name: '마커 1' }])
 })
+
+test('closeItem clamps a negative clip-view frame to 0', () => {
+  const id = s().project.sequence.tracks.find(t => t.actorId === actor)!.items[0].id
+  s().openItem(id); s().setFrame(-20)
+  s().closeItem()
+  expect(s().editing).toBeNull(); expect(s().frame).toBe(0)
+})

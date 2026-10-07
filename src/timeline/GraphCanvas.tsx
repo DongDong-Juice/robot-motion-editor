@@ -1,13 +1,15 @@
 import { useEffect, useRef } from 'react'
-import { clampDf, editTarget, getEditor, type KeyRef } from '../store/store'
-import type { Curve, Key } from '../model/types'
+import { clampDf, editingItem, editTarget, getEditor, type KeyRef } from '../store/store'
+import type { Curve, Key, Sequence } from '../model/types'
 import { evalCurve } from '../model/curve'
 import { fitView, handlePoints, valueToY, velocityViolations, yToValue, type ValueScale } from './graph'
-import { formatTimecode, frameToX, ROOT_CHANNELS, type TimeScale } from './timeScale'
+import { frameToX, ROOT_CHANNELS, type TimeScale } from './timeScale'
+import { drawRuler, LABEL_W, RULER_H } from './ruler'
 import { tv } from './viewState'
 
-const LABEL_W = 160, RULER_H = 24, KEY = 6, HANDLE_R = 2.5, RED = '#E5484D'
+const KEY = 6, HANDLE_R = 2.5, RED = '#E5484D'
 const PALETTE = ['#FFD166', '#58B4D1', '#EF8354', '#9BD36B', '#C792EA', '#4FB99F', '#E8E8E8', '#7A8CFF']
+const NO_SEQ: Sequence = { tracks: [], markers: [], inF: null, outF: null }
 const sameKey = (a: KeyRef, b: KeyRef) => a.channel === b.channel && a.f === b.f
 
 interface Drag { keys: KeyRef[]; df: number; dv: number }
@@ -34,7 +36,7 @@ export default function GraphCanvas() {
       const item = tg && s.project.sequence.tracks.flatMap(t => t.items).find(i => i.id === tg.itemId)
       if (!actor || !item) return null
       const clip = s.project.clips[item.refId], def = s.defs[actor.robot]
-      const cs: TimeScale = { x0: scale().x0 + (item.start - item.trimIn) * tv.ppf, pxPerFrame: tv.ppf }
+      const cs = scale()
       return { s, clip, def, cs, clipId: item.refId }
     }
     // union of sel.channel and the channels of sel.keys; 'root' / 'group:<name>' expand to their channels; max 8
@@ -162,20 +164,15 @@ export default function GraphCanvas() {
           ctx.fillStyle = C.text; ctx.fillText(ch.replace(/_joint$/, ''), 22, RULER_H + 12 + i * 18, LABEL_W - 28)
         })
       }
-      // ruler
-      ctx.fillStyle = C.panel; ctx.fillRect(0, 0, W, RULER_H)
-      ctx.fillStyle = C.line; ctx.fillRect(0, RULER_H - 1, W, 1)
-      const fMin = Math.floor(tv.scrollF / 60) * 60, fMax = tv.scrollF + (W - LABEL_W) / tv.ppf
-      ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, 0, W - LABEL_W, RULER_H); ctx.clip()
-      const tstep = tv.ppf >= 3 ? 10 : tv.ppf >= 1 ? 30 : 60
-      for (let f = fMin; f <= fMax; f += tstep) {
-        const x = Math.round(frameToX(sc, f)) + 0.5, big = f % 60 === 0
-        ctx.fillStyle = big ? C.text : C.line
-        ctx.fillRect(x, big ? 10 : 16, 1, big ? 14 : 8)
-        if (big) { ctx.fillStyle = C.text; ctx.fillText(formatTimecode(f), x + 3, 6) }
+      const e = editingItem(ed.getState())
+      if (e) { // dim the trimmed-away part of the clip
+        ctx.fillStyle = 'rgba(0,0,0,0.4)'
+        const xa = Math.max(LABEL_W, frameToX(sc, e.item.trimIn)), xb = Math.min(W, frameToX(sc, e.item.trimOut))
+        ctx.fillRect(LABEL_W, RULER_H, xa - LABEL_W, H - RULER_H); if (xb < W) ctx.fillRect(xb, RULER_H, W - xb, H - RULER_H)
       }
-      ctx.restore()
-      const px = Math.round(frameToX(sc, ed.getState().frame)) + 0.5
+      const sel = ed.getState().sel.actorId, cf = (sel && editTarget(ed.getState(), sel)?.f) || 0
+      drawRuler(ctx, sc, W, RULER_H, NO_SEQ, cf, C)
+      const px = Math.round(frameToX(sc, cf)) + 0.5
       if (px >= LABEL_W) { ctx.fillStyle = C.accent; ctx.fillRect(px - 0.5, 0, 1, H) }
       ctx.fillStyle = C.line; ctx.fillRect(LABEL_W - 1, 0, 1, H)
     }
@@ -196,7 +193,10 @@ export default function GraphCanvas() {
       const end = (e: MouseEvent) => { removeEventListener('mousemove', mv); removeEventListener('mouseup', end); up(e) }
       addEventListener('mousemove', mv); addEventListener('mouseup', end)
     }
-    const seqFrame = (x: number) => Math.max(0, Math.round((x - scale().x0) / tv.ppf))
+    const seqFrame = (x: number) => {
+      const e = editingItem(ed.getState())
+      return e ? e.item.start - e.item.trimIn + Math.min(Math.max(Math.round((x - scale().x0) / tv.ppf), 0), e.clip.length - 1) : 0
+    }
 
     const onDown = (e: MouseEvent) => {
       if (e.button !== 0) return

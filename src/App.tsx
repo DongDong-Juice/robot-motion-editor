@@ -16,7 +16,7 @@ function AutoKeyHint() {
 function Menubar() {
   const playing = useEditor(s => s.playing), frame = useEditor(s => s.frame)
   const end = useEditor(s => sequenceEnd(s.project))
-  const autoKey = useEditor(s => s.autoKey), view = useEditor(s => s.view)
+  const autoKey = useEditor(s => s.autoKey), view = useEditor(s => s.view), editing = useEditor(s => s.editing !== null)
   const st = useEditor(s => s)
   const [exporting, setExporting] = useState(false)
   return (
@@ -25,7 +25,7 @@ function Menubar() {
       <button onClick={() => st.setPlaying(!playing)} aria-label={playing ? '정지' : '재생'}>{playing ? '■' : '▶'}</button>
       <span className="mb-time">{formatTimecode(frame)} / {formatTimecode(end)} · 60fps</span>
       <button aria-pressed={autoKey} onClick={st.toggleAutoKey}>자동 키</button>
-      <button onClick={() => st.setView(view === 'tracks' ? 'graph' : 'tracks')}>{view === 'tracks' ? '트랙' : '그래프'}</button>
+      <button disabled={!editing} onClick={() => st.setView(view === 'tracks' ? 'graph' : 'tracks')}>{view === 'tracks' ? '트랙' : '그래프'}</button>
       <span role="group" aria-label="액터+" className="mb-group">
         <span>액터+</span>
         <button onClick={() => st.addActor('g1')}>G1 추가</button>

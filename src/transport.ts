@@ -1,10 +1,19 @@
-import { getEditor } from './store/store'
+import { editingItem, getEditor, type EditorState } from './store/store'
+import { sortedItems } from './model/sequence'
 import type { Project } from './model/types'
 
 export function sequenceEnd(p: Project): number {
   let end = 0
   for (const t of p.sequence.tracks) for (const it of t.items) end = Math.max(end, it.start + it.trimOut - it.trimIn)
   return end
+}
+
+// Playback / arrow-key range [lo, hi): the open clip in clip view, In..Out in sequence view if both set, else 0..end.
+export function playRange(s: Pick<EditorState, 'project' | 'editing'>): [number, number] {
+  const e = editingItem(s)
+  if (e) { const lo = e.item.start - e.item.trimIn; return [lo, lo + e.clip.length] }
+  const { inF, outF } = s.project.sequence
+  return inF !== null && outF !== null ? [inF, outF] : [0, sequenceEnd(s.project)]
 }
 
 const typing = (t: EventTarget | null) =>
@@ -17,12 +26,12 @@ export function startTransport(): () => void {
   const tick = () => {
     const s = ed.getState()
     if (s.playing) {
-      const end = sequenceEnd(s.project)
+      const [lo, hi] = playRange(s)
       const now = performance.now()
-      if (!was || end <= 0 || s.frame !== last) { // start, or scrubbed during playback
-        t0 = now; f0 = s.frame >= end ? 0 : s.frame }
+      if (!was || hi <= lo || s.frame !== last) { // start, or scrubbed during playback
+        t0 = now; f0 = s.frame >= hi || s.frame < lo ? lo : s.frame }
       let f = f0 + Math.floor((now - t0) * 60 / 1000) // from start time, so no drift accumulates
-      if (end > 0 && f >= end) { t0 = now; f0 = 0; f = 0 }
+      if (hi > lo && f >= hi) { t0 = now; f0 = lo; f = lo }
       if (f !== s.frame) s.setFrame(f)
       last = f
     }
@@ -36,7 +45,8 @@ export function startTransport(): () => void {
     const s = ed.getState()
     const step = (n: number) => {
       e.preventDefault()
-      s.setFrame(Math.min(Math.max(s.frame + n, 0), sequenceEnd(s.project)))
+      if (s.editing) { const [lo, hi] = playRange(s); s.setFrame(Math.min(Math.max(s.frame + n, lo), hi - 1)) }
+      else s.setFrame(Math.min(Math.max(s.frame + n, 0), sequenceEnd(s.project)))
     }
     if (e.ctrlKey || e.metaKey) {
       const k = e.key.toLowerCase()
@@ -50,7 +60,18 @@ export function startTransport(): () => void {
       s.setPlaying(!s.playing)
     } else if (e.key === 'ArrowLeft') step(e.shiftKey ? -10 : -1)
     else if (e.key === 'ArrowRight') step(e.shiftKey ? 10 : 1)
-    else if (e.key === 'Tab' && e.target instanceof Element && e.target.closest('#timeline')) {
+    else if (e.key === 'Escape') { if (s.editing) s.closeItem() }
+    else if (e.key === 'Delete') { if (!s.editing && s.selItem) { e.preventDefault(); s.deleteItem(s.selItem) } }
+    else if (e.key.toLowerCase() === 'i') s.setIn(Math.max(s.frame, 0))
+    else if (e.key.toLowerCase() === 'o') s.setOut(Math.max(s.frame, 0))
+    else if (e.key.toLowerCase() === 'm') s.addMarker(Math.max(s.frame, 0))
+    else if (e.key.toLowerCase() === 'c') {
+      const track = s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === s.sel.actorId)
+      const under = track && sortedItems(track).filter(i => s.frame > i.start && s.frame < i.start + i.trimOut - i.trimIn).at(-1)
+      const id = s.selItem ?? under?.id
+      if (id) s.splitItem(id, s.frame)
+    }
+    else if (s.editing && e.key === 'Tab' && e.target instanceof Element && e.target.closest('#timeline')) {
       e.preventDefault(); s.setView(s.view === 'tracks' ? 'graph' : 'tracks')
       // the focused canvas is unmounted by the switch; refocus the new one so Tab keeps toggling
       requestAnimationFrame(() => document.querySelector<HTMLElement>('#timeline canvas')?.focus())

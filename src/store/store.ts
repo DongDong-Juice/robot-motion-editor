@@ -62,6 +62,16 @@ export function editTarget(s: Pick<EditorState, 'project' | 'frame' | 'editing'>
   return r && { clipId: r.item.refId, f: r.cf, itemId: r.item.id }
 }
 
+// The item open in clip view with its actor and clip, or null in sequence view.
+export function editingItem(s: Pick<EditorState, 'project' | 'editing'>) {
+  if (!s.editing) return null
+  for (const t of s.project.sequence.tracks) {
+    const item = t.items.find(i => i.id === s.editing)
+    if (item) return { item, actorId: t.actorId ?? null, clip: s.project.clips[item.refId] }
+  }
+  return null
+}
+
 // One shared delta for every selected key (all channels) so min f >= 0 and max f <= length-1.
 export function clampDf(length: number, keys: KeyRef[], df: number): number {
   if (!keys.length) return 0
@@ -122,7 +132,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         const t = get().project.sequence.tracks.find(t => t.items.some(i => i.id === itemId))
         if (t) set({ editing: itemId, selItem: itemId, sel: { actorId: t.actorId ?? null, channel: null, keys: [] } })
       },
-      closeItem: () => set({ editing: null }),
+      closeItem: () => set(s => ({ editing: null, frame: Math.max(s.frame, 0) })),
       setIn: f => edit(p => { p.sequence.inF = f; if (f !== null && p.sequence.outF !== null && p.sequence.outF <= f) p.sequence.outF = null }, []),
       setOut: f => edit(p => { p.sequence.outF = f; if (f !== null && p.sequence.inF !== null && p.sequence.inF >= f) p.sequence.inF = null }, []),
       addMarker: f => edit(p => {

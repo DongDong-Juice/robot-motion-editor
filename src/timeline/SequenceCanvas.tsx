@@ -1,0 +1,241 @@
+import { useEffect, useRef, useState } from 'react'
+import { getEditor } from '../store/store'
+import { itemLen, sortedItems } from '../model/sequence'
+import type { Item, Track } from '../model/types'
+import { tv } from './viewState'
+import { drawRuler, hitMarker, LABEL_W, RULER_H } from './ruler'
+import { frameToX, xToFrame, type TimeScale } from './timeScale'
+
+const ROW_H = 28, EDGE = 6
+const ROBOT = { g1: 'G1', go2: 'GO2' } as const
+const DENY = '이 위치에 놓을 수 없습니다'
+
+// In-progress drag preview; the store is untouched until mouseup.
+interface Drag { itemId: string; mode: 'move' | 'in' | 'out'; df: number }
+interface Msg { text: string; left: number; top: number }
+interface Rename { index: number; left: number; value: string }
+
+export default function SequenceCanvas() {
+  const cv = useRef<HTMLCanvasElement>(null)
+  const [msg, setMsg] = useState<Msg | null>(null)
+  const [rename, setRename] = useState<Rename | null>(null)
+  const cancel = useRef(false)
+
+  useEffect(() => {
+    const canvas = cv.current!, ed = getEditor()
+    const css = getComputedStyle(document.documentElement)
+    const col = (n: string) => css.getPropertyValue(n).trim()
+    const C = { bg: col('--bg'), panel: col('--panel'), line: col('--line'), text: col('--text'), accent: col('--accent') }
+    let W = 0, H = 0, raf = 0, drag: Drag | null = null, timer = 0
+
+    const scale = (): TimeScale => ({ x0: LABEL_W - tv.scrollF * tv.ppf, pxPerFrame: tv.ppf })
+    const tracks = () => ed.getState().project.sequence.tracks.filter(t => t.kind === 'motion')
+    // items of a track with the drag preview applied
+    const shown = (t: Track): Item[] => t.items.map(it => {
+      if (!drag || drag.itemId !== it.id) return it
+      const clipLen = ed.getState().project.clips[it.refId].length, d = drag.df
+      if (drag.mode === 'move') return { ...it, start: Math.max(0, it.start + d) }
+      if (drag.mode === 'in') { const k = Math.min(Math.max(d, -it.trimIn), itemLen(it) - 1); return { ...it, start: it.start + k, trimIn: it.trimIn + k } }
+      return { ...it, trimOut: it.trimOut + Math.min(Math.max(d, 1 - itemLen(it)), clipLen - it.trimOut) }
+    })
+    const flash = (text: string, row: number) => {
+      setMsg({ text, left: LABEL_W + 4, top: RULER_H + (row + 1) * ROW_H + 2 })
+      clearTimeout(timer); timer = window.setTimeout(() => setMsg(null), 2000)
+    }
+
+    const draw = () => {
+      raf = 0
+      const s = ed.getState(), dpr = window.devicePixelRatio || 1, sc = scale()
+      const ctx = canvas.getContext('2d')!
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H)
+      ctx.font = '11px "IBM Plex Sans KR", sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left'
+      tracks().forEach((t, i) => {
+        const y = RULER_H + i * ROW_H, actor = s.project.actors.find(a => a.id === t.actorId)
+        const color = actor?.color ?? C.text
+        ctx.fillStyle = C.line; ctx.fillRect(0, y + ROW_H - 1, W, 1)
+        ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, y, W - LABEL_W, ROW_H); ctx.clip()
+        const items = sortedItems({ ...t, items: shown(t) })
+        for (const it of items) {
+          const x = frameToX(sc, it.start), w = itemLen(it) * tv.ppf, by = y + 2, bh = ROW_H - 5
+          ctx.fillStyle = color; ctx.globalAlpha = 0.18; ctx.fillRect(x, by, w, bh); ctx.globalAlpha = 1
+          ctx.strokeStyle = it.id === s.selItem ? C.accent : color; ctx.lineWidth = 1
+          ctx.strokeRect(x + 0.5, by + 0.5, w - 1, bh - 1)
+        }
+        // crossfade: overlap of neighbours, hatched both ways
+        for (let k = 0; k + 1 < items.length; k++) {
+          const a = frameToX(sc, items[k + 1].start), b = frameToX(sc, items[k].start + itemLen(items[k]))
+          if (b <= a) continue
+          ctx.save(); ctx.beginPath(); ctx.rect(a, y + 2, b - a, ROW_H - 5); ctx.clip()
+          ctx.strokeStyle = C.text; ctx.globalAlpha = 0.5; ctx.lineWidth = 1; ctx.beginPath()
+          for (let hx = a - ROW_H; hx < b + ROW_H; hx += 6) {
+            ctx.moveTo(hx, y + ROW_H - 3); ctx.lineTo(hx + ROW_H - 5, y + 2)
+            ctx.moveTo(hx, y + 2); ctx.lineTo(hx + ROW_H - 5, y + ROW_H - 3)
+          }
+          ctx.stroke(); ctx.restore()
+        }
+        ctx.fillStyle = C.text
+        for (const it of items) {
+          const x = Math.max(frameToX(sc, it.start), LABEL_W) + 4, right = frameToX(sc, it.start + itemLen(it)) - 4
+          if (right > x) ctx.fillText(s.project.clips[it.refId].name, x, y + ROW_H / 2, right - x)
+        }
+        ctx.restore()
+        ctx.fillStyle = C.bg; ctx.fillRect(0, y, LABEL_W, ROW_H - 1)
+        ctx.fillStyle = color; ctx.fillText(actor?.name ?? '', 8, y + ROW_H / 2, LABEL_W - 12)
+      })
+      drawRuler(ctx, sc, W, RULER_H, s.project.sequence, s.frame, C)
+      const px = Math.round(frameToX(sc, s.frame)) + 0.5
+      if (px >= LABEL_W) { ctx.fillStyle = C.accent; ctx.fillRect(px - 0.5, RULER_H, 1, H - RULER_H) }
+      ctx.fillStyle = C.line; ctx.fillRect(LABEL_W - 1, 0, 1, H)
+    }
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(draw) }
+
+    const resize = () => {
+      const dpr = window.devicePixelRatio || 1, r = canvas.getBoundingClientRect()
+      W = r.width; H = r.height
+      canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr)
+      schedule()
+    }
+    const ro = new ResizeObserver(resize); ro.observe(canvas); resize()
+    const unsub = ed.subscribe(schedule)
+
+    // ---- mouse ----
+    const pos = (e: { clientX: number; clientY: number }) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top } }
+    const frameAt = (x: number) => Math.max(0, xToFrame(scale(), x))
+    const track = (mv: (e: MouseEvent) => void, up: (e: MouseEvent) => void) => {
+      const end = (e: MouseEvent) => { removeEventListener('mousemove', mv); removeEventListener('mouseup', end); up(e) }
+      addEventListener('mousemove', mv); addEventListener('mouseup', end)
+    }
+    const rowAt = (y: number) => Math.floor((y - RULER_H) / ROW_H)
+    // topmost item under (x, y) with the zone of the hit
+    const itemAt = (x: number, y: number) => {
+      const t = tracks()[rowAt(y)]
+      if (!t || y < RULER_H || x < LABEL_W) return null
+      const sc = scale()
+      const it = sortedItems(t).filter(i => x >= frameToX(sc, i.start) && x <= frameToX(sc, i.start + itemLen(i))).at(-1)
+      if (!it) return null
+      const x0 = frameToX(sc, it.start), x1 = frameToX(sc, it.start + itemLen(it)), edge = Math.min(EDGE, (x1 - x0) / 3)
+      return { t, it, mode: (x - x0 < edge ? 'in' : x1 - x < edge ? 'out' : 'move') as Drag['mode'] }
+    }
+
+    const onDown = (e: MouseEvent) => {
+      if (e.button !== 0) return
+      canvas.focus()
+      const { x, y } = pos(e), s = ed.getState(), row = rowAt(y)
+      if (y < RULER_H) {
+        const mi = hitMarker(s.project.sequence, scale(), x)
+        if (mi !== null) { s.setFrame(s.project.sequence.markers[mi].f); return }
+        s.setFrame(frameAt(x)); track(m => s.setFrame(frameAt(pos(m).x)), () => {})
+        return
+      }
+      if (x < LABEL_W) { const t = tracks()[row]; if (t?.actorId) s.select(t.actorId); return }
+      const hit = itemAt(x, y)
+      if (!hit) {
+        s.selectItem(null); s.setFrame(frameAt(x))
+        track(m => s.setFrame(frameAt(pos(m).x)), () => {})
+        return
+      }
+      const { t, it, mode } = hit
+      s.selectItem(it.id)
+      if (t.actorId) s.select(t.actorId)
+      track(m => {
+        const df = Math.round((pos(m).x - x) / tv.ppf)
+        if (df !== (drag?.df ?? 0)) { drag = { itemId: it.id, mode, df }; schedule() }
+      }, m => {
+        const df = Math.round((pos(m).x - x) / tv.ppf), st = ed.getState()
+        drag = null
+        if (df !== 0) {
+          const ok = mode === 'move' ? st.moveItem(it.id, Math.max(0, it.start + df)) : st.trimItem(it.id, mode, df)
+          if (!ok) flash(DENY, row)
+        }
+        schedule()
+      })
+    }
+
+    const onDbl = (e: MouseEvent) => {
+      const { x, y } = pos(e), s = ed.getState()
+      if (y < RULER_H) {
+        const mi = hitMarker(s.project.sequence, scale(), x)
+        if (mi !== null) { cancel.current = false; setRename({ index: mi, left: Math.max(LABEL_W, x - 55), value: s.project.sequence.markers[mi].name }) }
+        return
+      }
+      const hit = itemAt(x, y)
+      if (hit) s.openItem(hit.it.id)
+    }
+
+    const onContext = (e: MouseEvent) => {
+      const { x, y } = pos(e), s = ed.getState()
+      if (y >= RULER_H) return
+      e.preventDefault()
+      const mi = hitMarker(s.project.sequence, scale(), x)
+      if (mi !== null) s.deleteMarker(mi)
+    }
+
+    const onMove = (e: MouseEvent) => {
+      const { x, y } = pos(e), h = itemAt(x, y)
+      canvas.style.cursor = h && h.mode !== 'move' ? 'ew-resize' : ''
+    }
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      if (e.ctrlKey) {
+        const { x } = pos(e), fAt = tv.scrollF + (x - LABEL_W) / tv.ppf
+        tv.ppf = Math.min(Math.max(tv.ppf * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 0.5), 40)
+        tv.scrollF = Math.max(0, fAt - (x - LABEL_W) / tv.ppf)
+      } else tv.scrollF = Math.max(0, tv.scrollF + (e.deltaY + e.deltaX) / tv.ppf)
+      schedule()
+    }
+
+    const onDragOver = (e: DragEvent) => { if (e.dataTransfer?.types.includes('application/x-motion-clip')) e.preventDefault() }
+    const onDrop = (e: DragEvent) => {
+      const clipId = e.dataTransfer?.getData('application/x-motion-clip')
+      if (!clipId) return
+      e.preventDefault()
+      const { x, y } = pos(e), row = rowAt(y), t = tracks()[row], s = ed.getState()
+      if (!t?.actorId || x < LABEL_W) return
+      if (s.addItem(t.actorId, clipId, frameAt(x))) return
+      const robot = s.project.actors.find(a => a.id === t.actorId)?.robot, clip = s.project.clips[clipId]
+      flash(robot && clip && clip.robot !== robot ? `이 트랙에는 ${ROBOT[robot]} 클립만 놓을 수 있습니다` : '겹치는 클립이 너무 많습니다', row)
+    }
+
+    canvas.addEventListener('mousedown', onDown)
+    canvas.addEventListener('mousemove', onMove)
+    canvas.addEventListener('dblclick', onDbl)
+    canvas.addEventListener('contextmenu', onContext)
+    canvas.addEventListener('wheel', onWheel, { passive: false })
+    canvas.addEventListener('dragover', onDragOver)
+    canvas.addEventListener('drop', onDrop)
+    return () => {
+      ro.disconnect(); unsub(); cancelAnimationFrame(raf); clearTimeout(timer)
+      canvas.removeEventListener('mousedown', onDown)
+      canvas.removeEventListener('mousemove', onMove)
+      canvas.removeEventListener('dblclick', onDbl)
+      canvas.removeEventListener('contextmenu', onContext)
+      canvas.removeEventListener('wheel', onWheel)
+      canvas.removeEventListener('dragover', onDragOver)
+      canvas.removeEventListener('drop', onDrop)
+    }
+  }, [])
+
+  const commit = () => {
+    if (rename && !cancel.current) {
+      const name = rename.value.trim()
+      if (name) getEditor().getState().renameMarker(rename.index, name)
+    }
+    setRename(null)
+  }
+  return (
+    <div className="tl-body" style={{ height: '100%' }}>
+      <canvas ref={cv} tabIndex={0} className="track-canvas seq-canvas" />
+      {msg && <div className="seq-msg" style={{ left: msg.left, top: msg.top }}>{msg.text}</div>}
+      {rename && (
+        <input className="seq-rename" autoFocus value={rename.value} style={{ left: rename.left }}
+          onChange={e => setRename({ ...rename, value: e.target.value })} onBlur={commit}
+          onKeyDown={e => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+            else if (e.key === 'Escape') { cancel.current = true; e.currentTarget.blur() }
+          }} />
+      )}
+    </div>
+  )
+}
