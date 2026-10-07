@@ -17,7 +17,16 @@ export function playRange(s: Pick<EditorState, 'project' | 'editing'>): [number,
   return inF !== null && outF !== null ? [inF, outF] : [0, sequenceEnd(s.project)]
 }
 
-const typing = (t: EventTarget | null) =>
+// Item the C key splits: the selected item if it still exists, else the selected actor's item under the playhead. None in clip view.
+export function splitTarget(s: Pick<EditorState, 'project' | 'editing' | 'selItem' | 'sel' | 'frame'>): string | null {
+  if (s.editing) return null
+  const tracks = s.project.sequence.tracks
+  if (s.selItem && tracks.some(t => t.items.some(i => i.id === s.selItem))) return s.selItem
+  const track = tracks.find(t => t.kind === 'motion' && t.actorId === s.sel.actorId)
+  return (track && sortedItems(track).filter(i => s.frame > i.start && s.frame < i.start + i.trimOut - i.trimIn).at(-1)?.id) ?? null
+}
+
+const typing =(t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))
 
 export function startTransport(): () => void {
@@ -74,9 +83,7 @@ export function startTransport(): () => void {
     else if (e.key.toLowerCase() === 'o') s.setOut(Math.max(s.frame, 0))
     else if (e.key.toLowerCase() === 'm') s.addMarker(Math.max(s.frame, 0))
     else if (e.key.toLowerCase() === 'c') {
-      const track = s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === s.sel.actorId)
-      const under = track && sortedItems(track).filter(i => s.frame > i.start && s.frame < i.start + i.trimOut - i.trimIn).at(-1)
-      const id = s.selItem ?? under?.id
+      const id = splitTarget(s)
       if (id) s.splitItem(id, s.frame)
     }
     else if (s.editing && e.key === 'Tab' && e.target instanceof Element && e.target.closest('#timeline')) {
