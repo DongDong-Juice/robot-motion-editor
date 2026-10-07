@@ -36,6 +36,12 @@ export function clipFrameAt(p: Project, actorId: string, frame: number): { clipI
   return { clipId: item.refId, f }
 }
 
+// One shared delta for every selected key (all channels) so min f >= 0 and max f <= length-1.
+export function clampDf(length: number, keys: KeyRef[], df: number): number {
+  if (!keys.length) return 0
+  return Math.min(Math.max(Math.round(df), -Math.min(...keys.map(k => k.f))), length - 1 - Math.max(...keys.map(k => k.f)))
+}
+
 export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
   return createStore<EditorState>((set, get) => {
     let undoS: Project[] = [], redoS: Project[] = []
@@ -96,14 +102,13 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         const moved: KeyRef[] = []
         edit(p => {
           const clip = p.clips[clipId]
+          const d = clampDf(clip.length, keys, df)
           for (const channel of new Set(keys.map(k => k.channel))) {
             const c = clip.channels[channel]
             if (!c) continue
             const from = new Set(keys.filter(k => k.channel === channel).map(k => k.f))
             const sel = c.keys.filter(k => from.has(k.f))
             if (!sel.length) continue
-            // clamp the shared delta so the group keeps its shape (no merged keys)
-            const d = Math.min(Math.max(Math.round(df), -sel[0].f), clip.length - 1 - sel[sel.length - 1].f)
             const mv = sel.map(k => ({ ...k, f: k.f + d }))
             const dest = new Set(mv.map(k => k.f))
             c.keys = [...c.keys.filter(k => !from.has(k.f) && !dest.has(k.f)), ...mv].sort((a, b) => a.f - b.f)

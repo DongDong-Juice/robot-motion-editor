@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { clipFrameAt, getEditor, type KeyRef } from '../store/store'
+import { clampDf, clipFrameAt, getEditor, type KeyRef } from '../store/store'
 import type { Interp } from '../model/types'
+import { tv } from './viewState'
 import { buildRows, formatTimecode, frameToX, hitKey, rowKey, xToFrame, type TimeScale } from './timeScale'
 
 const ROW_H = 20, LABEL_W = 160, RULER_H = 24, KEY = 7
@@ -10,14 +11,14 @@ const sameKey = (a: KeyRef, b: KeyRef) => a.channel === b.channel && a.f === b.f
 let clipboard: { channel: string; dfFromFirst: number; v: number; interp: Interp }[] = []
 
 interface Ui {
-  scrollF: number; scrollY: number; ppf: number; expanded: Set<string>
+  scrollY: number; expanded: Set<string>
   dragDf: number                          // key-drag preview offset (frames)
   box: { x0: number; y0: number; x1: number; y1: number } | null
 }
 
 export default function TrackCanvas() {
   const cv = useRef<HTMLCanvasElement>(null)
-  const ui = useRef<Ui>({ scrollF: 0, scrollY: 0, ppf: 4, expanded: new Set(), dragDf: 0, box: null })
+  const ui = useRef<Ui>({ scrollY: 0, expanded: new Set(), dragDf: 0, box: null })
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
@@ -27,7 +28,7 @@ export default function TrackCanvas() {
     const C = { bg: col('--bg'), panel: col('--panel'), line: col('--line'), text: col('--text'), accent: col('--accent') }
     let W = 0, H = 0, raf = 0
 
-    const scale = (): TimeScale => ({ x0: LABEL_W - u.scrollF * u.ppf, pxPerFrame: u.ppf })
+    const scale = (): TimeScale => ({ x0: LABEL_W - tv.scrollF * tv.ppf, pxPerFrame: tv.ppf })
     const itemOf = (actorId: string) => {
       const p = ed.getState().project
       const item = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actorId)?.items[0]
@@ -37,7 +38,7 @@ export default function TrackCanvas() {
     const clipScale = (actorId: string): TimeScale | null => {
       const it = itemOf(actorId)
       if (!it) return null
-      return { x0: scale().x0 + (it.item.start - it.item.trimIn) * u.ppf, pxPerFrame: u.ppf }
+      return { x0: scale().x0 + (it.item.start - it.item.trimIn) * tv.ppf, pxPerFrame: tv.ppf }
     }
     const rows = () => { const s = ed.getState(); return buildRows(s.project, s.defs, u.expanded) }
     const rowAt = (y: number) => Math.floor((y - RULER_H + u.scrollY) / ROW_H)
@@ -87,9 +88,9 @@ export default function TrackCanvas() {
       // ruler: bold tick + timecode each second
       ctx.fillStyle = C.panel; ctx.fillRect(0, 0, W, RULER_H)
       ctx.fillStyle = C.line; ctx.fillRect(0, RULER_H - 1, W, 1)
-      const fMin = Math.floor(u.scrollF / 60) * 60, fMax = u.scrollF + (W - LABEL_W) / u.ppf
+      const fMin = Math.floor(tv.scrollF / 60) * 60, fMax = tv.scrollF + (W - LABEL_W) / tv.ppf
       ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, 0, W - LABEL_W, RULER_H); ctx.clip()
-      const step = u.ppf >= 3 ? 10 : u.ppf >= 1 ? 30 : 60
+      const step = tv.ppf >= 3 ? 10 : tv.ppf >= 1 ? 30 : 60
       for (let f = fMin; f <= fMax; f += step) {
         const x = Math.round(frameToX(sc, f)) + 0.5, big = f % 60 === 0
         ctx.fillStyle = big ? C.text : C.line
@@ -163,8 +164,9 @@ export default function TrackCanvas() {
           if (selected(k.hit)) s.selectKeys(ed.getState().sel.keys.filter(q => !k.hit.some(h => sameKey(q, h))), false)
           else s.selectKeys(k.hit, true)
         } else if (!selected(k.hit)) s.selectKeys(k.hit, false)
-        drag(m => { u.dragDf = Math.round((pos(m).x - x) / u.ppf); schedule() }, m => {
-          const df = Math.round((pos(m).x - x) / u.ppf), st = ed.getState()
+        const clipLen = ed.getState().project.clips[k.clipId].length
+        drag(m => { u.dragDf = clampDf(clipLen, ed.getState().sel.keys, (pos(m).x - x) / tv.ppf); schedule() }, m => {
+          const df = Math.round((pos(m).x - x) / tv.ppf), st = ed.getState()
           u.dragDf = 0
           if (df !== 0 && st.sel.keys.length) st.moveKeys(k.clipId, st.sel.keys, df)
           schedule()
@@ -207,13 +209,13 @@ export default function TrackCanvas() {
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       if (e.ctrlKey) {
-        const { x } = pos(e), fAt = u.scrollF + (x - LABEL_W) / u.ppf
-        u.ppf = Math.min(Math.max(u.ppf * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 0.5), 40)
-        u.scrollF = Math.max(0, fAt - (x - LABEL_W) / u.ppf)
+        const { x } = pos(e), fAt = tv.scrollF + (x - LABEL_W) / tv.ppf
+        tv.ppf = Math.min(Math.max(tv.ppf * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 0.5), 40)
+        tv.scrollF = Math.max(0, fAt - (x - LABEL_W) / tv.ppf)
       } else if (e.shiftKey) { // vertical scroll
         const max = Math.max(0, rows().length * ROW_H - (H - RULER_H))
         u.scrollY = Math.min(Math.max(u.scrollY + (e.deltaY || e.deltaX), 0), max)
-      } else u.scrollF = Math.max(0, u.scrollF + (e.deltaY + e.deltaX) / u.ppf)
+      } else tv.scrollF = Math.max(0, tv.scrollF + (e.deltaY + e.deltaX) / tv.ppf)
       schedule()
     }
 

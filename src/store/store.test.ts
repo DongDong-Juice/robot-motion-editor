@@ -180,3 +180,10 @@ test('setColor is undoable', () => {
   s().undo()
   expect(s().project.actors[0].color).toBe(old)
 })
+
+test('moveKeys clamps one shared delta across channels (no shear)', () => {
+  s().setKey(c, 'root.x', 10, 1); s().setKey(c, 'root.x', 20, 2); s().setKey(c, 'root.y', 20, 3)
+  s().moveKeys(c, [{ channel: 'root.x', f: 10 }, { channel: 'root.x', f: 20 }, { channel: 'root.y', f: 20 }], -15)
+  expect(curve('root.x').keys.map(k => k.f)).toEqual([0, 10])
+  expect(curve('root.y').keys.map(k => k.f)).toEqual([10])
+})
