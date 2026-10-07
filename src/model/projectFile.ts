@@ -55,6 +55,8 @@ export function parseProject(text: string, defs: RobotDefs): Project {
       if (!isObj(c.channels)) fail(`${at}.channels`)
       for (const [ch, cv0] of Object.entries<any>(c.channels)) {
         let cv = cv0
+        const jd = defs[c.robot as keyof RobotDefs].joints.find((j: { name: string }) => j.name === ch) // r6 rounding must not push a key past its URDF limit
+        const clampJ = (v: number) => jd ? Math.min(Math.max(v, jd.lower), jd.upper) : v
         if (p.version === 2) { // expand { k } into { keys } so v1 and v2 share the key checks below
           const kp = `${at}.channels.${ch}.k`
           if (!isObj(cv0) || !Array.isArray(cv0.k) || cv0.k.length % 7 !== 0 || !cv0.k.every(num)) fail(kp)
@@ -62,7 +64,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
           for (let i = 0; i < cv0.k.length; i += 7) {
             const [f, v, ip, idf, idv, odf, odv] = cv0.k.slice(i, i + 7)
             if (!(ip in INTERP)) fail(`${kp}.${i + 2}`)
-            keys.push({ f, v, interp: INTERP[ip], inTan: { df: idf, dv: idv }, outTan: { df: odf, dv: odv } })
+            keys.push({ f, v: clampJ(v), interp: INTERP[ip], inTan: { df: idf, dv: idv }, outTan: { df: odf, dv: odv } })
           }
           cv = c.channels[ch] = { keys }
         }

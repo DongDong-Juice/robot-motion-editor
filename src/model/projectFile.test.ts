@@ -5,6 +5,8 @@ import type { Project } from './types'
 import type { RobotDefs } from './evaluate'
 import { newProject } from './defaults'
 import { makeKey } from './curve'
+import { samplePoses } from '../export/csv'
+import { validatePoses } from '../export/validate'
 import { parseProject, serializeProject } from './projectFile'
 
 const load = loadDef
@@ -48,8 +50,19 @@ test('v2: compact (<30% of v1 indent-1 size) at 5000x36 keys', () => {
   for (let ch = 0; ch < 36; ch++) c.channels[`j${ch}`] = { keys: Array.from({ length: 5000 }, (_, i) => makeKey(i, Math.sin(i * 0.01 + ch))) }
   c.length = 5000
   const ratio = serializeProject(p).length / v1(p).length
-  console.log('v2/v1 size ratio', ratio)
   expect(ratio).toBeLessThan(0.3)
+})
+
+test('v2: key at joint limit stays within limit after save/open and exports without warnings', () => {
+  const p = mk(), c = Object.values(p.clips)[0]
+  const j = defs.g1.joints.find(j => j.name === 'left_wrist_pitch_joint')!
+  c.channels[j.name] = { keys: [makeKey(0, j.upper), makeKey(10, j.lower)] }
+  const q = Object.values(parseProject(serializeProject(p), defs).clips)[0]
+  expect(q.channels[j.name].keys[0].v).toBeLessThanOrEqual(j.upper)
+  expect(q.channels[j.name].keys[1].v).toBeGreaterThanOrEqual(j.lower)
+  const p2 = parseProject(serializeProject(p), defs)
+  const poses = samplePoses(p2, defs, p2.actors[0].id, p2.sequence.tracks.find(t => t.actorId === p2.actors[0].id)!.items[0].id, 'world')
+  expect(validatePoses(poses, defs.g1, 0).filter(w => w.kind === 'jointLimit')).toEqual([])
 })
 
 test('v2: rejects malformed k', () => {
