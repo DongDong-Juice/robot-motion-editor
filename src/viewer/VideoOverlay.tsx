@@ -15,8 +15,11 @@ export default function VideoOverlay() {
       const s = store.getState()
       const t = s.videoMode === 'off' ? null : videoTimeAt(s.project, s.frame)
       const url = t && mediaUrl(t.mediaId)
-      if (!t || !url) { v.style.display = 'none'; v.pause(); return }
-      v.style.display = ''
+      // split keeps its slot (visibility) so the 3D canvas width stays put; overlay/off use display none
+      const keep = s.videoMode === 'split'
+      v.style.display = !t || !url ? (keep ? '' : 'none') : ''
+      v.style.visibility = !t || !url ? 'hidden' : ''
+      if (!t || !url) { v.pause(); return }
       if (v.getAttribute('src') !== url) { v.src = url; return } // loadedmetadata re-runs sync
       if (v.readyState < 1) return
       const a = syncAction(t, v, s.playing)
@@ -30,7 +33,7 @@ export default function VideoOverlay() {
       if (s.frame !== p.frame || s.playing !== p.playing || s.project !== p.project || s.editing !== p.editing || s.videoMode !== p.videoMode) run()
     })
     const un2 = subscribeMedia(run)
-    return () => { v.removeEventListener('loadedmetadata', run); un1(); un2() }
+    return () => { v.pause(); v.removeEventListener('loadedmetadata', run); un1(); un2() }
   }, [])
 
   return <video ref={ref} muted playsInline preload="auto" className={mode === 'off' ? '' : mode} style={mode === 'overlay' ? { opacity } : undefined} />
