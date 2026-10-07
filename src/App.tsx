@@ -88,6 +88,7 @@ function Resizer({ k, axis, value, sign, style, label, set, reset }: {
   set: (p: Partial<Layout>, persist?: boolean) => void; reset: (keys: (keyof Layout)[]) => void
 }) {
   const drag = useRef<{ p: number; v: number } | null>(null)
+  useEffect(() => () => { document.body.style.userSelect = ''; document.body.style.cursor = '' }, [])
   const pos = (e: { clientX: number; clientY: number }) => (axis === 'x' ? e.clientX : e.clientY)
   const end = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!drag.current) return
@@ -101,6 +102,7 @@ function Resizer({ k, axis, value, sign, style, label, set, reset }: {
       aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'} aria-valuenow={value} style={style}
       onPointerDown={e => {
         if (e.button !== 0) return
+        e.preventDefault() // keep focus off the handle after a drag; Tab still reaches it
         e.currentTarget.setPointerCapture(e.pointerId)
         drag.current = { p: pos(e), v: value }
         document.body.style.userSelect = 'none'; document.body.style.cursor = axis === 'x' ? 'col-resize' : 'row-resize'
@@ -111,7 +113,7 @@ function Resizer({ k, axis, value, sign, style, label, set, reset }: {
       onKeyDown={e => {
         const d = axis === 'x' ? { ArrowRight: 1, ArrowLeft: -1 }[e.key] : { ArrowDown: 1, ArrowUp: -1 }[e.key]
         if (d === undefined) return
-        e.preventDefault(); set({ [k]: value + sign * d * KEY_STEP }, true)
+        e.preventDefault(); e.stopPropagation(); set({ [k]: value + sign * d * KEY_STEP }, true)
       }} />
   )
 }

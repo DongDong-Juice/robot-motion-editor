@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 export interface Layout { left: number; right: number; bottom: number }
 const KEY = 'motion-editor.layout'
@@ -38,12 +38,13 @@ export function useLayout(): [Layout, (patch: Partial<Layout>, persist?: boolean
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
+  const ref = useRef(layout)
+  ref.current = layout
   const patch = useCallback((p: Partial<Layout>, persist = false) => {
-    setLayout(l => {
-      const n = clampLayout({ ...l, ...p }, window.innerWidth, window.innerHeight)
-      if (persist) save(n)
-      return n
-    })
+    const n = clampLayout({ ...ref.current, ...p }, window.innerWidth, window.innerHeight)
+    ref.current = n // successive patches before a render still compose
+    setLayout(n)
+    if (persist) save(n)
   }, [])
   const reset = useCallback((keys?: (keyof Layout)[]) => {
     const d = defaultLayout(window.innerHeight)
