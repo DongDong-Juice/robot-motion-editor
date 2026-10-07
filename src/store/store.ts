@@ -12,6 +12,8 @@ export interface Selection { actorId: string | null; channel: string | null; key
 export interface EditorState {
   defs: RobotDefs; project: Project; frame: number; playing: boolean; autoKey: boolean
   view: 'tracks' | 'graph'; sel: Selection
+  videoMode: 'off' | 'overlay' | 'split'; videoOpacity: number // viewer preference: not undoable, not saved, survives loadProject
+  setVideoMode(m: 'off' | 'overlay' | 'split'): void; setVideoOpacity(v: number): void
   setFrame(f: number): void; setPlaying(b: boolean): void; toggleAutoKey(): void; setView(v: 'tracks' | 'graph'): void
   select(actorId: string | null, channel?: string | null): void; selectKeys(keys: KeyRef[], additive: boolean): void
   setValue(actorId: string, channel: string, v: number): void
@@ -202,6 +204,9 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       setPlaying: playing => set({ playing }),
       toggleAutoKey: () => set(s => ({ autoKey: !s.autoKey })),
       setView: view => set({ view }),
+      videoMode: 'overlay', videoOpacity: 0.5,
+      setVideoMode: videoMode => set({ videoMode }),
+      setVideoOpacity: v => set({ videoOpacity: Math.min(Math.max(v, 0), 1) }),
       select: (actorId, channel = null) => {
         const e = editingItem(get())
         if (e && actorId && actorId !== e.actorId) return // other actors are ghosts in clip view

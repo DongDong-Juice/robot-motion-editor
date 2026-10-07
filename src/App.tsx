@@ -3,6 +3,8 @@ import { fetchRobotDef } from './robot/loadRobot'
 import { getEditor, gizmoLock, initEditor, useEditor } from './store/store'
 import Inspector from './inspector/Inspector'
 import Stage from './viewer/Stage'
+import VideoOverlay from './viewer/VideoOverlay'
+import { videoTrack } from './model/video'
 import ProjectPanel from './project/ProjectPanel'
 import Timeline from './timeline/Timeline'
 import { formatTimecode } from './timeline/timeScale'
@@ -26,6 +28,8 @@ function Menubar() {
   const end = useEditor(s => sequenceEnd(s.project))
   const autoKey = useEditor(s => s.autoKey), view = useEditor(s => s.view), editing = useEditor(s => s.editing !== null)
   const st = useEditor(s => s)
+  const videoMode = useEditor(s => s.videoMode), videoOpacity = useEditor(s => s.videoOpacity)
+  const hasVideo = useEditor(s => !!videoTrack(s.project)?.items.length)
   const [exporting, setExporting] = useState(false)
   const name = useEditor(s => s.fileName ?? '새 프로젝트'), dirty = useEditor(s => s.dirty)
   const [msg, setMsg] = useState('')
@@ -61,6 +65,14 @@ function Menubar() {
         <button onClick={() => st.addActor('g1')}>G1 추가</button>
         <button onClick={() => st.addActor('go2')}>GO2 추가</button>
       </span>
+      {hasVideo && (
+        <span role="group" aria-label="영상" className="mb-group">
+          <span>영상:</span>
+          {([['off', '끄기'], ['overlay', '오버레이'], ['split', '분할']] as const).map(([m, label]) =>
+            <button key={m} aria-pressed={videoMode === m} onClick={() => st.setVideoMode(m)}>{label}</button>)}
+          {videoMode === 'overlay' && <input type="range" aria-label="영상 투명도" min={0} max={1} step={0.05} value={videoOpacity} onChange={e => st.setVideoOpacity(+e.target.value)} />}
+        </span>
+      )}
       <button onClick={() => setExporting(true)}>내보내기</button>
       <ExportDialog open={exporting} onClose={() => setExporting(false)} />
     </>
@@ -83,9 +95,12 @@ export default function App() {
       <header id="menubar">{status === 'ready' ? <Menubar /> : 'Motion Editor'}</header>
       <aside id="project">{status === 'ready' && <ProjectPanel />}</aside>
       <main id="stage">
-        {status === 'ready' && <AutoKeyHint />}
-        {status === 'ready' && <CrossfadeHint />}
-        {status === 'ready' ? <Stage /> : status === 'loading' ? '로봇 불러오는 중…' : status}
+        {status === 'ready' && <VideoOverlay />}
+        <div className="stage-3d">
+          {status === 'ready' && <AutoKeyHint />}
+          {status === 'ready' && <CrossfadeHint />}
+          {status === 'ready' ? <Stage /> : status === 'loading' ? '로봇 불러오는 중…' : status}
+        </div>
       </main>
       <aside id="inspector">{status === "ready" && <Inspector />}</aside>
       <section id="timeline">{status === 'ready' && <Timeline />}</section>
