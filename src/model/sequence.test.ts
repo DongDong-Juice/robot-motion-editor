@@ -1,0 +1,90 @@
+import { readFileSync } from 'node:fs'
+import { expect, test } from 'vitest'
+import { validatePoses } from '../export/validate'
+import { loadRobotDef } from '../robot/loadRobot'
+import { makeKey } from './curve'
+import { newProject } from './defaults'
+import { evaluate, evaluateItem, type Pose, type RobotDefs } from './evaluate'
+import { eulerToQuat, quatYaw } from './rootMath'
+import { blendPose, slerp, stitchTransforms } from './sequence'
+import type { Curve, Project } from './types'
+
+const r = (f: string) => JSON.parse(readFileSync(new URL(`../../public/robots/g1/${f}`, import.meta.url), 'utf8'))
+const g1 = loadRobotDef('g1', r('model.json'), r('meshes.json'))
+const defs = { g1 } as unknown as RobotDefs
+const knee = g1.joints.findIndex(j => j.name === 'left_knee_joint')
+const lin = (...kv: [number, number][]): Curve => ({ keys: kv.map(([f, v]) => makeKey(f, v, 'linear')) })
+
+// G1 actor with items [start, trimIn, trimOut, channels]; clip length 120 each.
+function build(items: [number, number, number, Record<string, Curve>][]) {
+  const p: Project = structuredClone(newProject())
+  const actor = p.actors.find(a => a.robot === 'g1')!
+  actor.placement = { x: 0, y: 0, yaw: 0 }
+  const track = p.sequence.tracks.find(t => t.actorId === actor.id)!
+  track.items = items.map(([start, trimIn, trimOut, channels], i) => {
+    p.clips[`k${i}`] = { id: `k${i}`, name: `k${i}`, robot: 'g1', length: 120, channels }
+    return { id: `i${i}`, refId: `k${i}`, start, trimIn, trimOut }
+  })
+  return { p, actor: actor.id }
+}
+const range = (p: Project, a: string, f0: number, f1: number): Pose[] =>
+  Array.from({ length: f1 - f0 }, (_, i) => evaluate(p, defs, a, f0 + i))
+
+test('stitch: B starts where A ended (x, y, yaw)', () => {
+  const { p, actor } = build([
+    [0, 0, 60, { 'root.x': lin([0, 0], [59, 1]), 'root.yaw': lin([0, 0], [59, Math.PI / 2]) }],
+    [60, 0, 60, { 'root.x': lin([0, 0], [59, 1]) }],
+  ])
+  const a59 = evaluate(p, defs, actor, 59), b60 = evaluate(p, defs, actor, 60)
+  expect(Math.hypot(a59.rootPos[0] - b60.rootPos[0], a59.rootPos[1] - b60.rootPos[1])).toBeLessThan(0.02)
+  expect(quatYaw(b60.rootQuat)).toBeCloseTo(Math.PI / 2, 2)
+  const b119 = evaluate(p, defs, actor, 119)
+  expect(b119.rootPos[1] - b60.rootPos[1]).toBeCloseTo(1, 1)
+})
+
+test('crossfade: weights and continuity', () => {
+  const { p, actor } = build([[0, 0, 60, {}], [40, 0, 60, { left_knee_joint: lin([0, 1]) }]])
+  const k = (f: number) => evaluate(p, defs, actor, f).q[knee]
+  expect(k(39)).toBe(0)
+  expect(k(40)).toBeCloseTo(1 / 21)
+  expect(k(59)).toBeCloseTo(20 / 21)
+  expect(k(60)).toBe(1)
+})
+
+test('crossfade seam has no root jump', () => {
+  const { p, actor } = build([
+    [0, 0, 60, { 'root.x': lin([0, 0], [59, 0.5]) }],
+    [40, 0, 60, { 'root.x': lin([0, 3], [59, 3.5]) }],
+  ])
+  expect(validatePoses(range(p, actor, 0, 100), g1, 0).filter(x => x.kind === 'rootJump')).toEqual([])
+})
+
+test('stitch uses previous item alone, clamped; stitchTransforms is cached', () => {
+  const { p, actor } = build([[0, 0, 60, { 'root.x': lin([0, 0], [59, 1]) }], [30, 0, 60, { 'root.x': lin([0, 0], [59, 1]) }]])
+  const track = p.sequence.tracks.find(t => t.actorId === actor)!
+  const xf = stitchTransforms(p, defs, track)
+  expect(xf.get('i1')!.x).toBeCloseTo(30 / 59) // A at clip frame 30, not blended
+  expect(stitchTransforms(p, defs, track)).toBe(xf)
+})
+
+test('slerp endpoints and midpoint', () => {
+  const a = eulerToQuat(0, 0, 0), b = eulerToQuat(0, 0, Math.PI / 2)
+  expect(quatYaw(slerp(a, b, 0))).toBeCloseTo(0)
+  expect(quatYaw(slerp(a, b, 1))).toBeCloseTo(Math.PI / 2)
+  expect(quatYaw(slerp(a, b, 0.5))).toBeCloseTo(Math.PI / 4)
+  expect(quatYaw(slerp(a, b.map(v => -v) as typeof b, 0.5))).toBeCloseTo(Math.PI / 4) // shortest path
+})
+
+test('blendPose lerps pos and q', () => {
+  const a: Pose = { rootPos: [0, 0, 1], rootQuat: [0, 0, 0, 1], q: [0] }
+  const b: Pose = { rootPos: [2, 4, 1], rootQuat: [0, 0, 0, 1], q: [1] }
+  const m = blendPose(a, b, 0.5)
+  expect(m.rootPos).toEqual([1, 2, 1])
+  expect(m.q).toEqual([0.5])
+})
+
+test('evaluateItem ignores trims (clip frame outside trim)', () => {
+  const { p } = build([[0, 30, 60, { 'root.x': lin([0, 0], [119, 119]) }]])
+  expect(evaluateItem(p, defs, 'i0', 0).rootPos[0]).toBeCloseTo(0)
+  expect(evaluateItem(p, defs, 'i0', 500).rootPos[0]).toBeCloseTo(119)
+})
