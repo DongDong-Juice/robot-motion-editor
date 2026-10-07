@@ -1,13 +1,10 @@
-import { readFileSync } from 'node:fs'
+import { loadDef } from '../test/defs'
 import * as THREE from 'three'
 import { expect, test } from 'vitest'
 import type { Pose } from '../model/evaluate'
-import { loadRobotDef } from '../robot/loadRobot'
 import { buildRobot, pivotAngle } from './buildRobot'
 
-const read = (f: string) =>
-  JSON.parse(readFileSync(new URL(`../../public/robots/g1/${f}`, import.meta.url), 'utf8'))
-const g1 = loadRobotDef('g1', read('model.json'), read('meshes.json'))
+const g1 = loadDef('g1')
 
 const zeroPose = (): Pose => ({ rootPos: [0, 0, 0], rootQuat: [0, 0, 0, 1], q: g1.joints.map(() => 0) })
 const poseWith = (name: string, v: number): Pose => {

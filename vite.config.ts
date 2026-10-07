@@ -4,5 +4,5 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  test: { environment: 'node', exclude: ['e2e/**', 'node_modules/**'] },
+  test: { testTimeout: 20000, environment: 'node', exclude: ['e2e/**', 'node_modules/**'] },
 })

@@ -1,12 +1,10 @@
-import { readFileSync } from 'node:fs'
+import { loadDef } from '../test/defs'
 import { expect, test } from 'vitest'
-import { loadRobotDef } from '../robot/loadRobot'
 import { eulerToQuat } from '../model/rootMath'
 import type { Pose } from '../model/evaluate'
 import { validatePoses } from './validate'
 
-const r = (f: string) => JSON.parse(readFileSync(new URL(`../../public/robots/g1/${f}`, import.meta.url), 'utf8'))
-const g1 = loadRobotDef('g1', r('model.json'), r('meshes.json'))
+const g1 = loadDef('g1')
 const rest = (): Pose => ({ rootPos: [0, 0, 0.7], rootQuat: [0, 0, 0, 1], q: g1.joints.map(() => 0) })
 const knee = g1.joints.findIndex(j => j.name === 'left_knee_joint')
 

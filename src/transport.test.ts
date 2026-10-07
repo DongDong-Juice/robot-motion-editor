@@ -1,14 +1,10 @@
-import { readFileSync } from 'node:fs'
+import { loadDef } from './test/defs'
 import { expect, test } from 'vitest'
-import { loadRobotDef } from './robot/loadRobot'
-import type { RobotKind } from './robot/types'
+
 import { createEditorStore } from './store/store'
 import { splitTarget } from './transport'
 
-const load = (k: RobotKind) => {
-  const r = (f: string) => JSON.parse(readFileSync(new URL(`../public/robots/${k}/${f}`, import.meta.url), 'utf8'))
-  return loadRobotDef(k, r('model.json'), r('meshes.json'))
-}
+const load = loadDef
 
 test('C splits the selected item, else the item under the playhead; nothing in clip view', () => {
   const st = createEditorStore({ g1: load('g1'), go2: load('go2') }), s = () => st.getState()

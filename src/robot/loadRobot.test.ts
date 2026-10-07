@@ -1,14 +1,9 @@
-import { readFileSync } from 'node:fs'
+import { loadDef } from '../test/defs'
 import { expect, test } from 'vitest'
-import { loadRobotDef } from './loadRobot'
 
-const read = (f: string) =>
-  JSON.parse(readFileSync(new URL(`../../public/robots/g1/${f}`, import.meta.url), 'utf8'))
-const loadG1 = () => loadRobotDef('g1', read('model.json'), read('meshes.json'))
+const loadG1 = () => loadDef('g1')
 
-const readGo2 = (f: string) =>
-  JSON.parse(readFileSync(new URL(`../../public/robots/go2/${f}`, import.meta.url), 'utf8'))
-const loadGo2 = () => loadRobotDef('go2', readGo2('model.json'), readGo2('meshes.json'))
+const loadGo2 = () => loadDef('go2')
 
 test('go2 joints: 12 revolute, FL first', () => {
   const d = loadGo2()

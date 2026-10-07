@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { loadDef } from '../test/defs'
 import { expect, test } from 'vitest'
 import { validatePoses } from '../export/validate'
-import { loadRobotDef } from '../robot/loadRobot'
 import { makeKey } from './curve'
 import { newProject } from './defaults'
 import { evaluate, evaluateItem, type Pose, type RobotDefs } from './evaluate'
@@ -9,8 +8,7 @@ import { eulerToQuat, quatAngle, quatMul, quatYaw, yawQuat } from './rootMath'
 import { blendPose, slerp, stitchTransforms, worldToClipRoot } from './sequence'
 import type { Curve, Project } from './types'
 
-const r = (f: string) => JSON.parse(readFileSync(new URL(`../../public/robots/g1/${f}`, import.meta.url), 'utf8'))
-const g1 = loadRobotDef('g1', r('model.json'), r('meshes.json'))
+const g1 = loadDef('g1')
 const defs = { g1 } as unknown as RobotDefs
 const knee = g1.joints.findIndex(j => j.name === 'left_knee_joint')
 const lin = (...kv: [number, number][]): Curve => ({ keys: kv.map(([f, v]) => makeKey(f, v, 'linear')) })

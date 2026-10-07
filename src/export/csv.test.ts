@@ -1,7 +1,7 @@
+import { loadDef } from '../test/defs'
 import { readFileSync } from 'node:fs'
 import { expect, test } from 'vitest'
-import { loadRobotDef } from '../robot/loadRobot'
-import type { RobotKind } from '../robot/types'
+
 import { addActor, newProject } from '../model/defaults'
 import { makeKey } from '../model/curve'
 import { eulerToQuat, quatYaw } from '../model/rootMath'
@@ -9,10 +9,7 @@ import { evaluate, type RobotDefs } from '../model/evaluate'
 import type { Project } from '../model/types'
 import { csvFileName, itemFrameRange, posesToCsv, samplePoses } from './csv'
 
-const load = (k: RobotKind) => {
-  const r = (f: string) => JSON.parse(readFileSync(new URL(`../../public/robots/${k}/${f}`, import.meta.url), 'utf8'))
-  return loadRobotDef(k, r('model.json'), r('meshes.json'))
-}
+const load = loadDef
 const defs: RobotDefs = { g1: load('g1'), go2: load('go2') }
 
 const proj = newProject()

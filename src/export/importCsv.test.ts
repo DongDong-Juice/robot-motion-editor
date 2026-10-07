@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { loadDef } from '../test/defs'
 import { expect, test } from 'vitest'
-import { loadRobotDef } from '../robot/loadRobot'
-import type { RobotKind } from '../robot/types'
+
 import { newProject } from '../model/defaults'
 import { makeKey } from '../model/curve'
 import { evaluateClip, type Pose, type RobotDefs } from '../model/evaluate'
@@ -9,10 +8,7 @@ import type { Clip } from '../model/types'
 import { normalizedPose, posesToCsv, samplePoses } from './csv'
 import { csvToClip } from './importCsv'
 
-const load = (k: RobotKind) => {
-  const r = (f: string) => JSON.parse(readFileSync(new URL(`../../public/robots/${k}/${f}`, import.meta.url), 'utf8'))
-  return loadRobotDef(k, r('model.json'), r('meshes.json'))
-}
+const load = loadDef
 const defs: RobotDefs = { g1: load('g1'), go2: load('go2') }
 
 const poseRows = (clip: Clip): Pose[] => {

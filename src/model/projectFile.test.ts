@@ -1,16 +1,12 @@
-import { readFileSync } from 'node:fs'
+import { loadDef } from '../test/defs'
 import { expect, test } from 'vitest'
-import { loadRobotDef } from '../robot/loadRobot'
-import type { RobotKind } from '../robot/types'
+
 import type { RobotDefs } from './evaluate'
 import { newProject } from './defaults'
 import { makeKey } from './curve'
 import { parseProject, serializeProject } from './projectFile'
 
-const load = (k: RobotKind) => {
-  const r = (f: string) => JSON.parse(readFileSync(new URL(`../../public/robots/${k}/${f}`, import.meta.url), 'utf8'))
-  return loadRobotDef(k, r('model.json'), r('meshes.json'))
-}
+const load = loadDef
 const defs: RobotDefs = { g1: load('g1'), go2: load('go2') }
 const mk = () => {
   const p = newProject()
