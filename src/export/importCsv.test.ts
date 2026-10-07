@@ -73,3 +73,11 @@ test('GO2 detected by 19 columns; blank lines ignored', () => {
   expect(clip.length).toBe(2)
   expect(clip.name).toBe('g')
 })
+
+test('rejects hex/Infinity/overflow; column error names the row', () => {
+  for (const v of ['0x10', 'Infinity', '1e999']) expect(() => csvToClip(row(36).replace('0', v), defs, 60, 'x')).toThrow('숫자가 아닌')
+  expect(() => csvToClip(`${row(36)}
+
+${row(19)}
+`, defs, 60, 'x')).toThrow('19 (3행)')
+})

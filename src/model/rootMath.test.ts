@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { eulerToQuat, nearestAngle, quatToEuler } from './rootMath'
+import { eulerToQuat, nearestAngle, quatAngle, quatToEuler, type Quat } from './rootMath'
 
 test('nearestAngle unwraps to the value closest to current', () => {
   const y = nearestAngle(-2.98, 3.0)
@@ -17,4 +17,12 @@ test('quatToEuler inverts eulerToQuat', () => {
     expect(Math.abs(q.reduce((s, v, i) => s + v * q2[i], 0))).toBeCloseTo(1, 9)
     if (Math.abs(r) < Math.PI) e.forEach((v, i) => expect(v).toBeCloseTo([r, p, y][i], 9))
   }
+})
+
+test.each([1.5, Math.PI / 2 - 1e-3, Math.PI / 2 - 1e-6, Math.PI / 2, -Math.PI / 2, -1.5])('quatToEuler preserves rotation at pitch %f', p => {
+  const q = eulerToQuat(0.4, p, 0.1)
+  expect(quatAngle(eulerToQuat(...quatToEuler(q)), q)).toBeLessThan(1e-6)
+  const r6 = q.map(v => Math.round(v * 1e6) / 1e6), n = Math.hypot(...r6) // quatAngle needs a unit quat
+  const r = r6.map(v => v / n) as Quat
+  expect(quatAngle(eulerToQuat(...quatToEuler(r)), r)).toBeLessThan(1e-5)
 })

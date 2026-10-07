@@ -4,24 +4,25 @@ import { nearestAngle, quatToEuler, type Quat } from '../model/rootMath'
 import { slerp } from '../model/sequence'
 import type { Clip } from '../model/types'
 
+const NUM = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/ // decimal only: no hex, Infinity, blanks
 const ROBOT_BY_COLS = { 36: 'g1', 19: 'go2' } as const
 
 // Unitree RL reference CSV (x,y,z,qx,qy,qz,qw,q1..qN, no header) -> editable clip with a linear key on every channel/frame.
 export function csvToClip(text: string, defs: RobotDefs, srcFps: 30 | 60, name: string): Clip {
-  const rows: number[][] = []
+  const rows: number[][] = [], lines: number[] = [] // lines: source row number of each kept row
   text.split(/\r?\n/).forEach((line, i) => {
     if (!line.trim()) return
     const cells = line.split(',').map(s => s.trim())
-    const nums = cells.map(s => (s === '' ? NaN : Number(s)))
-    if (nums.some(Number.isNaN)) throw new Error(`${i + 1}행에 숫자가 아닌 값이 있습니다`)
-    rows.push(nums)
+    const nums = cells.map(s => (NUM.test(s) ? Number(s) : NaN))
+    if (!nums.every(Number.isFinite)) throw new Error(`${i + 1}행에 숫자가 아닌 값이 있습니다`)
+    rows.push(nums); lines.push(i + 1)
   })
   if (!rows.length) throw new Error('데이터가 없습니다')
   const cols = rows[0].length
   const robot = (ROBOT_BY_COLS as Record<number, 'g1' | 'go2'>)[cols]
   if (!robot) throw new Error(`열 수가 36(G1) 또는 19(GO2)가 아닙니다: ${cols}`)
   const bad = rows.findIndex(r => r.length !== cols)
-  if (bad >= 0) throw new Error(`열 수가 36(G1) 또는 19(GO2)가 아닙니다: ${rows[bad].length}`)
+  if (bad >= 0) throw new Error(`열 수가 36(G1) 또는 19(GO2)가 아닙니다: ${rows[bad].length} (${lines[bad]}행)`)
 
   let frames = rows
   if (srcFps === 30) {

@@ -31,23 +31,25 @@ export default function ProjectPanel() {
   const [pending, setPending] = useState<Files | null>(null) // picked files awaiting an fps choice
   const [result, setResult] = useState<{ n: number; fails: string[] } | null>(null)
   const dlg = useRef<HTMLDialogElement>(null)
-  const fps = useRef<30 | 60>(30)
+  const [fps, setFps] = useState<30 | 60>(30)
   useEffect(() => { if (result) { const t = setTimeout(() => setResult(null), 10000); return () => clearTimeout(t) } }, [result])
   useEffect(() => { if (pending && !dlg.current?.open) dlg.current?.showModal() }, [pending])
   const pick = async () => {
     setResult(null)
     const files = await openTextFiles('.csv', true)
-    if (files.length) { fps.current = 30; setPending(files) }
+    if (files.length) { setFps(30); setPending(files) }
   }
   const doImport = () => {
     const files = pending!
     setPending(null)
     let n = 0
     const fails: string[] = []
+    ed.getState().beginGesture() // one undo entry for the whole batch
     for (const f of files) {
-      try { ed.getState().importClip(csvToClip(f.text, ed.getState().defs, fps.current, f.name.replace(/\.csv$/i, ''))); n++ }
+      try { ed.getState().importClip(csvToClip(f.text, ed.getState().defs, fps, f.name.replace(/\.csv$/i, ''))); n++ }
       catch (e) { fails.push(`${f.name}: ${e instanceof Error ? e.message : String(e)}`) }
     }
+    ed.getState().endGesture()
     setResult({ n, fails })
   }
 
@@ -94,7 +96,7 @@ export default function ProjectPanel() {
         <form method="dialog" onSubmit={e => { if ((e.nativeEvent as SubmitEvent).submitter?.id === 'pp-go') doImport() }}>
           <p>원본 프레임레이트</p>
           {([30, 60] as const).map(v => (
-            <label key={v}><input type="radio" name="fps" defaultChecked={v === 30} onChange={() => { fps.current = v }} />{v}fps</label>
+            <label key={v}><input type="radio" name="fps" checked={fps === v} onChange={() => setFps(v)} />{v}fps</label>
           ))}
           <div className="pp-btns"><button id="pp-go">가져오기</button><button value="cancel" type="submit" formNoValidate>취소</button></div>
         </form>

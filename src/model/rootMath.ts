@@ -15,12 +15,13 @@ export function eulerToQuat(roll: number, pitch: number, yaw: number): Quat {
 
 // Inverse of eulerToQuat (ZYX); pitch in [-pi/2, pi/2], roll/yaw in (-pi, pi].
 export function quatToEuler(q: Quat): [number, number, number] {
-  const [x, y, z, w] = q
-  return [
-    Math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y)),
-    Math.asin(Math.max(-1, Math.min(1, 2 * (w * y - z * x)))),
-    Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)),
-  ]
+  const n = Math.hypot(...q) || 1
+  const [x, y, z, w] = q.map(v => v / n)
+  const a = 2 * (w * x + y * z), b = 1 - 2 * (x * x + y * y), s = 2 * (w * y - z * x)
+  const c = Math.hypot(a, b) // = cos(pitch); atan2 stays accurate near +-pi/2
+  if (c < 1e-9) // gimbal lock: only yaw -/+ roll is defined; put it all in yaw with roll = 0 (R01 = -sin yaw, R11 = cos yaw)
+    return [0, Math.sign(s) * Math.PI / 2, Math.atan2(-2 * (x * y - w * z), 1 - 2 * (x * x + z * z))]
+  return [Math.atan2(a, b), Math.atan2(s, c), Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))]
 }
 
 export function quatMul(a: Quat, b: Quat): Quat {
