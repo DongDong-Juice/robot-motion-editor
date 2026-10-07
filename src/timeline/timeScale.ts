@@ -7,6 +7,7 @@ export const xToFrame = (s: TimeScale, x: number) => Math.round((x - s.x0) / s.p
 
 const p2 = (n: number) => String(n).padStart(2, '0')
 export function formatTimecode(f: number): string {
+  if (f < 0) return '-' + formatTimecode(-f)
   const sec = Math.floor(f / 60)
   return `${p2(Math.floor(sec / 60))}:${p2(sec % 60)}.${p2(f % 60)}`
 }

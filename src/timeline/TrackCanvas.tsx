@@ -278,9 +278,9 @@ export default function TrackCanvas() {
   useEffect(() => {
     if (!menu) return
     const close = () => setMenu(null)
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
-    addEventListener('mousedown', close); addEventListener('keydown', esc)
-    return () => { removeEventListener('mousedown', close); removeEventListener('keydown', esc) }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); close() } }
+    addEventListener('mousedown', close); addEventListener('keydown', esc, true) // capture: runs before transport's Esc
+    return () => { removeEventListener('mousedown', close); removeEventListener('keydown', esc, true) }
   }, [menu])
 
   const apply = (interp: Interp) => {

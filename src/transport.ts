@@ -28,7 +28,7 @@ export function startTransport(): () => void {
     if (s.playing) {
       const [lo, hi] = playRange(s)
       const now = performance.now()
-      if (!was || hi <= lo || s.frame !== last) { // start, or scrubbed during playback
+      if (!was || hi <= lo || s.frame !== last || s.frame < lo || s.frame >= hi) { // start, scrubbed, or range moved away
         t0 = now; f0 = s.frame >= hi || s.frame < lo ? lo : s.frame }
       let f = f0 + Math.floor((now - t0) * 60 / 1000) // from start time, so no drift accumulates
       if (hi > lo && f >= hi) { t0 = now; f0 = lo; f = lo }
@@ -60,7 +60,7 @@ export function startTransport(): () => void {
       s.setPlaying(!s.playing)
     } else if (e.key === 'ArrowLeft') step(e.shiftKey ? -10 : -1)
     else if (e.key === 'ArrowRight') step(e.shiftKey ? 10 : 1)
-    else if (e.key === 'Escape') { if (s.editing) s.closeItem() }
+    else if (e.key === 'Escape') { if (s.editing && !e.defaultPrevented && !(e.target as Element | null)?.closest?.('dialog[open]')) s.closeItem() }
     else if (e.key === 'Delete') { if (!s.editing && s.selItem) { e.preventDefault(); s.deleteItem(s.selItem) } }
     else if (e.key.toLowerCase() === 'i') s.setIn(Math.max(s.frame, 0))
     else if (e.key.toLowerCase() === 'o') s.setOut(Math.max(s.frame, 0))

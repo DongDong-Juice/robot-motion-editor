@@ -112,10 +112,15 @@ export default function SequenceCanvas() {
       const t = tracks()[rowAt(y)]
       if (!t || y < RULER_H || x < LABEL_W) return null
       const sc = scale()
-      const it = sortedItems(t).filter(i => x >= frameToX(sc, i.start) && x <= frameToX(sc, i.start + itemLen(i))).at(-1)
-      if (!it) return null
-      const x0 = frameToX(sc, it.start), x1 = frameToX(sc, it.start + itemLen(it)), edge = Math.min(EDGE, (x1 - x0) / 3)
-      return { t, it, mode: (x - x0 < edge ? 'in' : x1 - x < edge ? 'out' : 'move') as Drag['mode'] }
+      const items = sortedItems(t).reverse() // later item wins
+      const span = (i: Item) => { const x0 = frameToX(sc, i.start), x1 = frameToX(sc, i.start + itemLen(i)); return { x0, x1, edge: Math.min(EDGE, (x1 - x0) / 3) } }
+      for (const it of items) { // edges of every item first, so a crossfade tail stays trimmable
+        const { x0, x1, edge } = span(it)
+        if (x >= x0 && x - x0 < edge) return { t, it, mode: 'in' as Drag['mode'] }
+        if (x <= x1 && x1 - x < edge) return { t, it, mode: 'out' as Drag['mode'] }
+      }
+      const it = items.find(i => { const { x0, x1 } = span(i); return x >= x0 && x <= x1 })
+      return it ? { t, it, mode: 'move' as Drag['mode'] } : null
     }
 
     const onDown = (e: MouseEvent) => {
