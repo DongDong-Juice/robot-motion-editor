@@ -2,9 +2,10 @@ import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
+import { evalCurve } from '../model/curve'
 import { evaluate } from '../model/evaluate'
-import { quatMul, yawQuat } from '../model/rootMath'
-import { getEditor } from '../store/store'
+import { nearestAngle, quatMul, yawQuat } from '../model/rootMath'
+import { clipFrameAt, getEditor } from '../store/store'
 import { buildRobot, pivotAngle, type RobotRig } from './buildRobot'
 
 const css = (n: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim()
@@ -163,7 +164,10 @@ export default function Stage() {
       }
       const [x, y, z, w] = quatMul(yawQuat(-actor.placement.yaw), [o.quaternion.x, o.quaternion.y, o.quaternion.z, o.quaternion.w])
       const eu = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(x, y, z, w), 'ZYX')
-      return [['root.roll', eu.x], ['root.pitch', eu.y], ['root.yaw', eu.z]]
+      // euler read-back wraps to (-pi, pi]; keep each angle continuous with the stored channel value
+      const { clipId, f } = clipFrameAt(s.project, actor.id, s.frame), clip = s.project.clips[clipId]
+      const cur = (ch: string) => evalCurve(clip.channels[ch] ?? { keys: [] }, f, 0)
+      return [['root.roll', nearestAngle(eu.x, cur('root.roll'))], ['root.pitch', nearestAngle(eu.y, cur('root.pitch'))], ['root.yaw', nearestAngle(eu.z, cur('root.yaw'))]]
     }
 
     tc.addEventListener('dragging-changed', e => {
