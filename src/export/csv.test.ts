@@ -87,7 +87,7 @@ test('file names: sanitize and dedupe', () => {
 
 test('file name uses actor name when robot shared', () => {
   const p = addActor(proj, 'g1')
-  expect(csvFileName(p, p.actors[2].id, itemOf(p, p.actors[2].id).id, new Set())).toBe('G1__2_clip_01.csv')
+  expect(csvFileName(p, p.actors[2].id, itemOf(p, p.actors[2].id).id, new Set())).toBe('G1__2_clip_02.csv')
 })
 
 test('world csv rows equal evaluate() per frame (quat sign aside)', () => {

@@ -230,3 +230,86 @@ test('edit shares untouched clips by reference', () => {
   expect(s().project.clips[c]).not.toBe(before.clips[c])
   expect(before.clips[c].channels[ch]).toBeUndefined()
 })
+
+// --- sequence editing ---
+const trackItems = (a: string) => s().project.sequence.tracks.find(t => t.actorId === a)!.items
+const item0 = () => trackItems(actor)[0]
+
+test('newClip names clip_NN per robot, one undo entry, not placed', () => {
+  const before = s().project
+  const id = s().newClip('g1')
+  expect(s().project.clips[id]).toMatchObject({ name: 'clip_02', robot: 'g1', length: 120 })
+  expect(trackItems(actor)).toHaveLength(1)
+  s().undo()
+  expect(s().project).toBe(before)
+})
+
+test('addItem rejects robot mismatch', () => {
+  const go2Clip = s().newClip('go2')
+  const before = s().project
+  expect(s().addItem(actor, go2Clip, 200)).toBe(false)
+  expect(s().project).toBe(before)
+})
+
+test('addItem + overlap rules', () => {
+  const k = s().newClip('g1')
+  expect(s().addItem(actor, k, 100)).toBe(true)
+  expect(s().addItem(actor, k, 110)).toBe(false)
+  expect(s().addItem(actor, k, 0)).toBe(false)
+  expect(s().addItem(actor, k, -5)).toBe(false)
+})
+
+test('trimItem in/out bounds', () => {
+  const id = item0().id
+  expect(s().trimItem(id, 'in', -1)).toBe(false)
+  expect(s().trimItem(id, 'out', 1)).toBe(false)
+  expect(s().trimItem(id, 'in', 119)).toBe(true)
+  expect(trackItems(actor)[0]).toMatchObject({ start: 119, trimIn: 119, trimOut: 120 })
+  expect(s().trimItem(id, 'in', 1)).toBe(false)
+  expect(s().trimItem(id, 'out', -1)).toBe(false)
+})
+
+test('trimItem out shortens', () => {
+  expect(s().trimItem(item0().id, 'out', -20)).toBe(true)
+  expect(item0().trimOut).toBe(100)
+})
+
+test('splitItem makes two items sharing the clip', () => {
+  const id = item0().id
+  expect(s().splitItem(id, 50)).toBe(true)
+  const its = trackItems(actor)
+  expect(its.map(i => [i.start, i.trimIn, i.trimOut])).toEqual([[0, 0, 50], [50, 50, 120]])
+  expect(its[0].refId).toBe(its[1].refId)
+  expect(its[0].id).toBe(id)
+  expect(its[1].id).not.toBe(id)
+  expect(s().splitItem(id, 0)).toBe(false)
+  expect(s().splitItem(id, 50)).toBe(false)
+})
+
+test('deleteClip refuses clip in use, allows unused', () => {
+  expect(s().deleteClip(item0().refId)).toBe(false)
+  const k = s().newClip('g1')
+  expect(s().deleteClip(k)).toBe(true)
+  expect(s().project.clips[k]).toBeUndefined()
+})
+
+test('each sequence edit is one undo entry; reject leaves stacks', () => {
+  s().moveItem(item0().id, 30)
+  expect(item0().start).toBe(30)
+  s().undo()
+  expect(item0().start).toBe(0)
+  s().redo()
+  const p = s().project
+  expect(s().moveItem(item0().id, -1)).toBe(false)
+  expect(s().project).toBe(p)
+  s().redo() // redo stack untouched by rejection: nothing to redo, project same
+  expect(s().project).toBe(p)
+})
+
+test('deleteItem clears selItem and can empty a track', () => {
+  const id = item0().id
+  s().selectItem(id)
+  expect(s().deleteItem(id)).toBe(true)
+  expect(s().selItem).toBeNull()
+  expect(trackItems(actor)).toHaveLength(0)
+})

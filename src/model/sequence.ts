@@ -85,3 +85,16 @@ export function stitchTransforms(p: Project, defs: RobotDefs, track: Track): Map
   }
   return out
 }
+
+// Track rule: start >= 0, distinct starts, only neighbours overlap (never i and i+2), overlap <= min(len)-1.
+export function validTrack(items: Item[]): boolean {
+  const s = [...items].sort((a, b) => a.start - b.start)
+  if (s.some(it => it.start < 0 || it.trimIn < 0 || itemLen(it) < 1)) return false
+  for (let i = 0; i + 1 < s.length; i++) {
+    const end = s[i].start + itemLen(s[i])
+    if (s[i + 1].start === s[i].start) return false
+    if (end - s[i + 1].start > Math.min(itemLen(s[i]), itemLen(s[i + 1])) - 1) return false
+    if (i + 2 < s.length && end > s[i + 2].start) return false
+  }
+  return true
+}

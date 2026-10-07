@@ -1,8 +1,9 @@
 import { createStore, useStore, type StoreApi } from 'zustand'
 import { evalCurve, makeKey } from '../model/curve'
-import { addActor as addActorTo, newProject } from '../model/defaults'
+import { addActor as addActorTo, newProject, nextClipName } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
-import type { Actor, Clip, Interp, Project, Tan } from '../model/types'
+import { validTrack } from '../model/sequence'
+import type { Actor, Item, Clip, Interp, Project, Tan } from '../model/types'
 import type { RobotKind } from '../robot/types'
 
 export type KeyRef = { channel: string; f: number }
@@ -23,6 +24,14 @@ export interface EditorState {
   setPlacement(actorId: string, pl: Partial<Actor['placement']>): void
   setColor(actorId: string, hex: string): void
   addActor(robot: RobotKind): void
+  selItem: string | null; selectItem(itemId: string | null): void
+  newClip(robot: RobotKind): string
+  deleteClip(clipId: string): boolean
+  addItem(actorId: string, clipId: string, start: number): boolean
+  moveItem(itemId: string, start: number): boolean
+  trimItem(itemId: string, side: 'in' | 'out', df: number): boolean
+  splitItem(itemId: string, frame: number): boolean
+  deleteItem(itemId: string): boolean
   beginGesture(): void; endGesture(): void
   undo(): void; redo(): void
 }
@@ -62,6 +71,19 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       commit(next)
     }
 
+    // Mutate a candidate; commit only if fn returns true (rejection leaves project and stacks untouched).
+    const tryEdit = (fn: (p: Project) => boolean): boolean => {
+      const p = get().project
+      const next: Project = { ...p, actors: structuredClone(p.actors), sequence: structuredClone(p.sequence), clips: { ...p.clips } }
+      if (!fn(next)) return false
+      commit(next)
+      return true
+    }
+    const findItem = (p: Project, id: string) => {
+      for (const t of p.sequence.tracks) { const it = t.items.find(i => i.id === id); if (it) return { t, it } }
+      return null
+    }
+
     const putKey = (clip: Clip, channel: string, f: number, v: number) => {
       const j = defs[clip.robot].joints.find(j => j.name === channel)
       if (j) v = Math.min(Math.max(v, j.lower), j.upper)
@@ -74,6 +96,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
     const findKey = (clip: Clip, r: KeyRef) => clip.channels[r.channel]?.keys.find(k => k.f === r.f)
 
     return {
+      selItem: null, selectItem: selItem => set({ selItem }),
       defs, project: newProject(), frame: 0, playing: false, autoKey: false, view: 'tracks',
       sel: { actorId: null, channel: null, keys: [] },
       setFrame: frame => set({ frame }),
@@ -179,6 +202,57 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       }, []),
       setColor: (actorId, hex) => edit(p => { p.actors.find(a => a.id === actorId)!.color = hex }, []),
       addActor: robot => commit(addActorTo({ ...get().project, actors: structuredClone(get().project.actors), sequence: structuredClone(get().project.sequence), clips: { ...get().project.clips } }, robot)),
+      newClip: robot => {
+        const id = crypto.randomUUID()
+        edit(p => { p.clips[id] = { id, name: nextClipName(p, robot), robot, length: 120, channels: {} } }, [])
+        return id
+      },
+      deleteClip: clipId => tryEdit(p => {
+        if (!p.clips[clipId] || p.sequence.tracks.some(t => t.items.some(i => i.refId === clipId))) return false
+        delete p.clips[clipId]
+        return true
+      }),
+      addItem: (actorId, clipId, start) => tryEdit(p => {
+        const clip = p.clips[clipId]
+        const track = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actorId)
+        const actor = p.actors.find(a => a.id === actorId)
+        if (!clip || !track || !actor || actor.robot !== clip.robot) return false
+        track.items.push({ id: crypto.randomUUID(), refId: clipId, start: Math.round(start), trimIn: 0, trimOut: clip.length })
+        return validTrack(track.items)
+      }),
+      moveItem: (itemId, start) => tryEdit(p => {
+        const f = findItem(p, itemId)
+        if (!f) return false
+        f.it.start = Math.round(start)
+        return validTrack(f.t.items)
+      }),
+      trimItem: (itemId, side, df) => tryEdit(p => {
+        const f = findItem(p, itemId)
+        if (!f) return false
+        const d = Math.round(df), it = f.it
+        if (side === 'in') { it.start += d; it.trimIn += d } else it.trimOut += d
+        return it.trimIn >= 0 && it.trimIn < it.trimOut && it.trimOut <= p.clips[it.refId].length && validTrack(f.t.items)
+      }),
+      splitItem: (itemId, frame) => tryEdit(p => {
+        const f = findItem(p, itemId)
+        if (!f) return false
+        const it = f.it, cut = Math.round(frame) - it.start + it.trimIn
+        if (!(cut > it.trimIn && cut < it.trimOut)) return false
+        const right: Item = { id: crypto.randomUUID(), refId: it.refId, start: Math.round(frame), trimIn: cut, trimOut: it.trimOut }
+        it.trimOut = cut
+        f.t.items.push(right)
+        return validTrack(f.t.items)
+      }),
+      deleteItem: itemId => {
+        const ok = tryEdit(p => {
+          const f = findItem(p, itemId)
+          if (!f) return false
+          f.t.items = f.t.items.filter(i => i.id !== itemId)
+          return true
+        })
+        if (ok && get().selItem === itemId) set({ selItem: null })
+        return ok
+      },
       beginGesture: () => {
         if (gesture) return
         gesture = get().project
