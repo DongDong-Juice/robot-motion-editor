@@ -51,7 +51,7 @@ export function csvFileName(p: Project, actorId: string, itemId: string, taken: 
   if (!actor) throw new Error(`unknown actor ${actorId}`)
   const clip = p.clips[findItem(p, itemId).refId]
   const shared = p.actors.filter(a => a.robot === actor.robot).length > 1
-  const clean = (s: string) => s.replace(/[/\\:*?"<>|\s]/g, '_')
+  const clean = (s: string) => s.replace(/[/\\:*?"<>|#\s]/g, '_')
   const base = `${clean(shared ? actor.name : LABEL[actor.robot])}_${clean(clip?.name ?? 'clip')}`
   let name = `${base}.csv`
   for (let n = 2; taken.has(name); n++) name = `${base}_${n}.csv`

@@ -5,7 +5,7 @@ import type { RobotKind } from '../robot/types'
 import { addActor, newProject } from '../model/defaults'
 import { makeKey } from '../model/curve'
 import { eulerToQuat, quatYaw } from '../model/rootMath'
-import type { RobotDefs } from '../model/evaluate'
+import { evaluate, type RobotDefs } from '../model/evaluate'
 import type { Project } from '../model/types'
 import { csvFileName, itemFrameRange, posesToCsv, samplePoses } from './csv'
 
@@ -87,5 +87,32 @@ test('file names: sanitize and dedupe', () => {
 
 test('file name uses actor name when robot shared', () => {
   const p = addActor(proj, 'g1')
-  expect(csvFileName(p, p.actors[2].id, itemOf(p, p.actors[2].id).id, new Set())).toBe('G1_#2_clip_01.csv')
+  expect(csvFileName(p, p.actors[2].id, itemOf(p, p.actors[2].id).id, new Set())).toBe('G1__2_clip_01.csv')
+})
+
+test('world csv rows equal evaluate() per frame (quat sign aside)', () => {
+  const p = structuredClone(proj)
+  p.actors[0].placement = { x: 1.5, y: -0.5, yaw: 0.8 }
+  const clip = p.clips[itemOf(p, g1.id).refId]
+  clip.channels['root.x'] = { keys: [makeKey(0, 0, 'linear'), makeKey(90, 2, 'linear')] }
+  clip.channels['root.yaw'] = { keys: [makeKey(10, 0.2, 'bezier'), makeKey(100, 3.5, 'bezier')] }
+  clip.channels['root.pitch'] = { keys: [makeKey(0, 0.1, 'hold')] }
+  clip.channels['left_elbow_joint'] = { keys: [makeKey(5, 0.3, 'linear'), makeKey(80, 1.1, 'linear')] }
+  const rows = posesToCsv(samplePoses(p, defs, g1.id, itemOf(p, g1.id).id, 'world')).trimEnd().split('\n')
+  const near = (a: number[], b: number[]) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], 6))
+  rows.forEach((r, f) => {
+    const n = r.split(',').map(Number), e = evaluate(p, defs, g1.id, f)
+    near(n.slice(0, 3), e.rootPos)
+    const sign = dot(n.slice(3, 7), e.rootQuat) < 0 ? -1 : 1
+    near(n.slice(3, 7), e.rootQuat.map(v => v * sign))
+    near(n.slice(7), e.q)
+  })
+})
+
+test.each(['g1', 'go2'] as const)('%s csv joint order equals model.json revolute order', k => {
+  const m = JSON.parse(readFileSync(new URL(`../../public/robots/${k}/model.json`, import.meta.url), 'utf8'))
+  const names = m.joints.filter((j: { type: string }) => j.type === 'revolute').map((j: { name: string }) => j.name)
+  expect(defs[k].joints.map(j => j.name)).toEqual(names)
+  const q = new Array(names.length).fill(0)
+  expect(posesToCsv([{ rootPos: [0, 0, 0], rootQuat: [0, 0, 0, 1], q }]).trim().split(',')).toHaveLength(7 + names.length)
 })
