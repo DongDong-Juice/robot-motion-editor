@@ -1,4 +1,5 @@
 import { editingItem, getEditor, type EditorState } from './store/store'
+import { onHandleArrow } from './layout/useLayout'
 import { sortedItems } from './model/sequence'
 import type { Project } from './model/types'
 import { openProject, saveProject } from './projectActions'
@@ -65,7 +66,7 @@ export function startTransport(): () => void {
       return
     }
     if (typing(e.target) || e.altKey) return
-    if (e.target instanceof Element && e.target.closest('[role=separator]')) return // resize handles own their arrow keys
+    if (onHandleArrow(e)) return // resize handles own their arrow keys
     // panel rows own Delete/Backspace and the plain editing keys; undo, Space and arrows still pass through
     if (e.target instanceof Element && e.target.closest('#project') && !e.ctrlKey && !e.metaKey && ['Delete', 'Backspace', 'Escape', 'c', 'i', 'o', 'm'].includes(e.key.length === 1 ? e.key.toLowerCase() : e.key)) return
     const s = ed.getState()

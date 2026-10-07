@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { onHandleArrow } from '../layout/useLayout'
 import { clampDf, clipLocked, editingItem, editTarget, getEditor, type KeyRef } from '../store/store'
 import type { Curve, Key, Sequence } from '../model/types'
 import { evalCurve } from '../model/curve'
@@ -265,6 +266,7 @@ export default function GraphCanvas() {
 
     const onKey = (e: KeyboardEvent) => {
       const t = e.target
+      if (onHandleArrow(e)) return
       if (t instanceof Element && t.closest('#project')) return
       if (t instanceof HTMLElement && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return
       if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey && !e.altKey) { fit(); schedule() }

@@ -11,7 +11,7 @@ import { formatTimecode } from './timeline/timeScale'
 import ExportDialog from './export/ExportDialog'
 import { sequenceEnd, startTransport } from './transport'
 import { newProjectFile, onMessage, openProject, saveProject } from './projectActions'
-import { MENUBAR_H, useLayout, type Layout } from './layout/useLayout'
+import { MENUBAR_H, layoutBounds, useLayout, type Layout } from './layout/useLayout'
 
 function AutoKeyHint() {
   const off = useEditor(s => !s.autoKey && !!s.sel.channel && !s.sel.channel.startsWith('group:'))
@@ -83,8 +83,8 @@ function Menubar() {
 
 const KEY_STEP = 16
 /** 6px separator overlaid on a panel boundary. sign: +1 if dragging toward +axis grows the panel, -1 if it shrinks. */
-function Resizer({ k, axis, value, sign, style, label, set, reset }: {
-  k: keyof Layout; axis: 'x' | 'y'; value: number; sign: 1 | -1; style: React.CSSProperties; label: string
+function Resizer({ k, axis, value, min, max, sign, style, label, set, reset }: {
+  k: keyof Layout; min: number; max: number; axis: 'x' | 'y'; value: number; sign: 1 | -1; style: React.CSSProperties; label: string
   set: (p: Partial<Layout>, persist?: boolean) => void; reset: (keys: (keyof Layout)[]) => void
 }) {
   const drag = useRef<{ p: number; v: number } | null>(null)
@@ -99,7 +99,7 @@ function Resizer({ k, axis, value, sign, style, label, set, reset }: {
   }
   return (
     <div className={`resizer ${axis}`} role="separator" tabIndex={0} aria-label={label}
-      aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'} aria-valuenow={value} style={style}
+      aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'} aria-valuenow={value} aria-valuemin={min} aria-valuemax={max} style={style}
       onPointerDown={e => {
         if (e.button !== 0) return
         e.preventDefault() // keep focus off the handle after a drag; Tab still reaches it
@@ -130,6 +130,7 @@ export default function App() {
 
   useEffect(() => (status === 'ready' ? startTransport() : undefined), [status])
 
+  const bounds = layoutBounds(layout, window.innerWidth, window.innerHeight)
   return (
     <div id="app" style={{ gridTemplateColumns: `${layout.left}px 1fr ${layout.right}px`, gridTemplateRows: `${MENUBAR_H}px 1fr ${layout.bottom}px` }}>
       <header id="menubar">{status === 'ready' ? <Menubar /> : 'Motion Editor'}</header>
@@ -144,11 +145,11 @@ export default function App() {
       </main>
       <aside id="inspector">{status === "ready" && <Inspector />}</aside>
       <section id="timeline">{status === 'ready' && <Timeline />}</section>
-      <Resizer k="left" axis="x" sign={1} label="프로젝트 패널 너비" value={layout.left} set={setLayout} reset={resetLayout}
+      <Resizer k="left" axis="x" sign={1} label="프로젝트 패널 너비" value={layout.left} min={bounds.left[0]} max={bounds.left[1]} set={setLayout} reset={resetLayout}
         style={{ left: layout.left - 3, top: MENUBAR_H, bottom: layout.bottom }} />
-      <Resizer k="right" axis="x" sign={-1} label="인스펙터 너비" value={layout.right} set={setLayout} reset={resetLayout}
+      <Resizer k="right" axis="x" sign={-1} label="인스펙터 너비" value={layout.right} min={bounds.right[0]} max={bounds.right[1]} set={setLayout} reset={resetLayout}
         style={{ right: layout.right - 3, top: MENUBAR_H, bottom: layout.bottom }} />
-      <Resizer k="bottom" axis="y" sign={-1} label="타임라인 높이" value={layout.bottom} set={setLayout} reset={resetLayout}
+      <Resizer k="bottom" axis="y" sign={-1} label="타임라인 높이" value={layout.bottom} min={bounds.bottom[0]} max={bounds.bottom[1]} set={setLayout} reset={resetLayout}
         style={{ left: 0, right: 0, bottom: layout.bottom - 3 }} />
     </div>
   )

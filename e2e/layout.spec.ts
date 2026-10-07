@@ -11,6 +11,11 @@ test('resize handle: arrows resize without stepping the frame; drag leaves no fo
   await page.keyboard.press('ArrowRight')
   expect(Number(await h.getAttribute('aria-valuenow'))).toBe(w0 + 16)
   expect(await frame()).toBe(f0)
+  const inF = () => page.evaluate(() => (window as any).__editor.getState().project.sequence.inF)
+  await page.evaluate(() => (window as any).__editor.getState().setIn(7))
+  expect(await inF()).toBe(7)
+  await page.keyboard.press('Control+z') // undo still works while a handle is focused
+  expect(await inF()).toBeNull()
   await page.evaluate(() => (document.activeElement as HTMLElement).blur())
   const bb = (await h.boundingBox())!
   await page.mouse.move(bb.x + 3, bb.y + 100); await page.mouse.down(); await page.mouse.move(bb.x + 40, bb.y + 100); await page.mouse.up()

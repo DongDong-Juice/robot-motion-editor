@@ -17,6 +17,14 @@ describe('clampLayout', () => {
     const d = clampLayout({ left: 160, right: 520, bottom: 300 }, 700, 700)
     expect(700 - d.left - d.right).toBeGreaterThanOrEqual(320)
   })
+  it('prefer: drag of one side takes the overflow from that side only', () => {
+    const c = clampLayout({ left: 480, right: 300, bottom: 300 }, 1024, 700, 'left')
+    expect(c).toEqual({ left: 1024 - 320 - 300, right: 300, bottom: 300 })
+    const d = clampLayout({ left: 300, right: 520, bottom: 300 }, 1024, 700, 'right')
+    expect(d).toEqual({ left: 300, right: 1024 - 320 - 300, bottom: 300 })
+    const e = clampLayout({ left: 200, right: 520, bottom: 300 }, 700, 700, 'left') // left already at floor-ish: other side gives the rest
+    expect(700 - e.left - e.right).toBeGreaterThanOrEqual(320)
+  })
   it('small window: never below minimums', () => {
     const c = clampLayout({ left: 300, right: 300, bottom: 500 }, 500, 300)
     expect(c.left).toBe(160); expect(c.right).toBe(220); expect(c.bottom).toBe(160)
