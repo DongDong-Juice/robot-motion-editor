@@ -13,6 +13,16 @@ export function eulerToQuat(roll: number, pitch: number, yaw: number): Quat {
   ]
 }
 
+// Inverse of eulerToQuat (ZYX); pitch in [-pi/2, pi/2], roll/yaw in (-pi, pi].
+export function quatToEuler(q: Quat): [number, number, number] {
+  const [x, y, z, w] = q
+  return [
+    Math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y)),
+    Math.asin(Math.max(-1, Math.min(1, 2 * (w * y - z * x)))),
+    Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)),
+  ]
+}
+
 export function quatMul(a: Quat, b: Quat): Quat {
   const [ax, ay, az, aw] = a, [bx, by, bz, bw] = b
   return [

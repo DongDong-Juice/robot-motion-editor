@@ -101,3 +101,6 @@ body {
 .pp-row button { padding: 0 5px; }
 .pp-btns button:disabled { opacity: .45; cursor: default; }
 .pp-msg { color: var(--accent); margin: 0; }
+.pp-dlg { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 4px; }
+.pp-dlg label { display: block; margin: 2px 0; }
+.pp-dlg p, .pp-msg p { margin: 0 0 4px; }

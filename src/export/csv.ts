@@ -13,16 +13,19 @@ function findItem(p: Project, itemId: string): Item {
   throw new Error(`unknown item ${itemId}`)
 }
 
+// Unit-length quaternion, sign-flipped to stay on the same hemisphere as the previous row.
+export function normalizedPose(src: Pose, prev?: Pose): Pose {
+  const n = Math.hypot(...src.rootQuat) || 1
+  let q = src.rootQuat.map(v => v / n) as Quat
+  if (prev && prev.rootQuat.reduce((s, v, i) => s + v * q[i], 0) < 0) q = q.map(v => -v) as Quat
+  return { rootPos: [...src.rootPos], rootQuat: q, q: [...src.q] }
+}
+
 export function samplePoses(p: Project, defs: RobotDefs, actorId: string, itemId: string, mode: RootMode): Pose[] {
   const { from, to } = itemFrameRange(findItem(p, itemId))
   const out: Pose[] = []
   for (let f = from; f < to; f++) {
-    const src = evaluate(p, defs, actorId, f)
-    const n = Math.hypot(...src.rootQuat) || 1
-    let q = src.rootQuat.map(v => v / n) as Quat
-    const prev = out[out.length - 1]
-    if (prev && prev.rootQuat.reduce((s, v, i) => s + v * q[i], 0) < 0) q = q.map(v => -v) as Quat
-    out.push({ rootPos: [...src.rootPos], rootQuat: q, q: [...src.q] })
+    out.push(normalizedPose(evaluate(p, defs, actorId, f), out[out.length - 1]))
   }
   if (mode === 'local' && out.length) {
     const [x0, y0] = out[0].rootPos

@@ -29,6 +29,7 @@ export interface EditorState {
   setIn(f: number | null): void; setOut(f: number | null): void
   addMarker(f: number): void; renameMarker(index: number, name: string): void; deleteMarker(index: number): void
   newClip(robot: RobotKind): string
+  importClip(clip: Clip): void
   deleteClip(clipId: string): boolean
   addItem(actorId: string, clipId: string, start: number): boolean
   moveItem(itemId: string, start: number): boolean
@@ -259,6 +260,12 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         edit(p => { p.clips[id] = { id, name: nextClipName(p, robot), robot, length: 120, channels: {} } }, [])
         return id
       },
+      importClip: clip => edit(p => {
+        const taken = new Set(Object.values(p.clips).filter(c => c.robot === clip.robot).map(c => c.name))
+        let name = clip.name
+        for (let n = 2; taken.has(name); n++) name = `${clip.name}_${n}`
+        p.clips[clip.id] = { ...clip, name }
+      }, []),
       deleteClip: clipId => tryEdit(p => {
         if (!p.clips[clipId] || p.sequence.tracks.some(t => t.items.some(i => i.refId === clipId))) return false
         delete p.clips[clipId]
