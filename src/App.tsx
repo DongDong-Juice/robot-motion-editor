@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { fetchRobotDef } from './robot/loadRobot'
-import { initEditor, useEditor } from './store/store'
+import { getEditor, initEditor, useEditor } from './store/store'
 import Inspector from './inspector/Inspector'
 import Stage from './viewer/Stage'
 import Timeline from './timeline/Timeline'
@@ -37,7 +37,7 @@ export default function App() {
 
   useEffect(() => {
     Promise.all([fetchRobotDef('g1'), fetchRobotDef('go2')])
-      .then(([g1, go2]) => { initEditor({ g1, go2 }); setStatus('ready') })
+      .then(([g1, go2]) => { initEditor({ g1, go2 }); if (import.meta.env.DEV) (window as any).__editor = getEditor(); setStatus('ready') })
       .catch(e => setStatus(`로봇 불러오기 실패: ${e instanceof Error ? e.message : e}`))
   }, [])
 
