@@ -1,11 +1,11 @@
 // The only module that touches file APIs. Swap this file when wrapping in Tauri/Electron.
-type Picker = () => Promise<FileSystemDirectoryHandle>
+type Picker = (o: { mode: 'readwrite' }) => Promise<FileSystemDirectoryHandle>
 
 export async function pickDirectory(): Promise<FileSystemDirectoryHandle | null> {
   const pick = (window as unknown as { showDirectoryPicker?: Picker }).showDirectoryPicker
   if (!pick) return null
   try {
-    return await pick.call(window)
+    return await pick.call(window, { mode: 'readwrite' })
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') return null
     throw e

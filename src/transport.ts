@@ -50,7 +50,11 @@ export function startTransport(): () => void {
       s.setPlaying(!s.playing)
     } else if (e.key === 'ArrowLeft') step(e.shiftKey ? -10 : -1)
     else if (e.key === 'ArrowRight') step(e.shiftKey ? 10 : 1)
-    else if (e.key === 'Tab') { e.preventDefault(); s.setView(s.view === 'tracks' ? 'graph' : 'tracks') }
+    else if (e.key === 'Tab' && e.target instanceof Element && e.target.closest('#timeline')) {
+      e.preventDefault(); s.setView(s.view === 'tracks' ? 'graph' : 'tracks')
+      // the focused canvas is unmounted by the switch; refocus the new one so Tab keeps toggling
+      requestAnimationFrame(() => document.querySelector<HTMLElement>('#timeline canvas')?.focus())
+    }
   }
   window.addEventListener('keydown', onKey)
   return () => { cancelAnimationFrame(raf); window.removeEventListener('keydown', onKey) }
