@@ -2,7 +2,7 @@ import { createStore, useStore, type StoreApi } from 'zustand'
 import { evalCurve, makeKey } from '../model/curve'
 import { addActor as addActorTo, newProject, nextClipName } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
-import { validTrack } from '../model/sequence'
+import { resolve, sortedItems, validTrack } from '../model/sequence'
 import type { Actor, Item, Clip, Interp, Project, Tan } from '../model/types'
 import type { RobotKind } from '../robot/types'
 
@@ -25,6 +25,9 @@ export interface EditorState {
   setColor(actorId: string, hex: string): void
   addActor(robot: RobotKind): void
   selItem: string | null; selectItem(itemId: string | null): void
+  editing: string | null; openItem(itemId: string): void; closeItem(): void
+  setIn(f: number | null): void; setOut(f: number | null): void
+  addMarker(f: number): void; renameMarker(index: number, name: string): void; deleteMarker(index: number): void
   newClip(robot: RobotKind): string
   deleteClip(clipId: string): boolean
   addItem(actorId: string, clipId: string, start: number): boolean
@@ -39,11 +42,24 @@ export interface EditorState {
 const MAX_UNDO = 200
 const ROOT = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw']
 
-export function clipFrameAt(p: Project, actorId: string, frame: number): { clipId: string; f: number } {
-  const item = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actorId)?.items[0]
-  if (!item) throw new Error(`actor ${actorId} has no clip`)
-  const f = Math.min(Math.max(frame - item.start + item.trimIn, item.trimIn), item.trimOut - 1)
-  return { clipId: item.refId, f }
+// Which clip and clip frame edits for `actorId` go to. Clip view: the open item (trims ignored); else the item covering the frame.
+export function editTarget(s: Pick<EditorState, 'project' | 'frame' | 'editing'>, actorId: string):
+  { clipId: string; f: number; itemId: string } | null {
+  const p = s.project
+  if (s.editing) for (const t of p.sequence.tracks) {
+    const it = t.items.find(i => i.id === s.editing)
+    if (it && t.actorId === actorId) {
+      const f = Math.min(Math.max(s.frame - it.start + it.trimIn, 0), p.clips[it.refId].length - 1)
+      return { clipId: it.refId, f, itemId: it.id }
+    }
+  }
+  const track = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actorId)
+  if (!track) return null
+  const items = sortedItems(track)
+  const cover = items.filter(i => s.frame >= i.start && s.frame < i.start + (i.trimOut - i.trimIn)).at(-1) // later item wins on overlap
+  if (cover) return { clipId: cover.refId, f: s.frame - cover.start + cover.trimIn, itemId: cover.id }
+  const r = resolve(items, s.frame)
+  return r && { clipId: r.item.refId, f: r.cf, itemId: r.item.id }
 }
 
 // One shared delta for every selected key (all channels) so min f >= 0 and max f <= length-1.
@@ -60,7 +76,11 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
     // One user action = one undo entry: mutate a clone, push the old project.
     const commit = (next: Project) => {
       if (!gesture) { undoS = [...undoS, get().project].slice(-MAX_UNDO); redoS = [] }
-      set({ project: next })
+      set({ project: next, editing: keepEditing(next) })
+    }
+    const keepEditing = (p: Project) => {
+      const e = get().editing
+      return e && p.sequence.tracks.some(t => t.items.some(i => i.id === e)) ? e : null
     }
     // Only `touched` clips are cloned; other clips are shared with older snapshots by reference.
     const edit = (fn: (p: Project) => void, touched: string[]) => {
@@ -97,6 +117,21 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
 
     return {
       selItem: null, selectItem: selItem => set({ selItem }),
+      editing: null,
+      openItem: itemId => {
+        const t = get().project.sequence.tracks.find(t => t.items.some(i => i.id === itemId))
+        if (t) set({ editing: itemId, selItem: itemId, sel: { actorId: t.actorId ?? null, channel: null, keys: [] } })
+      },
+      closeItem: () => set({ editing: null }),
+      setIn: f => edit(p => { p.sequence.inF = f; if (f !== null && p.sequence.outF !== null && p.sequence.outF <= f) p.sequence.outF = null }, []),
+      setOut: f => edit(p => { p.sequence.outF = f; if (f !== null && p.sequence.inF !== null && p.sequence.inF >= f) p.sequence.inF = null }, []),
+      addMarker: f => edit(p => {
+        const n = Math.max(0, ...p.sequence.markers.map(m => Number(/^마커 (\d+)$/.exec(m.name)?.[1] ?? 0))) + 1
+        p.sequence.markers.push({ f: Math.round(f), name: `마커 ${n}` })
+        p.sequence.markers.sort((a, b) => a.f - b.f)
+      }, []),
+      renameMarker: (i, name) => edit(p => { if (p.sequence.markers[i]) p.sequence.markers[i].name = name }, []),
+      deleteMarker: i => edit(p => { p.sequence.markers.splice(i, 1) }, []),
       defs, project: newProject(), frame: 0, playing: false, autoKey: false, view: 'tracks',
       sel: { actorId: null, channel: null, keys: [] },
       setFrame: frame => set({ frame }),
@@ -113,8 +148,9 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       }),
       setValue: (actorId, channel, v) => {
         if (!get().autoKey) return
-        const { clipId, f } = clipFrameAt(get().project, actorId, get().frame)
-        get().setKey(clipId, channel, f, v)
+        const t = editTarget(get(), actorId)
+        if (!t) return
+        get().setKey(t.clipId, channel, t.f, v)
       },
       setKey: (clipId, channel, f, v) => edit(p => putKey(p.clips[clipId], channel, f, v), [clipId]),
       deleteKeys: (clipId, keys) => edit(p => {
@@ -162,7 +198,9 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       keyGroup: (actorId, group) => {
         const actor = get().project.actors.find(a => a.id === actorId)!
         const def = defs[actor.robot]
-        const { clipId, f } = clipFrameAt(get().project, actorId, get().frame)
+        const t = editTarget(get(), actorId)
+        if (!t) return
+        const { clipId, f } = t
         const names = group === '루트' ? ROOT : def.groups.find(g => g.name === group)?.joints
         if (!names) throw new Error(`unknown group ${group}`)
         edit(p => {
@@ -266,13 +304,13 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         const prev = undoS.at(-1)
         if (!prev) return
         undoS = undoS.slice(0, -1); redoS = [...redoS, get().project]
-        set(s => ({ project: prev, sel: { ...s.sel, keys: [] } }))
+        set(s => ({ project: prev, editing: keepEditing(prev), sel: { ...s.sel, keys: [] } }))
       },
       redo: () => {
         const next = redoS.at(-1)
         if (!next) return
         redoS = redoS.slice(0, -1); undoS = [...undoS, get().project]
-        set(s => ({ project: next, sel: { ...s.sel, keys: [] } }))
+        set(s => ({ project: next, editing: keepEditing(next), sel: { ...s.sel, keys: [] } }))
       },
     }
   })

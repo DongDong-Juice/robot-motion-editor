@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { clampDf, clipFrameAt, getEditor, type KeyRef } from '../store/store'
+import { clampDf, editTarget, getEditor, type KeyRef } from '../store/store'
 import type { Interp } from '../model/types'
 import { tv } from './viewState'
 import { buildRows, formatTimecode, frameToX, hitKey, rowKey, xToFrame, type TimeScale } from './timeScale'
@@ -30,9 +30,9 @@ export default function TrackCanvas() {
 
     const scale = (): TimeScale => ({ x0: LABEL_W - tv.scrollF * tv.ppf, pxPerFrame: tv.ppf })
     const itemOf = (actorId: string) => {
-      const p = ed.getState().project
-      const item = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actorId)?.items[0]
-      return item ? { item, clip: p.clips[item.refId] } : null
+      const s = ed.getState(), t = editTarget(s, actorId)
+      const item = t && s.project.sequence.tracks.flatMap(tr => tr.items).find(i => i.id === t.itemId)
+      return item ? { item, clip: s.project.clips[item.refId] } : null
     }
     // clip frame -> x for an actor, through its item placement
     const clipScale = (actorId: string): TimeScale | null => {
@@ -233,8 +233,9 @@ export default function TrackCanvas() {
       if (t instanceof HTMLElement && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return
       const s = ed.getState()
       if (s.view !== 'tracks' || !s.sel.actorId || e.altKey) return
-      let clipId: string, f: number
-      try { ({ clipId, f } = clipFrameAt(s.project, s.sel.actorId, s.frame)) } catch { return }
+      const target = editTarget(s, s.sel.actorId)
+      if (!target) return
+      const { clipId, f } = target
       const keys = s.sel.keys, mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase()
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (keys.length) { e.preventDefault(); s.deleteKeys(clipId, keys) }
@@ -285,7 +286,8 @@ export default function TrackCanvas() {
 
   const apply = (interp: Interp) => {
     const s = getEditor().getState()
-    if (s.sel.actorId && s.sel.keys.length) s.setInterp(clipFrameAt(s.project, s.sel.actorId, 0).clipId, s.sel.keys, interp)
+    const t = s.sel.actorId && s.sel.keys.length ? editTarget(s, s.sel.actorId) : null
+    if (t) s.setInterp(t.clipId, s.sel.keys, interp)
     setMenu(null)
   }
   return (

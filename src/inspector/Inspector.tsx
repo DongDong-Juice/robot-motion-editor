@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { evalCurve } from '../model/curve'
 import { evaluateClip } from '../model/evaluate'
 import type { Interp } from '../model/types'
-import { clipFrameAt, getEditor, useEditor } from '../store/store'
+import { editTarget, getEditor, useEditor } from '../store/store'
 
 const ROOT = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw']
 // slider ranges only; root number input is never clamped
@@ -15,15 +15,17 @@ const isAngle = (ch: string, joint: boolean) => joint || /roll|pitch|yaw/.test(c
 
 export default function Inspector() {
   const ed = getEditor()
-  const { project, defs, frame, autoKey, sel } = useEditor(s => s)
+  const { project, defs, frame, autoKey, sel, editing } = useEditor(s => s)
   const [deg, setDeg] = useState(true)
   const actor = project.actors.find(a => a.id === sel.actorId)
   if (!actor) return <div className="insp-empty">무대에서 링크를 클릭하거나 타임라인에서 채널을 고르세요.</div>
 
   const def = defs[actor.robot]
-  const { clipId, f } = clipFrameAt(project, actor.id, frame)
+  const target = editTarget({ project, frame, editing }, actor.id)
+  if (!target) return <div className="insp-empty">이 액터에 클립이 없습니다.</div>
+  const { clipId, f } = target
   const clip = project.clips[clipId]
-  const item = project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actor.id)!.items[0]
+  const item = project.sequence.tracks.flatMap(t => t.items).find(i => i.id === target.itemId)!
   const pose = evaluateClip(clip, def, f)
 
   const channels = sel.channel === 'root' ? ROOT : sel.channel && !sel.channel.startsWith('group:') ? [sel.channel] : []

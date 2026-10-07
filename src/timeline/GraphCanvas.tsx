@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { clampDf, getEditor, type KeyRef } from '../store/store'
+import { clampDf, editTarget, getEditor, type KeyRef } from '../store/store'
 import type { Curve, Key } from '../model/types'
 import { evalCurve } from '../model/curve'
 import { fitView, handlePoints, valueToY, velocityViolations, yToValue, type ValueScale } from './graph'
@@ -30,7 +30,8 @@ export default function GraphCanvas() {
       const s = ed.getState()
       if (!s.sel.actorId) return null
       const actor = s.project.actors.find(a => a.id === s.sel.actorId)
-      const item = s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === s.sel.actorId)?.items[0]
+      const tg = editTarget(s, s.sel.actorId)
+      const item = tg && s.project.sequence.tracks.flatMap(t => t.items).find(i => i.id === tg.itemId)
       if (!actor || !item) return null
       const clip = s.project.clips[item.refId], def = s.defs[actor.robot]
       const cs: TimeScale = { x0: scale().x0 + (item.start - item.trimIn) * tv.ppf, pxPerFrame: tv.ppf }

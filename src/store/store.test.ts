@@ -3,7 +3,7 @@ import { beforeEach, expect, test } from 'vitest'
 import { loadRobotDef } from '../robot/loadRobot'
 import type { RobotKind } from '../robot/types'
 import type { RobotDefs } from '../model/evaluate'
-import { clipFrameAt, createEditorStore } from './store'
+import { createEditorStore, editTarget } from './store'
 
 const load = (k: RobotKind) => {
   const r = (f: string) => JSON.parse(readFileSync(new URL(`../../public/robots/${k}/${f}`, import.meta.url), 'utf8'))
@@ -63,7 +63,9 @@ test('setValue with autoKey off does not create key', () => {
 test('setValue with autoKey keys at current clip frame', () => {
   s().toggleAutoKey(); s().setFrame(7); s().setValue(actor, ch, 1)
   expect(keyAt(ch, 7).v).toBe(1)
-  expect(clipFrameAt(s().project, actor, 500)).toEqual({ clipId: c, f: 119 })
+  expect(editTarget(s(), actor)).toEqual({ clipId: c, f: 7, itemId: item0().id })
+  s().setFrame(500)
+  expect(editTarget(s(), actor)).toEqual({ clipId: c, f: 119, itemId: item0().id })
 })
 
 test('undo/redo restores project', () => {
@@ -312,4 +314,65 @@ test('deleteItem clears selItem and can empty a track', () => {
   expect(s().deleteItem(id)).toBe(true)
   expect(s().selItem).toBeNull()
   expect(trackItems(actor)).toHaveLength(0)
+})
+
+test('editTarget in clip view ignores trims', () => {
+  const id = item0().id
+  s().trimItem(id, 'in', 30)
+  s().openItem(id); s().setFrame(0)
+  expect(editTarget(s(), actor)).toEqual({ clipId: c, f: 0, itemId: id })
+  s().toggleAutoKey(); s().setValue(actor, ch, 0.4)
+  expect(keyAt(ch, 0).v).toBeCloseTo(0.4)
+  expect(s().sel.actorId).toBe(actor)
+})
+
+test('editTarget sequence view: later item on overlap', () => {
+  const k = s().newClip('g1')
+  s().addItem(actor, k, 100) // A 0..120, B 100..220: overlap 100..119
+  const [a, b] = trackItems(actor)
+  s().setFrame(110)
+  expect(editTarget(s(), actor)).toEqual({ clipId: k, f: 10, itemId: b.id })
+  s().setFrame(50)
+  expect(editTarget(s(), actor)).toEqual({ clipId: c, f: 50, itemId: a.id })
+})
+
+test('editTarget null without items; setValue ignored', () => {
+  s().deleteItem(item0().id)
+  expect(editTarget(s(), actor)).toBeNull()
+  s().toggleAutoKey(); s().setValue(actor, ch, 1); s().keyGroup(actor, '루트')
+  expect(curve(ch).keys).toHaveLength(0)
+})
+
+test('editing clears when item deleted or undone', () => {
+  const id = item0().id
+  s().openItem(id); s().deleteItem(id)
+  expect(s().editing).toBeNull()
+  s().undo(); s().openItem(id)
+  expect(s().editing).toBe(id)
+  s().closeItem(); expect(s().editing).toBeNull()
+  s().splitItem(id, 50); const r = trackItems(actor)[1].id
+  s().openItem(r); s().undo()
+  expect(s().editing).toBeNull()
+  s().redo()
+  expect(s().editing).toBeNull()
+})
+
+test('in/out ordering', () => {
+  s().setIn(100); s().setOut(50)
+  expect([s().project.sequence.inF, s().project.sequence.outF]).toEqual([null, 50])
+  s().setIn(10); s().setIn(60)
+  expect([s().project.sequence.inF, s().project.sequence.outF]).toEqual([60, null])
+  s().setOut(200); s().setIn(300)
+  expect([s().project.sequence.inF, s().project.sequence.outF]).toEqual([300, null])
+  s().setIn(null); expect(s().project.sequence.inF).toBeNull()
+})
+
+test('markers add/rename/delete undoable, sorted, numbered', () => {
+  s().addMarker(50); s().addMarker(10)
+  const m = () => s().project.sequence.markers
+  expect(m()).toEqual([{ f: 10, name: '마커 2' }, { f: 50, name: '마커 1' }])
+  s().renameMarker(0, '점프'); s().deleteMarker(1); s().addMarker(5)
+  expect(m()).toEqual([{ f: 5, name: '마커 1' }, { f: 10, name: '점프' }])
+  s().undo(); s().undo(); s().undo()
+  expect(m()).toEqual([{ f: 10, name: '마커 2' }, { f: 50, name: '마커 1' }])
 })
