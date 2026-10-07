@@ -41,7 +41,7 @@ export function addActor(p: Project, robot: RobotKind): Project {
 export function newProject(): Project {
   const g = makeActor(null, 'g1', 0), d = makeActor(null, 'go2', 1.5)
   return {
-    version: 1, fps: 60,
+    version: 2, fps: 60,
     actors: [g.actor, d.actor],
     clips: { [g.clip.id]: g.clip, [d.clip.id]: d.clip },
     media: [],

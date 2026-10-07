@@ -3,7 +3,19 @@ import { validTrack } from './sequence'
 import type { Media, Project } from './types'
 import { validVideoTrack } from './video'
 
-export const serializeProject = (p: Project): string => JSON.stringify(p, null, 1)
+const INTERP = ['linear', 'bezier', 'hold'] as const
+const r6 = (x: number) => Math.round(x * 1e6) / 1e6 + 0 // +0 turns -0 into 0
+
+// v2: each curve is { k: [f, v, interp, inDf, inDv, outDf, outDv, ...] }, reals rounded to 6 decimals, no indentation.
+export const serializeProject = (p: Project): string => JSON.stringify({
+  ...p, version: 2,
+  clips: Object.fromEntries(Object.entries(p.clips).map(([id, c]) => [id, {
+    ...c,
+    channels: Object.fromEntries(Object.entries(c.channels).map(([ch, cv]) => [ch, {
+      k: cv.keys.flatMap(k => [k.f, r6(k.v), INTERP.indexOf(k.interp), r6(k.inTan.df), r6(k.inTan.dv), r6(k.outTan.df), r6(k.outTan.dv)]),
+    }])),
+  }])),
+})
 
 class Bad extends Error {}
 const fail = (path: string, what = '형식이 올바르지 않습니다'): never => { throw new Bad(`${path} ${what}`) }
@@ -18,7 +30,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
   try { p = JSON.parse(text) } catch { throw new Error('프로젝트 파일을 읽을 수 없습니다') }
   if (!isObj(p)) throw new Error('프로젝트 파일을 읽을 수 없습니다')
   try {
-    if (p.version !== 1) throw new Bad(`지원하지 않는 버전입니다: ${p.version}`)
+    if (p.version !== 1 && p.version !== 2) throw new Bad(`지원하지 않는 버전입니다: ${p.version}`)
     if (p.fps !== 60) throw new Bad(`fps는 60이어야 합니다: ${p.fps}`)
     const robot = (v: unknown, path: string) => { if (!str(v) || !Object.hasOwn(defs, v)) fail(path, '로봇 종류를 알 수 없습니다') }
     const tan = (t: any, path: string) => { if (!isObj(t) || !num(t.df) || !num(t.dv)) fail(path) }
@@ -41,7 +53,19 @@ export function parseProject(text: string, defs: RobotDefs): Project {
       robot(c.robot, `${at}.robot`)
       if (!int(c.length) || c.length < 1) fail(`${at}.length`)
       if (!isObj(c.channels)) fail(`${at}.channels`)
-      for (const [ch, cv] of Object.entries<any>(c.channels)) {
+      for (const [ch, cv0] of Object.entries<any>(c.channels)) {
+        let cv = cv0
+        if (p.version === 2) { // expand { k } into { keys } so v1 and v2 share the key checks below
+          const kp = `${at}.channels.${ch}.k`
+          if (!isObj(cv0) || !Array.isArray(cv0.k) || cv0.k.length % 7 !== 0 || !cv0.k.every(num)) fail(kp)
+          const keys: any[] = []
+          for (let i = 0; i < cv0.k.length; i += 7) {
+            const [f, v, ip, idf, idv, odf, odv] = cv0.k.slice(i, i + 7)
+            if (!(ip in INTERP)) fail(`${kp}.${i + 2}`)
+            keys.push({ f, v, interp: INTERP[ip], inTan: { df: idf, dv: idv }, outTan: { df: odf, dv: odv } })
+          }
+          cv = c.channels[ch] = { keys }
+        }
         if (!isObj(cv) || !Array.isArray(cv.keys)) fail(`${at}.channels.${ch}`)
         cv.keys.forEach((k: any, i: number) => {
           const kt = `${at}.channels.${ch}.keys.${i}`
@@ -97,5 +121,6 @@ export function parseProject(text: string, defs: RobotDefs): Project {
   } catch (e) {
     throw e instanceof Bad ? new Error(e.message) : e
   }
+  p.version = 2
   return p as Project
 }

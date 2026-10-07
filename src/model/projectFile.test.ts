@@ -1,6 +1,7 @@
 import { loadDef } from '../test/defs'
 import { expect, test } from 'vitest'
 
+import type { Project } from './types'
 import type { RobotDefs } from './evaluate'
 import { newProject } from './defaults'
 import { makeKey } from './curve'
@@ -15,8 +16,9 @@ const mk = () => {
   p.sequence.markers.push({ f: 5, name: 'm' })
   return p
 }
+const v1 = (p: Project) => JSON.stringify({ ...p, version: 1 }, null, 1) // legacy format
 const bad = (fn: (p: any) => void, msg: string) => {
-  const p: any = JSON.parse(serializeProject(mk())); fn(p)
+  const p: any = JSON.parse(v1(mk())); fn(p)
   expect(() => parseProject(JSON.stringify(p), defs)).toThrow(msg)
 }
 
@@ -25,10 +27,51 @@ test('roundtrip preserves project', () => {
   expect(parseProject(serializeProject(p), defs)).toEqual(p)
 })
 
+test('v2: roundtrip within 1e-6, v1 opens as v2', () => {
+  const p = mk()
+  const k = { f: 3, v: 0.1234567891, interp: 'bezier' as const, inTan: { df: -2, dv: -0.00000049 }, outTan: { df: 2.5, dv: 1 / 3 } }
+  Object.values(p.clips)[0].channels['root.y'] = { keys: [k] }
+  const text = serializeProject(p)
+  expect(JSON.parse(text).version).toBe(2)
+  expect(text).not.toContain('\n')
+  const q = Object.values(parseProject(text, defs).clips)[0].channels['root.y'].keys[0]
+  expect(q).toMatchObject({ f: 3, interp: 'bezier' })
+  expect(q.v).toBeCloseTo(k.v, 6); expect(q.outTan.dv).toBeCloseTo(1 / 3, 6)
+  expect(Object.is(q.inTan.dv, 0)).toBe(true) // rounds to 0, never -0
+  const old = parseProject(v1(mk()), defs)
+  expect(old.version).toBe(2)
+  expect(parseProject(serializeProject(old), defs)).toEqual(old)
+})
+
+test('v2: compact (<30% of v1 indent-1 size) at 5000x36 keys', () => {
+  const p = newProject(), c = Object.values(p.clips)[0]
+  for (let ch = 0; ch < 36; ch++) c.channels[`j${ch}`] = { keys: Array.from({ length: 5000 }, (_, i) => makeKey(i, Math.sin(i * 0.01 + ch))) }
+  c.length = 5000
+  const ratio = serializeProject(p).length / v1(p).length
+  console.log('v2/v1 size ratio', ratio)
+  expect(ratio).toBeLessThan(0.3)
+})
+
+test('v2: rejects malformed k', () => {
+  const k = (arr: any[]) => {
+    const p: any = JSON.parse(serializeProject(mk()))
+    Object.values<any>(p.clips)[0].channels['root.x'] = { k: arr }
+    return () => parseProject(JSON.stringify(p), defs)
+  }
+  const a = [0, 1, 0, 0, 0, 0, 0], b = [10, 2, 0, 0, 0, 0, 0]
+  expect(k([...a, ...b])).not.toThrow()
+  expect(k([...a, 1])).toThrow('.k')
+  expect(k([0, null, 0, 0, 0, 0, 0])).toThrow('.k') // JSON for NaN
+  expect(k([0, 1, 3, 0, 0, 0, 0])).toThrow('.k')
+  expect(k([0.5, 1, 0, 0, 0, 0, 0])).toThrow('keys.0')
+  expect(k([...b, ...a])).toThrow('keys.1.f')
+  expect(k([...a, ...a])).toThrow('keys.1.f')
+})
+
 test('rejects bad json / version / fps', () => {
   expect(() => parseProject('{', defs)).toThrow('읽을 수 없습니다')
   expect(() => parseProject('[]', defs)).toThrow('읽을 수 없습니다')
-  bad(p => { p.version = 2 }, '지원하지 않는 버전입니다: 2')
+  bad(p => { p.version = 3 }, '지원하지 않는 버전입니다: 3')
   bad(p => { p.fps = 30 }, 'fps')
 })
 
@@ -47,7 +90,7 @@ test('rejects structural problems with the path', () => {
 })
 
 test('keeps unknown extra fields', () => {
-  const p: any = JSON.parse(serializeProject(mk())); p.extra = { a: 1 }
+  const p: any = JSON.parse(v1(mk())); p.extra = { a: 1 }
   expect((parseProject(JSON.stringify(p), defs) as any).extra).toEqual({ a: 1 })
 })
 
@@ -69,14 +112,14 @@ test('media id __proto__ is a plain id: duplicates and bounds still checked', ()
   const v = (items: any[]) => ({ id: 'v', kind: 'video', hidden: false, locked: false, items })
   const m = { id: '__proto__', name: 'a', durationF: 600 }
   const it = (trimOut: number) => ({ id: 'a', refId: '__proto__', start: 0, trimIn: 0, trimOut })
-  const run = (fn: (p: any) => void) => { const p: any = JSON.parse(serializeProject(mk())); fn(p); return parseProject(JSON.stringify(p), defs) }
+  const run = (fn: (p: any) => void) => { const p: any = JSON.parse(v1(mk())); fn(p); return parseProject(JSON.stringify(p), defs) }
   expect(run(p => { p.media = [m]; p.sequence.tracks.unshift(v([it(100)])) }).media).toHaveLength(1)
   expect(() => run(p => { p.media = [m]; p.sequence.tracks.unshift(v([it(601)])) })).toThrow('trimOut')
   expect(() => run(p => { p.media = [m, m] })).toThrow('media.1.id')
 })
 
 test('video: old file opens; media/V1 problems rejected', () => {
-  const ok = (fn: (p: any) => void) => { const p: any = JSON.parse(serializeProject(mk())); fn(p); return parseProject(JSON.stringify(p), defs) }
+  const ok = (fn: (p: any) => void) => { const p: any = JSON.parse(v1(mk())); fn(p); return parseProject(JSON.stringify(p), defs) }
   const v = (items: any[] = []) => ({ id: 'v', kind: 'video', hidden: false, locked: false, items })
   const m = { id: 'm', name: 'a', durationF: 600 }
   const i = (id: string, start: number, trimOut: number, refId = 'm') => ({ id, refId, start, trimIn: 0, trimOut })

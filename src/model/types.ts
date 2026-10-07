@@ -10,4 +10,4 @@ export interface Item { id: string; refId: string; start: number; trimIn: number
 export interface Track { id: string; kind: 'video' | 'motion'; actorId?: string; hidden: boolean; locked: boolean; items: Item[] }
 export interface Media { id: string; name: string; durationF: number }
 export interface Sequence { tracks: Track[]; markers: { f: number; name: string }[]; inF: number | null; outF: number | null }
-export interface Project { version: 1; fps: 60; actors: Actor[]; clips: Record<string, Clip>; media: Media[]; sequence: Sequence }
+export interface Project { version: 1 | 2; fps: 60; actors: Actor[]; clips: Record<string, Clip>; media: Media[]; sequence: Sequence }
