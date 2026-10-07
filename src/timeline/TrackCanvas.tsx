@@ -153,7 +153,7 @@ export default function TrackCanvas() {
         if (r.kind === 'group' && r.channels.length) {
           const k = rowKey(r.actorId, r.label)
           if (u.expanded.has(k)) u.expanded.delete(k); else u.expanded.add(k)
-          s.select(r.actorId)
+          s.select(r.actorId, `group:${r.label}`)
         } else s.select(r.actorId, r.kind === 'channel' ? r.channels[0] : null)
         schedule(); return
       }

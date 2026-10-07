@@ -36,12 +36,17 @@ export default function GraphCanvas() {
       const cs: TimeScale = { x0: scale().x0 + (item.start - item.trimIn) * tv.ppf, pxPerFrame: tv.ppf }
       return { s, clip, def, cs, clipId: item.refId }
     }
-    // union of sel.channel and the channels of sel.keys; 'root' = the 6 root channels; max 8
+    // union of sel.channel and the channels of sel.keys; 'root' / 'group:<name>' expand to their channels; max 8
     const shown = (): string[] => {
-      const { sel } = ed.getState(), out: string[] = []
+      const { sel, project, defs } = ed.getState(), out: string[] = []
+      const robot = project.actors.find(a => a.id === sel.actorId)?.robot
+      const expand = (ch: string): string[] =>
+        ch === 'root' || ch === 'group:루트' ? ROOT_CHANNELS
+        : ch.startsWith('group:') ? (robot && defs[robot].groups.find(g => g.name === ch.slice(6))?.joints) || []
+        : [ch]
       for (const ch of [sel.channel, ...sel.keys.map(k => k.channel)]) {
         if (!ch) continue
-        for (const c of ch === 'root' ? ROOT_CHANNELS : [ch]) if (!out.includes(c)) out.push(c)
+        for (const c of expand(ch)) if (!out.includes(c)) out.push(c)
       }
       return out.slice(0, 8)
     }
