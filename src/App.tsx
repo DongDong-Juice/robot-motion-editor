@@ -32,10 +32,11 @@ function Menubar() {
   const title = name + (dirty ? ' •' : '')
   useEffect(() => { document.title = title }, [title])
   useEffect(() => {
-    const warn = (e: BeforeUnloadEvent) => { if (getEditor().getState().dirty) e.preventDefault() }
+    if (!dirty) return
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
-  }, [])
+  }, [dirty])
   useEffect(() => {
     let t: number | undefined
     const off = onMessage(m => { setMsg(m); clearTimeout(t); t = window.setTimeout(() => setMsg(''), 3000) })

@@ -400,3 +400,13 @@ test('loadProject resets history, view state and dirty; edits and undo set dirty
   s().markSaved('b.motion.json'); s().setFrame(5); expect(s().dirty).toBe(false)
   s().newProjectFile(); expect(s().fileName).toBe(null); expect(s().project.actors).toHaveLength(2)
 })
+
+test('setClip: growing a clip into its neighbour is rejected without an edit', () => {
+  const track = s().project.sequence.tracks.find(t => t.actorId === actor)!
+  expect(s().addItem(actor, c, 100) && s().addItem(actor, c, 200)).toBe(true) // growing would make item 0 overlap item 2
+  const before = s().project
+  expect(s().setClip(c, { length: 300 })).toBe(false)
+  expect(s().project).toBe(before)
+  expect(track.items.length).toBe(1) // original snapshot untouched
+  expect(s().setClip(c, { name: 'ok' })).toBe(true)
+})

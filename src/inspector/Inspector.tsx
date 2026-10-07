@@ -18,6 +18,7 @@ export default function Inspector() {
   const ed = getEditor()
   const { project, defs, frame, autoKey, sel, editing } = useEditor(s => s)
   const [deg, setDeg] = useState(true)
+  const [lenMsg, setLenMsg] = useState(false)
   const actor = project.actors.find(a => a.id === sel.actorId)
   if (!actor) return <div className="insp-empty">무대에서 링크를 클릭하거나 타임라인에서 채널을 고르세요.</div>
 
@@ -84,11 +85,14 @@ export default function Inspector() {
       <div className="insp-row">
         <label>길이 (프레임)
           <input type="number" min={1} step={1} key={`l${clip.length}`} defaultValue={clip.length}
-            onBlur={e => { act.setClip(clipId, { length: e.target.valueAsNumber }); e.target.value = String(ed.getState().project.clips[clipId].length) }}
+            onBlur={e => {
+              if (!act.setClip(clipId, { length: e.target.valueAsNumber })) { setLenMsg(true); setTimeout(() => setLenMsg(false), 3000) }
+              e.target.value = String(ed.getState().project.clips[clipId].length) }}
             onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} />
         </label>
         <span className="insp-lim">{(clip.length / 60).toFixed(2)} 초</span>
       </div>
+      {lenMsg && <p className="insp-hint" role="status">다른 클립과 겹쳐서 길이를 바꿀 수 없습니다</p>}
       {channels.length > 0 && (
         <>
           <div className="insp-row">

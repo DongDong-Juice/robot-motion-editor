@@ -20,7 +20,7 @@ export interface EditorState {
   setInterp(clipId: string, keys: KeyRef[], interp: Interp): void
   setTangent(clipId: string, channel: string, f: number, side: 'in' | 'out', t: Tan, linked: boolean): void
   keyGroup(actorId: string, group: string): void
-  setClip(clipId: string, patch: { name?: string; length?: number }): void
+  setClip(clipId: string, patch: { name?: string; length?: number }): boolean
   setPlacement(actorId: string, pl: Partial<Actor['placement']>): void
   setColor(actorId: string, hex: string): void
   addActor(robot: RobotKind): void
@@ -235,22 +235,26 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         const name = patch.name?.trim() || undefined
         const len = patch.length === undefined ? undefined : Math.round(patch.length)
         if (len !== undefined && !(len >= 1)) return get().setClip(clipId, { name })
-        if (name === undefined && len === undefined) return
+        if (name === undefined && len === undefined) return true
         const gone: KeyRef[] = []
-        edit(p => {
-          const clip = p.clips[clipId]
+        const ok = tryEdit(p => {
+          const clip = p.clips[clipId] = structuredClone(p.clips[clipId])
           if (name) clip.name = name
-          if (len === undefined) return
+          if (len === undefined) return true
           clip.length = len
           for (const [channel, c] of Object.entries(clip.channels)) {
             for (const k of c.keys) if (k.f > len - 1) gone.push({ channel, f: k.f })
             c.keys = c.keys.filter(k => k.f <= len - 1)
           }
-          for (const t of p.sequence.tracks) for (const it of t.items) if (it.refId === clipId) {
-            it.trimOut = len; it.trimIn = Math.min(it.trimIn, len - 1)
+          for (const t of p.sequence.tracks) {
+            let hit = false
+            for (const it of t.items) if (it.refId === clipId) { it.trimOut = len; it.trimIn = Math.min(it.trimIn, len - 1); hit = true }
+            if (hit && !validTrack(t.items)) return false
           }
-        }, [clipId])
-        if (gone.length) set(s => ({ sel: { ...s.sel, keys: s.sel.keys.filter(k => !gone.some(r => r.channel === k.channel && r.f === k.f)) } }))
+          return true
+        })
+        if (ok && gone.length) set(s => ({ sel: { ...s.sel, keys: s.sel.keys.filter(k => !gone.some(r => r.channel === k.channel && r.f === k.f)) } }))
+        return ok
       },
       setPlacement: (actorId, pl) => edit(p => {
         Object.assign(p.actors.find(a => a.id === actorId)!.placement, pl)

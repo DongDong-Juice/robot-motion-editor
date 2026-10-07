@@ -23,13 +23,14 @@ export function parseProject(text: string, defs: RobotDefs): Project {
     const tan = (t: any, path: string) => { if (!isObj(t) || !num(t.df) || !num(t.dv)) fail(path) }
 
     if (!Array.isArray(p.actors)) fail('actors')
-    const actorIds = new Set<string>()
+    const actorIds = new Set<string>(), actorRobot: Record<string, string> = {}, itemIds = new Set<string>(), motionActors = new Set<string>()
     p.actors.forEach((a: any, i: number) => {
       const at = `actors.${i}`
       if (!isObj(a) || !str(a.id) || !str(a.name) || !str(a.color)) fail(at)
       robot(a.robot, `${at}.robot`)
       if (!isObj(a.placement) || !num(a.placement.x) || !num(a.placement.y) || !num(a.placement.yaw)) fail(`${at}.placement`)
-      actorIds.add(a.id)
+      if (actorIds.has(a.id)) fail(`${at}.id`, '중복된 ID입니다')
+      actorIds.add(a.id); actorRobot[a.id] = a.robot
     })
 
     if (!isObj(p.clips)) fail('clips')
@@ -44,6 +45,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
         cv.keys.forEach((k: any, i: number) => {
           const kt = `${at}.channels.${ch}.keys.${i}`
           if (!isObj(k) || !int(k.f) || !num(k.v)) fail(kt)
+          if (i > 0 && k.f <= cv.keys[i - 1].f) fail(`${kt}.f`, '순서가 올바르지 않습니다')
           if (!['linear', 'bezier', 'hold'].includes(k.interp)) fail(`${kt}.interp`)
           tan(k.inTan, `${kt}.inTan`); tan(k.outTan, `${kt}.outTan`)
         })
@@ -60,11 +62,15 @@ export function parseProject(text: string, defs: RobotDefs): Project {
       const at = `sequence.tracks.${i}`
       if (!isObj(t) || !str(t.id) || !['video', 'motion'].includes(t.kind) || typeof t.hidden !== 'boolean' || typeof t.locked !== 'boolean') fail(at)
       if (t.kind === 'motion' && !actorIds.has(t.actorId)) fail(`${at}.actorId`, '액터가 없습니다')
+      if (t.kind === 'motion') { if (motionActors.has(t.actorId)) fail(`${at}.actorId`, '액터의 트랙이 중복됩니다'); motionActors.add(t.actorId) }
       if (!Array.isArray(t.items)) fail(`${at}.items`)
       t.items.forEach((it: any, j: number) => {
         const it_ = `${at}.items.${j}`
         if (!isObj(it) || !str(it.id) || !int(it.start) || !int(it.trimIn) || !int(it.trimOut)) fail(it_)
+        if (itemIds.has(it.id)) fail(`${it_}.id`, '중복된 ID입니다')
+        itemIds.add(it.id)
         if (!(it.refId in p.clips)) fail(`${it_}.refId`, '클립이 없습니다')
+        if (t.kind === 'motion' && p.clips[it.refId].robot !== actorRobot[t.actorId]) fail(`${it_}.refId`, '클립의 로봇이 액터와 다릅니다')
         if (it.trimOut > p.clips[it.refId].length) fail(`${it_}.trimOut`, '클립 길이를 넘습니다')
       })
       if (!validTrack(t.items)) fail(at, '항목 배치가 올바르지 않습니다 (겹침 또는 범위)')

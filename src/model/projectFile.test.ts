@@ -54,3 +54,11 @@ test('keeps unknown extra fields', () => {
   const p: any = JSON.parse(serializeProject(mk())); p.extra = { a: 1 }
   expect((parseProject(JSON.stringify(p), defs) as any).extra).toEqual({ a: 1 })
 })
+
+test('rejects unordered keys, robot mismatch, duplicate ids and tracks', () => {
+  bad(p => { const c: any = Object.values(p.clips)[0]; c.channels['root.x'].keys[1].f = 0 }, 'keys.1.f')
+  bad(p => { p.sequence.tracks[0].items[0].refId = Object.keys(p.clips)[1] }, '로봇')
+  bad(p => { p.actors[1].id = p.actors[0].id }, '중복')
+  bad(p => { p.sequence.tracks[1].items[0].id = p.sequence.tracks[0].items[0].id }, '중복')
+  bad(p => { p.sequence.tracks[1].actorId = p.sequence.tracks[0].actorId }, '중복')
+})

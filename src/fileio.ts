@@ -77,7 +77,7 @@ export async function saveTextFile(text: string, suggested: string, handle: Save
   Promise<{ handle: SaveHandle | null; name: string } | null> {
   const write = async (h: FileSystemFileHandle) => {
     const w = await h.createWritable()
-    await w.write(text)
+    try { await w.write(text) } catch (e) { await w.abort().catch(() => {}); throw e }
     await w.close()
     return { handle: h, name: h.name }
   }

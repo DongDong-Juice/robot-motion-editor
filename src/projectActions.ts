@@ -28,13 +28,20 @@ export async function openProject() {
   } catch (e) { say(`열기 실패: ${why(e)}`) }
 }
 
+let saving = false
 export async function saveProject(as = false) {
-  const s = getEditor().getState()
+  if (saving) return
+  saving = true
+  const s = getEditor().getState(), snap = s.project
   try {
-    const r = await saveTextFile(serializeProject(s.project), s.fileName ?? 'project.motion.json', as ? null : handle)
+    const text = serializeProject(snap)
+    parseProject(text, s.defs) // never write a file that would not reopen
+    const r = await saveTextFile(text, s.fileName ?? 'project.motion.json', as ? null : handle)
     if (!r) return
     handle = r.handle
-    s.markSaved(r.name)
+    if (getEditor().getState().project === snap) getEditor().getState().markSaved(r.name)
+    else getEditor().setState({ fileName: r.name })
     say('저장했습니다')
   } catch (e) { say(`저장 실패: ${why(e)}`) }
+  finally { saving = false }
 }
