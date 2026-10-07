@@ -5,6 +5,15 @@ export interface TimeScale { x0: number; pxPerFrame: number }
 export const frameToX = (s: TimeScale, f: number) => s.x0 + f * s.pxPerFrame
 export const xToFrame = (s: TimeScale, x: number) => Math.round((x - s.x0) / s.pxPerFrame)
 
+// Keys (sorted by f) with lo <= f <= hi, found by binary search.
+export function keysIn<K extends { f: number }>(keys: K[], lo: number, hi: number): K[] {
+  let a = 0, b = keys.length
+  while (a < b) { const m = (a + b) >> 1; if (keys[m].f < lo) a = m + 1; else b = m }
+  let e = a
+  while (e < keys.length && keys[e].f <= hi) e++
+  return keys.slice(a, e)
+}
+
 const p2 = (n: number) => String(n).padStart(2, '0')
 export function formatTimecode(f: number): string {
   if (f < 0) return '-' + formatTimecode(-f)

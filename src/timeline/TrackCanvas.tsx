@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { clampDf, editingItem, editTarget, getEditor, type KeyRef } from '../store/store'
 import type { Interp, Sequence } from '../model/types'
 import { tv } from './viewState'
-import { buildRows, frameToX, hitKey, rowKey, xToFrame, type TimeScale } from './timeScale'
+import { buildRows, frameToX, hitKey, keysIn, rowKey, xToFrame, type TimeScale } from './timeScale'
 import { drawRuler, LABEL_W, RULER_H } from './ruler'
 
 const ROW_H = 20, KEY = 7
@@ -65,8 +65,10 @@ export default function TrackCanvas() {
         ctx.fillStyle = C.line; ctx.fillRect(0, y + ROW_H - 1, W, 1)
         const cs = clipScale(r.actorId), it = itemOf(r.actorId)
         if (cs && it) {
+          // only keys in the visible frame range (widened by a key-drag preview offset)
+          const pad = Math.abs(u.dragDf) + 1, lo = xToFrame(cs, LABEL_W - KEY) - pad, hi = xToFrame(cs, W + KEY) + pad
           const frames = new Set<number>()
-          for (const ch of r.channels) for (const k of it.clip.channels[ch]?.keys ?? []) frames.add(k.f)
+          for (const ch of r.channels) for (const k of keysIn(it.clip.channels[ch]?.keys ?? [], lo, hi)) frames.add(k.f)
           for (const f of frames) {
             const isSel = s.sel.actorId === r.actorId &&
               r.channels.some(ch => s.sel.keys.some(k => sameKey(k, { channel: ch, f })))

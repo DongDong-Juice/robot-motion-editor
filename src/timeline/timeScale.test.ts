@@ -5,7 +5,7 @@ import type { RobotKind } from '../robot/types'
 import type { RobotDefs } from '../model/evaluate'
 import { newProject } from '../model/defaults'
 import { makeKey } from '../model/curve'
-import { buildRows, formatTimecode, frameToX, hitKey, rowKey, xToFrame } from './timeScale'
+import { buildRows, formatTimecode, frameToX, hitKey, keysIn, rowKey, xToFrame } from './timeScale'
 
 const load = (k: RobotKind) => {
   const r = (f: string) => JSON.parse(readFileSync(new URL(`../../public/robots/${k}/${f}`, import.meta.url), 'utf8'))
@@ -49,4 +49,12 @@ test('hitKey finds key within 4px', () => {
   expect(hitKey(rows, clip, s, H, x + 6, 2 * H + 10)).toBeNull()
   // collapsed group row summarises
   expect(hitKey(rows, clip, s, H, x, 1 * H + 10)).toEqual([{ channel: 'root.x', f: 10 }])
+})
+
+test('keysIn returns sorted keys with lo <= f <= hi', () => {
+  const ks = [0, 3, 5, 9, 12].map(f => makeKey(f, 0))
+  expect(keysIn(ks, 4, 9).map(k => k.f)).toEqual([5, 9])
+  expect(keysIn(ks, -5, 0).map(k => k.f)).toEqual([0])
+  expect(keysIn(ks, 13, 20)).toEqual([])
+  expect(keysIn([], 0, 9)).toEqual([])
 })
