@@ -21,6 +21,7 @@ export interface EditorState {
   keyGroup(actorId: string, group: string): void
   setPlacement(actorId: string, pl: Partial<Actor['placement']>): void
   addActor(robot: RobotKind): void
+  beginGesture(): void; endGesture(): void
   undo(): void; redo(): void
 }
 
@@ -37,10 +38,11 @@ export function clipFrameAt(p: Project, actorId: string, frame: number): { clipI
 export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
   return createStore<EditorState>((set, get) => {
     let undoS: Project[] = [], redoS: Project[] = []
+    let gesture: Project | null = null // project at gesture start; edits inside it share one undo entry
 
     // One user action = one undo entry: mutate a clone, push the old project.
     const commit = (next: Project) => {
-      undoS = [...undoS, get().project].slice(-MAX_UNDO); redoS = []
+      if (!gesture) { undoS = [...undoS, get().project].slice(-MAX_UNDO); redoS = [] }
       set({ project: next })
     }
     const edit = (fn: (p: Project) => void) => {
@@ -145,6 +147,15 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         Object.assign(p.actors.find(a => a.id === actorId)!.placement, pl)
       }),
       addActor: robot => commit(addActorTo(structuredClone(get().project), robot)),
+      beginGesture: () => {
+        if (gesture) return
+        gesture = get().project
+        undoS = [...undoS, gesture].slice(-MAX_UNDO); redoS = []
+      },
+      endGesture: () => {
+        if (gesture && get().project === gesture) undoS = undoS.slice(0, -1) // nothing changed
+        gesture = null
+      },
       undo: () => {
         const prev = undoS.at(-1)
         if (!prev) return

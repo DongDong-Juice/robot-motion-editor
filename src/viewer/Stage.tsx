@@ -132,16 +132,19 @@ export default function Stage() {
           ;(m.material as THREE.MeshStandardMaterial).emissive.set(id === sel.actorId && via === ch ? accent : 0x000000)
         }
       const e = sel.actorId ? entries.get(sel.actorId) : undefined
-      tc.detach()
+      // re-attaching mid-drag would reset TransformControls' axis and kill the drag
+      const target = !e ? null : ch === 'root' ? e.rig.root : ch ? e.rig.jointPivots[ch] ?? null : null
+      if (!tc.dragging && tc.object !== (target ?? undefined)) {
+        tc.detach()
+        if (target) tc.attach(target)
+      }
       if (e && ch === 'root') {
-        tc.attach(e.rig.root)
         tc.setMode(rootMode)
         tc.setSpace(rootMode === 'rotate' ? 'local' : 'world')
         tc.showX = tc.showY = tc.showZ = true
       } else if (e && ch && e.rig.jointPivots[ch]) {
         const robot = s.project.actors.find(a => a.id === sel.actorId)!.robot
         const ax = s.defs[robot].joints.find(j => j.name === ch)!.axis
-        tc.attach(e.rig.jointPivots[ch])
         tc.setMode('rotate')
         tc.setSpace('local')
         tc.showX = !!ax[0]; tc.showY = !!ax[1]; tc.showZ = !!ax[2]
@@ -165,6 +168,8 @@ export default function Stage() {
 
     tc.addEventListener('dragging-changed', e => {
       orbit.enabled = !e.value
+      if (e.value) store.getState().beginGesture()
+      else store.getState().endGesture()
       if (e.value && store.getState().sel.channel?.startsWith('root')) last = rootValues().map(v => v[1])
     })
     tc.addEventListener('change', () => { dirty = true })
@@ -187,11 +192,11 @@ export default function Stage() {
 
     // click-to-select (ignore orbit drags and gizmo hits)
     const ray = new THREE.Raycaster(), ndc = new THREE.Vector2()
-    let down: [number, number] | null = null
+    let down: [number, number] | null = null, onGizmo = false
     const dom = renderer.domElement
-    const onDown = (ev: PointerEvent) => { down = [ev.clientX, ev.clientY]; el.focus() }
+    const onDown = (ev: PointerEvent) => { down = [ev.clientX, ev.clientY]; onGizmo = tc.axis !== null; el.focus() }
     const onUp = (ev: PointerEvent) => {
-      if (!down || Math.hypot(ev.clientX - down[0], ev.clientY - down[1]) > 4 || tc.axis) return
+      if (!down || Math.hypot(ev.clientX - down[0], ev.clientY - down[1]) > 4 || onGizmo) return
       const r = dom.getBoundingClientRect()
       ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1)
       ray.setFromCamera(ndc, camera)
@@ -234,7 +239,8 @@ export default function Stage() {
     const unsub = store.subscribe((s, prev) => {
       if (s.project !== prev.project) syncActors()
       applyAll()
-      if (s.sel !== prev.sel || s.project.actors !== prev.project.actors) syncSelection()
+      const key = (p: typeof s.project) => p.actors.map(a => a.id + a.robot).join()
+      if (s.sel !== prev.sel || key(s.project) !== key(prev.project)) syncSelection()
     })
 
     const loop = () => {

@@ -149,3 +149,26 @@ test('deleteKeys prunes selection; undo/redo clear key selection', () => {
   s().undo(); expect(s().sel.keys).toEqual([])
   s().selectKeys([{ channel: ch, f: 2 }], false); s().redo(); expect(s().sel.keys).toEqual([])
 })
+
+test('gesture: many setValue = one undo entry; edits after endGesture push again', () => {
+  s().toggleAutoKey()
+  const before = s().project
+  s().beginGesture()
+  for (let i = 1; i <= 5; i++) s().setValue(actor, ch, i * 0.1)
+  s().endGesture()
+  expect(keyAt(ch, 0).v).toBeCloseTo(0.5)
+  s().undo()
+  expect(s().project).toBe(before)
+  s().redo()
+  s().setKey(c, ch, 7, 1)
+  s().undo()
+  expect(keyAt(ch, 0).v).toBeCloseTo(0.5)
+  expect(curve(ch).keys.find(k => k.f === 7)).toBeUndefined()
+})
+
+test('empty gesture leaves no undo entry', () => {
+  s().setKey(c, ch, 3, 1)
+  s().beginGesture(); s().endGesture()
+  s().undo()
+  expect(curve(ch).keys).toHaveLength(0)
+})
