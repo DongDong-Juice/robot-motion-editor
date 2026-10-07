@@ -53,8 +53,11 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       if (!gesture) { undoS = [...undoS, get().project].slice(-MAX_UNDO); redoS = [] }
       set({ project: next })
     }
-    const edit = (fn: (p: Project) => void) => {
-      const next = structuredClone(get().project)
+    // Only `touched` clips are cloned; other clips are shared with older snapshots by reference.
+    const edit = (fn: (p: Project) => void, touched: string[]) => {
+      const p = get().project
+      const next: Project = { ...p, actors: structuredClone(p.actors), sequence: structuredClone(p.sequence), clips: { ...p.clips } }
+      for (const id of touched) next.clips[id] = structuredClone(p.clips[id])
       fn(next)
       commit(next)
     }
@@ -90,7 +93,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         const { clipId, f } = clipFrameAt(get().project, actorId, get().frame)
         get().setKey(clipId, channel, f, v)
       },
-      setKey: (clipId, channel, f, v) => edit(p => putKey(p.clips[clipId], channel, f, v)),
+      setKey: (clipId, channel, f, v) => edit(p => putKey(p.clips[clipId], channel, f, v), [clipId]),
       deleteKeys: (clipId, keys) => edit(p => {
         const clip = p.clips[clipId]
         for (const r of keys) {
@@ -98,7 +101,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
           if (c) c.keys = c.keys.filter(k => k.f !== r.f)
         }
         set(s => ({ sel: { ...s.sel, keys: s.sel.keys.filter(k => !keys.some(r => r.channel === k.channel && r.f === k.f)) } }))
-      }),
+      }, [clipId]),
       moveKeys: (clipId, keys, df) => {
         const moved: KeyRef[] = []
         edit(p => {
@@ -115,7 +118,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
             c.keys = [...c.keys.filter(k => !from.has(k.f) && !dest.has(k.f)), ...mv].sort((a, b) => a.f - b.f)
             moved.push(...mv.map(k => ({ channel, f: k.f })))
           }
-        })
+        }, [clipId])
         set(s => ({ sel: { ...s.sel, keys: moved } }))
       },
       setInterp: (clipId, keys, interp) => edit(p => {
@@ -125,14 +128,14 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
           k.interp = interp
           if (interp === 'bezier') { k.inTan.dv = 0; k.outTan.dv = 0 }
         }
-      }),
+      }, [clipId]),
       setTangent: (clipId, channel, f, side, t, linked) => edit(p => {
         const k = findKey(p.clips[clipId], { channel, f })
         if (!k) return
         const [mine, other] = side === 'out' ? [k.outTan, k.inTan] : [k.inTan, k.outTan]
         mine.df = t.df; mine.dv = t.dv
         if (linked && t.df !== 0) other.dv = (t.dv / t.df) * other.df
-      }),
+      }, [clipId]),
       keyGroup: (actorId, group) => {
         const actor = get().project.actors.find(a => a.id === actorId)!
         const def = defs[actor.robot]
@@ -148,7 +151,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
               : pose.q[def.joints.findIndex(j => j.name === n)]
             putKey(clip, n, f, v)
           }
-        })
+        }, [clipId])
       },
       setClip: (clipId, patch) => {
         const name = patch.name?.trim() || undefined
@@ -168,14 +171,14 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
           for (const t of p.sequence.tracks) for (const it of t.items) if (it.refId === clipId) {
             it.trimOut = len; it.trimIn = Math.min(it.trimIn, len - 1)
           }
-        })
+        }, [clipId])
         if (gone.length) set(s => ({ sel: { ...s.sel, keys: s.sel.keys.filter(k => !gone.some(r => r.channel === k.channel && r.f === k.f)) } }))
       },
       setPlacement: (actorId, pl) => edit(p => {
         Object.assign(p.actors.find(a => a.id === actorId)!.placement, pl)
-      }),
-      setColor: (actorId, hex) => edit(p => { p.actors.find(a => a.id === actorId)!.color = hex }),
-      addActor: robot => commit(addActorTo(structuredClone(get().project), robot)),
+      }, []),
+      setColor: (actorId, hex) => edit(p => { p.actors.find(a => a.id === actorId)!.color = hex }, []),
+      addActor: robot => commit(addActorTo({ ...get().project, actors: structuredClone(get().project.actors), sequence: structuredClone(get().project.sequence), clips: { ...get().project.clips } }, robot)),
       beginGesture: () => {
         if (gesture) return
         gesture = get().project

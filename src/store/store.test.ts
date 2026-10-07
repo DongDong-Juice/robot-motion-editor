@@ -219,3 +219,14 @@ test('setClip: grow sets trimOut; length is a positive integer', () => {
   s().setClip(c, { length: 10.6 })
   expect(s().project.clips[c].length).toBe(11)
 })
+
+test('edit shares untouched clips by reference', () => {
+  s().addActor('go2')
+  const before = s().project
+  const ids = Object.keys(before.clips)
+  const other = ids.find(i => i !== c)!
+  s().setKey(c, ch, 0, 0.5)
+  expect(s().project.clips[other]).toBe(before.clips[other])
+  expect(s().project.clips[c]).not.toBe(before.clips[c])
+  expect(before.clips[c].channels[ch]).toBeUndefined()
+})

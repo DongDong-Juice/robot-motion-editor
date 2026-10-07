@@ -19,3 +19,9 @@ describe('evalCurve', () => {
     expect(Number.isFinite(v)).toBe(true);
   });
 });
+
+test('evalCurve on 5000 linear keys matches direct interpolation', () => {
+  const c = { keys: Array.from({ length: 5000 }, (_, i) => makeKey(i, Math.sin(i / 50), 'linear')) };
+  expect(evalCurve(c, 2500.5, 0)).toBeCloseTo((Math.sin(2500 / 50) + Math.sin(2501 / 50)) / 2, 9);
+  expect(evalCurve(c, 4999, 0)).toBeCloseTo(Math.sin(4999 / 50), 9);
+});

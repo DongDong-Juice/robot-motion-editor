@@ -17,8 +17,10 @@ export function evalCurve(c: Curve, f: number, fallback: number): number {
   if (f <= ks[0].f) return ks[0].v;
   const last = ks[ks.length - 1];
   if (f >= last.f) return last.v;
-  let i = 0;
-  while (ks[i + 1].f <= f) i++;
+  // binary search: last key with k.f <= f (f < last.f guarantees i+1 exists, k1.f > f)
+  let lo0 = 0, hi0 = ks.length - 1;
+  while (hi0 - lo0 > 1) { const m = (lo0 + hi0) >> 1; if (ks[m].f <= f) lo0 = m; else hi0 = m; }
+  const i = lo0;
   const k0 = ks[i], k1 = ks[i + 1];
   if (k0.interp === 'hold') return k0.v;
   const len = k1.f - k0.f;
