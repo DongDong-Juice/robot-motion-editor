@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { fetchRobotDef } from './robot/loadRobot'
 import { getEditor, gizmoLock, initEditor, useEditor } from './store/store'
 import Inspector from './inspector/Inspector'
@@ -11,6 +11,7 @@ import { formatTimecode } from './timeline/timeScale'
 import ExportDialog from './export/ExportDialog'
 import { sequenceEnd, startTransport } from './transport'
 import { newProjectFile, onMessage, openProject, saveProject } from './projectActions'
+import { MENUBAR_H, useLayout, type Layout } from './layout/useLayout'
 
 function AutoKeyHint() {
   const off = useEditor(s => !s.autoKey && !!s.sel.channel && !s.sel.channel.startsWith('group:'))
@@ -79,8 +80,45 @@ function Menubar() {
   )
 }
 
+
+const KEY_STEP = 16
+/** 6px separator overlaid on a panel boundary. sign: +1 if dragging toward +axis grows the panel, -1 if it shrinks. */
+function Resizer({ k, axis, value, sign, style, label, set, reset }: {
+  k: keyof Layout; axis: 'x' | 'y'; value: number; sign: 1 | -1; style: React.CSSProperties; label: string
+  set: (p: Partial<Layout>, persist?: boolean) => void; reset: (keys: (keyof Layout)[]) => void
+}) {
+  const drag = useRef<{ p: number; v: number } | null>(null)
+  const pos = (e: { clientX: number; clientY: number }) => (axis === 'x' ? e.clientX : e.clientY)
+  const end = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!drag.current) return
+    drag.current = null
+    document.body.style.userSelect = ''; document.body.style.cursor = ''
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+    set({}, true)
+  }
+  return (
+    <div className={`resizer ${axis}`} role="separator" tabIndex={0} aria-label={label}
+      aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'} aria-valuenow={value} style={style}
+      onPointerDown={e => {
+        if (e.button !== 0) return
+        e.currentTarget.setPointerCapture(e.pointerId)
+        drag.current = { p: pos(e), v: value }
+        document.body.style.userSelect = 'none'; document.body.style.cursor = axis === 'x' ? 'col-resize' : 'row-resize'
+      }}
+      onPointerMove={e => { if (drag.current) set({ [k]: drag.current.v + sign * (pos(e) - drag.current.p) }) }}
+      onPointerUp={end} onPointerCancel={end} onLostPointerCapture={end as never}
+      onDoubleClick={() => reset([k])}
+      onKeyDown={e => {
+        const d = axis === 'x' ? { ArrowRight: 1, ArrowLeft: -1 }[e.key] : { ArrowDown: 1, ArrowUp: -1 }[e.key]
+        if (d === undefined) return
+        e.preventDefault(); set({ [k]: value + sign * d * KEY_STEP }, true)
+      }} />
+  )
+}
+
 export default function App() {
   const [status, setStatus] = useState<string>('loading')
+  const [layout, setLayout, resetLayout] = useLayout()
 
   useEffect(() => {
     Promise.all([fetchRobotDef('g1'), fetchRobotDef('go2')])
@@ -91,7 +129,7 @@ export default function App() {
   useEffect(() => (status === 'ready' ? startTransport() : undefined), [status])
 
   return (
-    <div id="app">
+    <div id="app" style={{ gridTemplateColumns: `${layout.left}px 1fr ${layout.right}px`, gridTemplateRows: `${MENUBAR_H}px 1fr ${layout.bottom}px` }}>
       <header id="menubar">{status === 'ready' ? <Menubar /> : 'Motion Editor'}</header>
       <aside id="project">{status === 'ready' && <ProjectPanel />}</aside>
       <main id="stage">
@@ -104,6 +142,12 @@ export default function App() {
       </main>
       <aside id="inspector">{status === "ready" && <Inspector />}</aside>
       <section id="timeline">{status === 'ready' && <Timeline />}</section>
+      <Resizer k="left" axis="x" sign={1} label="프로젝트 패널 너비" value={layout.left} set={setLayout} reset={resetLayout}
+        style={{ left: layout.left - 3, top: MENUBAR_H, bottom: layout.bottom }} />
+      <Resizer k="right" axis="x" sign={-1} label="인스펙터 너비" value={layout.right} set={setLayout} reset={resetLayout}
+        style={{ right: layout.right - 3, top: MENUBAR_H, bottom: layout.bottom }} />
+      <Resizer k="bottom" axis="y" sign={-1} label="타임라인 높이" value={layout.bottom} set={setLayout} reset={resetLayout}
+        style={{ left: 0, right: 0, bottom: layout.bottom - 3 }} />
     </div>
   )
 }
