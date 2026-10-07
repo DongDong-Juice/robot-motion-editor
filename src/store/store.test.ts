@@ -381,6 +381,15 @@ test('closeItem clamps a negative clip-view frame to 0', () => {
   expect(s().editing).toBeNull(); expect(s().frame).toBe(0)
 })
 
+test('projectGeneration bumps on loadProject and newProjectFile only', async () => {
+  const { newProject } = await import('../model/defaults')
+  const { projectGeneration } = await import('./store')
+  const g = projectGeneration()
+  s().setFrame(3); expect(projectGeneration()).toBe(g)
+  s().loadProject(newProject(), null); expect(projectGeneration()).toBe(g + 1)
+  s().newProjectFile(); expect(projectGeneration()).toBe(g + 2)
+})
+
 test('loadProject resets history, view state and dirty; edits and undo set dirty', async () => {
   const { newProject } = await import('../model/defaults')
   expect(s().dirty).toBe(false)

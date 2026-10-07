@@ -3,7 +3,7 @@ import type { RobotKind } from '../robot/types'
 import { csvToClip } from '../export/importCsv'
 import { objectUrl, openMediaFiles, openTextFiles, revokeUrl } from '../fileio'
 import { mediaUrl, probeDuration, setMediaUrl, subscribeMedia } from '../media/registry'
-import { getEditor, useEditor } from '../store/store'
+import { getEditor, projectGeneration, useEditor } from '../store/store'
 
 type Files = { name: string; text: string }[]
 const ROBOTS: [RobotKind, string][] = [['g1', 'G1'], ['go2', 'GO2']]
@@ -68,12 +68,14 @@ export default function ProjectPanel() {
     setMres(null)
     const files = await openMediaFiles(true)
     if (!files.length) return
+    const gen = projectGeneration()
     const lines: string[] = []
     const ok: { name: string; url: string; durationF: number }[] = []
     for (const f of files) { // probe everything first so the gesture below has no awaits
       try { ok.push({ name: f.name.replace(/\.[^.]*$/, ''), ...(await probe(f)) }) }
       catch (e) { lines.push(`${f.name}: ${e instanceof Error ? e.message : String(e)}`) }
     }
+    if (gen !== projectGeneration()) { ok.forEach(o => revokeUrl(o.url)); return } // another project was opened meanwhile
     const s = ed.getState()
     s.beginGesture() // one undo entry for the whole batch
     try { for (const o of ok) setMediaUrl(s.addMedia(o.name, o.durationF), o.url) }
@@ -82,11 +84,12 @@ export default function ProjectPanel() {
   }
   const relink = async (m: { id: string; durationF: number }) => {
     setMres(null)
+    const gen = projectGeneration()
     const [f] = await openMediaFiles(false)
     if (!f) return
     try {
       const { url, durationF } = await probe(f)
-      if (!ed.getState().project.media.some(x => x.id === m.id)) { revokeUrl(url); return } // deleted meanwhile
+      if (gen !== projectGeneration() || !ed.getState().project.media.some(x => x.id === m.id)) { revokeUrl(url); return } // project changed or media deleted meanwhile
       setMediaUrl(m.id, url)
       if (Math.abs(durationF - m.durationF) > 1)
         setMres({ lines: [`길이가 다른 영상입니다(${(durationF / 60).toFixed(2)}초 ≠ ${(m.durationF / 60).toFixed(2)}초)`] })
@@ -133,14 +136,16 @@ export default function ProjectPanel() {
       {project.media.map(m => {
         const off = mediaUrl(m.id) == null
         return (
-          <div key={m.id} className="pp-row" tabIndex={0} draggable
+          <div key={m.id} className="pp-row pp-media" tabIndex={0} draggable
             onDragStart={e => { e.dataTransfer.setData('application/x-motion-media', m.id); e.dataTransfer.effectAllowed = 'copy' }}
             onKeyDown={e => { if (e.target === e.currentTarget && e.key === 'Delete') { e.stopPropagation(); delMedia(m.id) } }}>
-            <span className="pp-name">{m.name}</span>
-            <span className="pp-dim">{(m.durationF / 60).toFixed(2)}초</span>
-            {off ? <span className="pp-off">오프라인</span> : <span className="pp-dim">연결됨</span>}
-            {off && <button aria-label={`${m.name} 다시 연결`} onClick={() => relink(m)}>다시 연결</button>}
-            <button aria-label={`${m.name} 삭제`} onClick={() => delMedia(m.id)}>삭제</button>
+            <span className="pp-name" title={m.name}>{m.name}</span>
+            <span className="pp-sub">
+              <span className="pp-dim">{(m.durationF / 60).toFixed(2)}초</span>
+              {off && <span className="pp-off">오프라인</span>}
+              {off && <button aria-label={`${m.name} 다시 연결`} onClick={() => relink(m)}>다시 연결</button>}
+              <button aria-label={`${m.name} 삭제`} onClick={() => delMedia(m.id)}>삭제</button>
+            </span>
           </div>
         )
       })}

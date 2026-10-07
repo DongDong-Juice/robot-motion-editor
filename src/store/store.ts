@@ -7,6 +7,10 @@ import type { Actor, Item, Clip, Interp, Project, Tan, Track } from '../model/ty
 import { validVideoTrack, videoTrack } from '../model/video'
 import type { RobotKind } from '../robot/types'
 
+// Bumped whenever a different project is loaded; async work started against one project checks it before landing.
+let generation = 0
+export const projectGeneration = () => generation
+
 export type KeyRef = { channel: string; f: number }
 export interface Selection { actorId: string | null; channel: string | null; keys: KeyRef[] }
 export interface EditorState {
@@ -405,6 +409,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       },
       fileName: null, dirty: false,
       loadProject: (project, fileName) => {
+        generation++
         undoS = []; redoS = []; gesture = false; gestureMoved = false
         set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] } })
       },

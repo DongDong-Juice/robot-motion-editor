@@ -52,8 +52,9 @@ body {
 .insp button:disabled, .insp input:disabled, .insp select:disabled { opacity: .45; cursor: default; }
 .insp :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .insp-name { font-weight: 500; }
-#menubar { display: flex; align-items: center; gap: 12px; padding: 0 10px; font-size: 13px; }
-.mb-title { font-weight: 500; }
+#menubar { display: flex; align-items: center; gap: 12px; padding: 0 10px; font-size: 13px; overflow-x: auto; white-space: nowrap; }
+#menubar > * { flex: none; }
+#menubar > .mb-title { font-weight: 500; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 #menubar button {
   background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 3px;
   font: inherit; padding: 2px 10px; cursor: pointer;
@@ -99,6 +100,10 @@ body {
 .pp-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .pp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pp-dim { color: #8d96a3; }
+.pp-media { flex-direction: column; align-items: stretch; gap: 2px; }
+.pp-media .pp-name { flex: none; }
+.pp-sub { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.pp-sub button { white-space: nowrap; }
 .pp-row input { flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--accent); border-radius: 3px; font: inherit; padding: 1px 4px; }
 .pp-btns { display: flex; flex-wrap: wrap; gap: 4px; }
 .pp-btns button, .pp-row button { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 3px; font: inherit; padding: 2px 8px; cursor: pointer; }
