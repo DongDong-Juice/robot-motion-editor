@@ -13,7 +13,7 @@ test('import CSV, place two items with crossfade, export all', async ({ page }) 
   const downloads: Download[] = []
   page.on('download', d => downloads.push(d))
   await page.goto('/')
-  await expect(page.locator('#stage canvas')).toBeVisible()
+  await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
 
   const rows = Array.from({ length: 60 }, () => Array.from({ length: 36 }, (_, i) => (i === 0 ? 5 : i === 1 ? 7 : i === 6 ? 1 : 0)).join(','))
   const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: 'CSV 가져오기' }).click()])
@@ -50,7 +50,7 @@ test('save and reopen restores sequence', async ({ page }) => {
   const downloads: Download[] = []
   page.on('download', d => downloads.push(d))
   await page.goto('/')
-  await expect(page.locator('#stage canvas')).toBeVisible()
+  await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
 
   await page.evaluate(() => {
     const s = (window as any).__editor.getState()

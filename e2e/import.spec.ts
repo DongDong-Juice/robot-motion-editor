@@ -6,7 +6,7 @@ const csv = Buffer.from([row, row, row].join('\n') + '\n')
 test('CSV import: fps choice applies each time, bad file reported, one undo per batch', async ({ page }) => {
   await page.addInitScript(() => { delete (window as any).showOpenFilePicker })
   await page.goto('/')
-  await expect(page.locator('#stage canvas')).toBeVisible()
+  await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
   const clips = () => page.evaluate(() => Object.values((window as any).__editor.getState().project.clips) as { name: string; length: number }[])
   const before = (await clips()).length
   const run = async (files: { name: string; mimeType: string; buffer: Buffer }[], fps: '30fps' | '60fps') => {

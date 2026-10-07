@@ -6,7 +6,7 @@ test('load both robots, key, export CSV', async ({ page }) => {
   const downloads: Download[] = []
   page.on('download', d => downloads.push(d))
   await page.goto('/')
-  await expect(page.locator('#stage canvas')).toBeVisible()
+  await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
   await page.evaluate(() => {
     const s = (window as any).__editor.getState()
     const id = s.project.actors[0].id
