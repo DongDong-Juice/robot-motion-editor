@@ -131,3 +131,21 @@ test('setPlacement and addActor are undoable', () => {
   s().undo(); s().undo()
   expect(s().project.actors[0].placement.x).toBe(0)
 })
+
+test('moveKeys clamps shared delta so keys never merge', () => {
+  s().setKey(c, ch, 118, 1); s().setKey(c, ch, 119, 2)
+  const both = [{ channel: ch, f: 118 }, { channel: ch, f: 119 }]
+  s().moveKeys(c, both, 5)
+  expect(curve(ch).keys.map(k => [k.f, k.v])).toEqual([[118, 1], [119, 2]])
+  s().moveKeys(c, both, -200)
+  expect(curve(ch).keys.map(k => [k.f, k.v])).toEqual([[0, 1], [1, 2]])
+})
+
+test('deleteKeys prunes selection; undo/redo clear key selection', () => {
+  s().setKey(c, ch, 1, 1); s().setKey(c, ch, 2, 1)
+  s().selectKeys([{ channel: ch, f: 1 }, { channel: ch, f: 2 }], false)
+  s().deleteKeys(c, [{ channel: ch, f: 1 }])
+  expect(s().sel.keys).toEqual([{ channel: ch, f: 2 }])
+  s().undo(); expect(s().sel.keys).toEqual([])
+  s().selectKeys([{ channel: ch, f: 2 }], false); s().redo(); expect(s().sel.keys).toEqual([])
+})

@@ -87,6 +87,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
           const c = clip.channels[r.channel]
           if (c) c.keys = c.keys.filter(k => k.f !== r.f)
         }
+        set(s => ({ sel: { ...s.sel, keys: s.sel.keys.filter(k => !keys.some(r => r.channel === k.channel && r.f === k.f)) } }))
       }),
       moveKeys: (clipId, keys, df) => {
         const moved: KeyRef[] = []
@@ -96,9 +97,11 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
             const c = clip.channels[channel]
             if (!c) continue
             const from = new Set(keys.filter(k => k.channel === channel).map(k => k.f))
-            const mv = c.keys.filter(k => from.has(k.f)).map(k => ({
-              ...k, f: Math.min(Math.max(Math.round(k.f + df), 0), clip.length - 1),
-            }))
+            const sel = c.keys.filter(k => from.has(k.f))
+            if (!sel.length) continue
+            // clamp the shared delta so the group keeps its shape (no merged keys)
+            const d = Math.min(Math.max(Math.round(df), -sel[0].f), clip.length - 1 - sel[sel.length - 1].f)
+            const mv = sel.map(k => ({ ...k, f: k.f + d }))
             const dest = new Set(mv.map(k => k.f))
             c.keys = [...c.keys.filter(k => !from.has(k.f) && !dest.has(k.f)), ...mv].sort((a, b) => a.f - b.f)
             moved.push(...mv.map(k => ({ channel, f: k.f })))
@@ -146,13 +149,13 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         const prev = undoS.at(-1)
         if (!prev) return
         undoS = undoS.slice(0, -1); redoS = [...redoS, get().project]
-        set({ project: prev })
+        set(s => ({ project: prev, sel: { ...s.sel, keys: [] } }))
       },
       redo: () => {
         const next = redoS.at(-1)
         if (!next) return
         redoS = redoS.slice(0, -1); undoS = [...undoS, get().project]
-        set({ project: next })
+        set(s => ({ project: next, sel: { ...s.sel, keys: [] } }))
       },
     }
   })
