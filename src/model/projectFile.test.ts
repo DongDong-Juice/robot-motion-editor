@@ -62,3 +62,9 @@ test('rejects unordered keys, robot mismatch, duplicate ids and tracks', () => {
   bad(p => { p.sequence.tracks[1].items[0].id = p.sequence.tracks[0].items[0].id }, '중복')
   bad(p => { p.sequence.tracks[1].actorId = p.sequence.tracks[0].actorId }, '중복')
 })
+
+test('inherited names are not robots or clips', () => {
+  bad(p => { p.actors[0].robot = 'toString' }, 'actors.0.robot')
+  bad(p => { const c: any = Object.values(p.clips)[0]; c.robot = 'constructor' }, '.robot')
+  bad(p => { p.sequence.tracks[0].items[0].refId = 'toString' }, 'refId')
+})

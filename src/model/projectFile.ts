@@ -19,7 +19,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
   try {
     if (p.version !== 1) throw new Bad(`지원하지 않는 버전입니다: ${p.version}`)
     if (p.fps !== 60) throw new Bad(`fps는 60이어야 합니다: ${p.fps}`)
-    const robot = (v: unknown, path: string) => { if (!str(v) || !(v in defs)) fail(path, '로봇 종류를 알 수 없습니다') }
+    const robot = (v: unknown, path: string) => { if (!str(v) || !Object.hasOwn(defs, v)) fail(path, '로봇 종류를 알 수 없습니다') }
     const tan = (t: any, path: string) => { if (!isObj(t) || !num(t.df) || !num(t.dv)) fail(path) }
 
     if (!Array.isArray(p.actors)) fail('actors')
@@ -69,7 +69,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
         if (!isObj(it) || !str(it.id) || !int(it.start) || !int(it.trimIn) || !int(it.trimOut)) fail(it_)
         if (itemIds.has(it.id)) fail(`${it_}.id`, '중복된 ID입니다')
         itemIds.add(it.id)
-        if (!(it.refId in p.clips)) fail(`${it_}.refId`, '클립이 없습니다')
+        if (!str(it.refId) || !Object.hasOwn(p.clips, it.refId)) fail(`${it_}.refId`, '클립이 없습니다')
         if (t.kind === 'motion' && p.clips[it.refId].robot !== actorRobot[t.actorId]) fail(`${it_}.refId`, '클립의 로봇이 액터와 다릅니다')
         if (it.trimOut > p.clips[it.refId].length) fail(`${it_}.trimOut`, '클립 길이를 넘습니다')
       })
