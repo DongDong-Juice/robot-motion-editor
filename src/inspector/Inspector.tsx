@@ -3,6 +3,7 @@ import { evalCurve } from '../model/curve'
 import { evaluateClip } from '../model/evaluate'
 import type { Interp } from '../model/types'
 import { editTarget, getEditor, useEditor } from '../store/store'
+import { playRange } from '../transport'
 
 const ROOT = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw']
 // slider ranges only; root number input is never clamped
@@ -43,7 +44,10 @@ export default function Inspector() {
   const keyFrames = channels.flatMap(ch => clip.channels[ch]?.keys.map(k => k.f) ?? [])
   const jump = (dir: 1 | -1) => {
     const t = dir > 0 ? Math.min(...keyFrames.filter(k => k > f)) : Math.max(...keyFrames.filter(k => k < f))
-    if (Number.isFinite(t)) ed.getState().setFrame(t - item.trimIn + item.start)
+    if (!Number.isFinite(t)) return
+    const st = ed.getState(), [lo, hi] = playRange(st) // clip view: the open clip; sequence view: >= 0
+    const nf = t - item.trimIn + item.start
+    st.setFrame(st.editing ? Math.min(Math.max(nf, lo), hi - 1) : Math.max(nf, 0))
   }
   const atKeys = channels.filter(ch => clip.channels[ch]?.keys.some(k => k.f === f)).map(ch => ({ channel: ch, f }))
   const curInterp = atKeys.length ? clip.channels[atKeys[0].channel].keys.find(k => k.f === f)!.interp : ''
@@ -101,13 +105,13 @@ export default function Inspector() {
             return (
               <div className="insp-ch" key={ch}>
                 <div className="insp-name">{ch}</div>
-                <div className="insp-row">
                   <input type="range" className={near ? 'near' : ''} min={lo} max={hi} step={0.001} value={v} disabled={!autoKey}
                     aria-label={ch}
                     onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); act.beginGesture() }}
                     onPointerUp={() => act.endGesture()}
                     onPointerCancel={() => act.endGesture()}
                     onChange={e => set(ch, +e.target.value)} />
+                <div className="insp-row">
                   <input type="number" key={`${f}-${v}-${d}`} defaultValue={num(v, d)} step={d ? 1 : 0.001} disabled={!autoKey}
                     aria-label={`${ch} 값`}
                     onBlur={e => { const n = e.target.valueAsNumber; if (!Number.isFinite(n)) return; const a = d ? n * Math.PI / 180 : n, r = joint ? Math.min(Math.max(a, lo), hi) : a; set(ch, r); e.target.value = num(r, d) }}

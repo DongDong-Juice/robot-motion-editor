@@ -3,9 +3,12 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { evalCurve } from '../model/curve'
-import { evaluate } from '../model/evaluate'
-import { nearestAngle, quatMul, yawQuat } from '../model/rootMath'
-import { editTarget, getEditor } from '../store/store'
+import { evaluate, evaluateItem } from '../model/evaluate'
+import { nearestAngle } from '../model/rootMath'
+import { inCrossfade, stitchTransforms, worldToClipRoot } from '../model/sequence'
+import type { Clip } from '../model/types'
+import { editingItem, editTarget, getEditor } from '../store/store'
+import { sequenceEnd } from '../transport'
 import { buildRobot, pivotAngle, type RobotRig } from './buildRobot'
 
 const css = (n: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim()
@@ -30,7 +33,8 @@ function makeGrid(): THREE.LineSegments {
   return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true }))
 }
 
-interface Entry { rig: RobotRig; trail: THREE.Line; dot: THREE.Points }
+// trailKey/trailClips: what the cached trail was built from (items + placement serialized, clips by identity)
+interface Entry { rig: RobotRig; trail: THREE.Line; dot: THREE.Points; ghost: boolean; trailKey?: string; trailClips?: (Clip | undefined)[] }
 
 export default function Stage() {
   const host = useRef<HTMLDivElement>(null)
@@ -60,6 +64,8 @@ export default function Stage() {
     const tc = new TransformControls(camera, renderer.domElement)
     tc.setSize(0.8)
     scene.add(tc.getHelper())
+    // dev/e2e hook
+    if (import.meta.env.DEV) (window as any).__stage = { camera, tc, entries: () => entries }
 
     let dirty = true, raf = 0
     const entries = new Map<string, Entry>()
@@ -68,10 +74,14 @@ export default function Stage() {
 
     const applyAll = () => {
       const s = store.getState()
+      const ei = editingItem(s)
       for (const a of s.project.actors) {
         const e = entries.get(a.id)
         if (!e) continue
-        const pose = evaluate(s.project, s.defs, a.id, s.frame)
+        const ghost = !!ei && ei.actorId !== a.id
+        if (e.ghost !== ghost) { e.ghost = ghost; e.rig.setGhost(ghost) }
+        const t = ei && !ghost ? editTarget(s, a.id) : null
+        const pose = t ? evaluateItem(s.project, s.defs, t.itemId, t.f) : evaluate(s.project, s.defs, a.id, s.frame)
         e.rig.applyPose(pose)
         e.dot.position.set(pose.rootPos[0], pose.rootPos[1], 0.002)
       }
@@ -104,14 +114,18 @@ export default function Stage() {
             new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3)),
             new THREE.PointsMaterial({ color, size: 8, sizeAttenuation: false }))
           scene.add(rig.root, trail, dot)
-          e = { rig, trail, dot }
+          e = { rig, trail, dot, ghost: false }
           entries.set(a.id, e)
         } else e.rig.setColor(a.color)
-        // trail only depends on the project; frame changes just move the dot
-        const item = project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === a.id)?.items[0]
+        // trail covers the whole sequence; rebuilt only when this actor's items, placement or clips change
+        const track = project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === a.id)
+        const clips = track?.items.map(i => project.clips[i.refId]) ?? []
+        const key = JSON.stringify([track?.items, a.placement])
+        if (e.trailKey === key && e.trailClips && clips.length === e.trailClips.length && clips.every((c, i) => c === e.trailClips![i])) continue
+        e.trailKey = key; e.trailClips = clips
         const pts: number[] = []
-        if (item) {
-          for (let f = item.start; f < item.start + item.trimOut - item.trimIn; f++) {
+        if (track?.items.length) {
+          for (let f = 0; f < sequenceEnd(project); f++) {
             const p = evaluate(project, defs, a.id, f).rootPos
             pts.push(p[0], p[1], 0.002)
           }
@@ -121,6 +135,11 @@ export default function Stage() {
       }
     }
 
+    // sequence view inside a crossfade of the selected actor's track: the displayed root is a blend, not invertible
+    const rootLocked = () => {
+      const s = store.getState()
+      return !s.editing && s.project.sequence.tracks.some(t => t.actorId === s.sel.actorId && inCrossfade(t, s.frame))
+    }
     const syncSelection = () => {
       const s = store.getState()
       const { sel } = s
@@ -134,12 +153,13 @@ export default function Stage() {
         }
       const e = sel.actorId ? entries.get(sel.actorId) : undefined
       // re-attaching mid-drag would reset TransformControls' axis and kill the drag
-      const target = !e ? null : ch === 'root' ? e.rig.root : ch ? e.rig.jointPivots[ch] ?? null : null
+      const target = !e ? null : ch === 'root' ? (rootLocked() ? null : e.rig.root) : ch ? e.rig.jointPivots[ch] ?? null : null
       if (!tc.dragging && tc.object !== (target ?? undefined)) {
         tc.detach()
         if (target) tc.attach(target)
       }
       if (e && ch === 'root') {
+        if (!tc.object) { dirty = true; return }
         tc.setMode(rootMode)
         tc.setSpace(rootMode === 'rotate' ? 'local' : 'world')
         tc.showX = tc.showY = tc.showZ = true
@@ -153,23 +173,20 @@ export default function Stage() {
       dirty = true
     }
 
-    // current gizmo values for the root, in clip (un-placed) space
+    // current gizmo values for the root, in clip-local channels: undo placement, then the item's stitch transform
     const rootValues = (): [string, number][] => {
       const s = store.getState(), actor = s.project.actors.find(a => a.id === s.sel.actorId)!
-      const o = entries.get(actor.id)!.rig.root
-      if (rootMode === 'translate') {
-        const { x: px, y: py, yaw } = actor.placement
-        const dx = o.position.x - px, dy = o.position.y - py, c = Math.cos(yaw), sn = Math.sin(yaw)
-        return [['root.x', c * dx + sn * dy], ['root.y', -sn * dx + c * dy], ['root.z', o.position.z]]
-      }
-      const [x, y, z, w] = quatMul(yawQuat(-actor.placement.yaw), [o.quaternion.x, o.quaternion.y, o.quaternion.z, o.quaternion.w])
-      const eu = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(x, y, z, w), 'ZYX')
-      // euler read-back wraps to (-pi, pi]; keep each angle continuous with the stored channel value
       const target = editTarget(s, actor.id)
-      if (!target) return [['root.roll', eu.x], ['root.pitch', eu.y], ['root.yaw', eu.z]]
-      const { clipId, f } = target, clip = s.project.clips[clipId]
-      const cur = (ch: string) => evalCurve(clip.channels[ch] ?? { keys: [] }, f, 0)
-      return [['root.roll', nearestAngle(eu.x, cur('root.roll'))], ['root.pitch', nearestAngle(eu.y, cur('root.pitch'))], ['root.yaw', nearestAngle(eu.z, cur('root.yaw'))]]
+      const track = s.project.sequence.tracks.find(t => t.items.some(i => i.id === target?.itemId))
+      const xf = (track && target && stitchTransforms(s.project, s.defs, track).get(target.itemId)) || { x: 0, y: 0, yaw: 0 }
+      const o = entries.get(actor.id)!.rig.root
+      const r = worldToClipRoot({ pos: [o.position.x, o.position.y, o.position.z], quat: [o.quaternion.x, o.quaternion.y, o.quaternion.z, o.quaternion.w] }, actor.placement, xf)
+      if (rootMode === 'translate') return [['root.x', r.x], ['root.y', r.y], ['root.z', r.z]]
+      // euler read-back wraps to (-pi, pi]; keep each angle continuous with the stored channel value
+      if (!target) return [['root.roll', r.roll], ['root.pitch', r.pitch], ['root.yaw', r.yaw]]
+      const clip = s.project.clips[target.clipId]
+      const cur = (ch: string) => evalCurve(clip.channels[ch] ?? { keys: [] }, target.f, 0)
+      return [['root.roll', nearestAngle(r.roll, cur('root.roll'))], ['root.pitch', nearestAngle(r.pitch, cur('root.pitch'))], ['root.yaw', nearestAngle(r.yaw, cur('root.yaw'))]]
     }
 
     tc.addEventListener('dragging-changed', e => {
@@ -208,6 +225,7 @@ export default function Stage() {
       ray.setFromCamera(ndc, camera)
       let best: { id: string; via: string; d: number } | null = null
       for (const [id, e] of entries) {
+        if (e.ghost) continue
         const hit = ray.intersectObject(e.rig.root, true)[0]
         const via = hit && e.rig.linkToJoint.get(hit.object)
         if (via && (!best || hit.distance < best.d)) best = { id, via, d: hit.distance }
@@ -241,12 +259,15 @@ export default function Stage() {
     })
     ro.observe(el)
 
+    let wasLocked = false
     syncActors(); applyAll(); syncSelection()
     const unsub = store.subscribe((s, prev) => {
       if (s.project !== prev.project) syncActors()
       applyAll()
       const key = (p: typeof s.project) => p.actors.map(a => a.id + a.robot).join()
-      if (s.sel !== prev.sel || key(s.project) !== key(prev.project)) syncSelection()
+      const locked = rootLocked()
+      if (s.sel !== prev.sel || key(s.project) !== key(prev.project) || locked !== wasLocked) syncSelection()
+      wasLocked = locked
     })
 
     const loop = () => {

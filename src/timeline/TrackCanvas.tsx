@@ -95,7 +95,7 @@ export default function TrackCanvas() {
         ctx.fillRect(LABEL_W, RULER_H, xa - LABEL_W, H - RULER_H); ctx.fillRect(xb, RULER_H, W - xb, H - RULER_H)
         ctx.restore()
       }
-      const tg = s.sel.actorId ? editTarget(s, s.sel.actorId) : null, cf = tg?.f ?? 0
+      const pa = e?.actorId ?? s.sel.actorId, tg = pa ? editTarget(s, pa) : null, cf = tg?.f ?? 0
       drawRuler(ctx, sc, W, RULER_H, NO_SEQ, cf, C)
 
       if (u.box) {

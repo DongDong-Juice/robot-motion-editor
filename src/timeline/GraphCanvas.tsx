@@ -170,7 +170,7 @@ export default function GraphCanvas() {
         const xa = Math.max(LABEL_W, frameToX(sc, e.item.trimIn)), xb = Math.min(W, frameToX(sc, e.item.trimOut))
         ctx.fillRect(LABEL_W, RULER_H, xa - LABEL_W, H - RULER_H); if (xb < W) ctx.fillRect(xb, RULER_H, W - xb, H - RULER_H)
       }
-      const sel = ed.getState().sel.actorId, cf = (sel && editTarget(ed.getState(), sel)?.f) || 0
+      const sel = e?.actorId ?? ed.getState().sel.actorId, cf = (sel && editTarget(ed.getState(), sel)?.f) || 0
       drawRuler(ctx, sc, W, RULER_H, NO_SEQ, cf, C)
       const px = Math.round(frameToX(sc, cf)) + 0.5
       if (px >= LABEL_W) { ctx.fillStyle = C.accent; ctx.fillRect(px - 0.5, 0, 1, H) }

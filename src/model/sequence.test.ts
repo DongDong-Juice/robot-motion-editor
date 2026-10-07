@@ -6,7 +6,7 @@ import { makeKey } from './curve'
 import { newProject } from './defaults'
 import { evaluate, evaluateItem, type Pose, type RobotDefs } from './evaluate'
 import { eulerToQuat, quatAngle, quatMul, quatYaw, yawQuat } from './rootMath'
-import { blendPose, slerp, stitchTransforms } from './sequence'
+import { blendPose, slerp, stitchTransforms, worldToClipRoot } from './sequence'
 import type { Curve, Project } from './types'
 
 const r = (f: string) => JSON.parse(readFileSync(new URL(`../../public/robots/g1/${f}`, import.meta.url), 'utf8'))
@@ -107,4 +107,19 @@ test('stitch with nonzero clip-start root: xy/yaw continuous, z/roll/pitch prese
   const own = eulerToQuat(0.1, 0.2, 0.7)
   const yaw = quatYaw(a.rootQuat) - 0.7
   expect(quatAngle(s.rootQuat, quatMul(yawQuat(yaw), own))).toBeCloseTo(0, 5)
+})
+
+test('worldToClipRoot inverts evaluateItem (placement + stitch)', () => {
+  const { p, actor } = build([
+    [0, 0, 60, { 'root.x': lin([0, 0], [59, 1]), 'root.yaw': lin([0, 0], [59, 1]) }],
+    [60, 0, 60, { 'root.x': lin([0, 0.3], [59, 0.8]), 'root.y': lin([0, 0.2]), 'root.z': lin([0, 0.7]), 'root.roll': lin([0, 0.1]), 'root.pitch': lin([0, -0.2]), 'root.yaw': lin([0, 0.5]) }],
+  ])
+  p.actors.find(a => a.id === actor)!.placement = { x: 1, y: -2, yaw: 0.7 }
+  const track = p.sequence.tracks.find(t => t.actorId === actor)!
+  const xf = stitchTransforms(p, defs, track).get('i1')!
+  expect(Math.hypot(xf.x, xf.y)).toBeGreaterThan(0.5)
+  const w = evaluateItem(p, defs, 'i1', 30)
+  const r = worldToClipRoot({ pos: w.rootPos, quat: w.rootQuat }, p.actors[0].placement, xf)
+  expect(r.x).toBeCloseTo(0.3 + 0.5 * 30 / 59, 5); expect(r.y).toBeCloseTo(0.2, 5); expect(r.z).toBeCloseTo(0.7, 5)
+  expect(r.roll).toBeCloseTo(0.1, 5); expect(r.pitch).toBeCloseTo(-0.2, 5); expect(r.yaw).toBeCloseTo(0.5, 5)
 })

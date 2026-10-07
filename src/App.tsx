@@ -3,6 +3,8 @@ import { fetchRobotDef } from './robot/loadRobot'
 import { getEditor, initEditor, useEditor } from './store/store'
 import Inspector from './inspector/Inspector'
 import Stage from './viewer/Stage'
+import ProjectPanel from './project/ProjectPanel'
+import { inCrossfade } from './model/sequence'
 import Timeline from './timeline/Timeline'
 import { formatTimecode } from './timeline/timeScale'
 import ExportDialog from './export/ExportDialog'
@@ -11,6 +13,11 @@ import { sequenceEnd, startTransport } from './transport'
 function AutoKeyHint() {
   const off = useEditor(s => !s.autoKey && !!s.sel.channel && !s.sel.channel.startsWith('group:'))
   return off ? <div className="stage-hint">자동 키 꺼짐: 기즈모 변경은 저장되지 않습니다</div> : null
+}
+
+export function CrossfadeHint() {
+  const on = useEditor(s => !s.editing && !!s.sel.channel?.startsWith('root') && s.project.sequence.tracks.some(t => t.actorId === s.sel.actorId && inCrossfade(t, s.frame)))
+  return on ? <div className="stage-hint hi">크로스페이드 구간에서는 클립 보기에서 루트를 편집하세요</div> : null
 }
 
 function Menubar() {
@@ -51,9 +58,10 @@ export default function App() {
   return (
     <div id="app">
       <header id="menubar">{status === 'ready' ? <Menubar /> : 'Motion Editor'}</header>
-      <aside id="project">Project</aside>
+      <aside id="project">{status === 'ready' && <ProjectPanel />}</aside>
       <main id="stage">
         {status === 'ready' && <AutoKeyHint />}
+        {status === 'ready' && <CrossfadeHint />}
         {status === 'ready' ? <Stage /> : status === 'loading' ? '로봇 불러오는 중…' : status}
       </main>
       <aside id="inspector">{status === "ready" && <Inspector />}</aside>

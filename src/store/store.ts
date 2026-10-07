@@ -148,7 +148,11 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       setPlaying: playing => set({ playing }),
       toggleAutoKey: () => set(s => ({ autoKey: !s.autoKey })),
       setView: view => set({ view }),
-      select: (actorId, channel = null) => set({ sel: { actorId, channel, keys: [] } }),
+      select: (actorId, channel = null) => {
+        const e = editingItem(get())
+        if (e && actorId && actorId !== e.actorId) return // other actors are ghosts in clip view
+        set({ sel: { actorId, channel, keys: [] } })
+      },
       selectKeys: (keys, additive) => set(s => {
         const base = additive ? s.sel.keys : []
         const add = keys.filter((k, i) =>

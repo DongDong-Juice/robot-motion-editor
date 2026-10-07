@@ -83,3 +83,21 @@ body {
 .tl-body > .track-canvas, .tl-body > .seq-canvas { position: absolute; inset: 0; }
 .seq-msg { position: absolute; z-index: 2; font-size: 12px; color: var(--accent); background: var(--panel); padding: 1px 6px; pointer-events: none; }
 .seq-rename { position: absolute; z-index: 2; top: 2px; width: 110px; font: inherit; font-size: 12px; background: var(--bg); color: var(--text); border: 1px solid var(--accent); }
+
+.insp-ch input[type=range] { display: block; width: 100%; min-width: 120px; box-sizing: border-box; margin: 2px 0; }
+.stage-hint.hi { bottom: 24px; color: var(--accent); }
+#project { overflow-y: auto; font-size: 13px; }
+.pp { padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.pp h3 { font-size: 12px; font-weight: 500; color: #8d96a3; margin: 8px 0 2px; }
+.pp-row { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 3px; cursor: default; }
+.pp-row:hover, .pp-row[aria-selected=true] { background: var(--bg); }
+.pp-row:focus-visible, .pp-btns button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pp-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.pp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pp-dim { color: #8d96a3; }
+.pp-row input { flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--accent); border-radius: 3px; font: inherit; padding: 1px 4px; }
+.pp-btns { display: flex; flex-wrap: wrap; gap: 4px; }
+.pp-btns button, .pp-row button { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 3px; font: inherit; padding: 2px 8px; cursor: pointer; }
+.pp-row button { padding: 0 5px; }
+.pp-btns button:disabled { opacity: .45; cursor: default; }
+.pp-msg { color: var(--accent); margin: 0; }

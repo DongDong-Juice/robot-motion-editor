@@ -98,3 +98,25 @@ export function validTrack(items: Item[]): boolean {
   }
   return true
 }
+
+// Inverse of world = placement . xf . clipRoot: a world root pose -> clip-local root channels.
+export function worldToClipRoot(world: { pos: [number, number, number]; quat: Quat }, placement: Xf, xf: Xf) {
+  const un = (v: [number, number], t: Xf): [number, number] => {
+    const dx = v[0] - t.x, dy = v[1] - t.y, c = Math.cos(t.yaw), s = Math.sin(t.yaw)
+    return [c * dx + s * dy, -s * dx + c * dy]
+  }
+  const [x, y] = un(un([world.pos[0], world.pos[1]], placement), xf)
+  const [qx, qy, qz, qw] = quatMul(yawQuat(-xf.yaw), quatMul(yawQuat(-placement.yaw), world.quat))
+  return {
+    x, y, z: world.pos[2],
+    roll: Math.atan2(2 * (qw * qx + qy * qz), 1 - 2 * (qx * qx + qy * qy)),
+    pitch: Math.asin(Math.max(-1, Math.min(1, 2 * (qw * qy - qz * qx)))),
+    yaw: Math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz)),
+  }
+}
+
+// True when `frame` lies in a crossfade overlap of the track.
+export function inCrossfade(track: Track, frame: number): boolean {
+  const s = sortedItems(track)
+  return s.some((a, i) => i + 1 < s.length && frame >= s[i + 1].start && frame < a.start + itemLen(a))
+}
