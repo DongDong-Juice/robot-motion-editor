@@ -6,6 +6,18 @@ const read = (f: string) =>
   JSON.parse(readFileSync(new URL(`../../public/robots/g1/${f}`, import.meta.url), 'utf8'))
 const loadG1 = () => loadRobotDef('g1', read('model.json'), read('meshes.json'))
 
+const readGo2 = (f: string) =>
+  JSON.parse(readFileSync(new URL(`../../public/robots/go2/${f}`, import.meta.url), 'utf8'))
+const loadGo2 = () => loadRobotDef('go2', readGo2('model.json'), readGo2('meshes.json'))
+
+test('go2 joints: 12 revolute, FL first', () => {
+  const d = loadGo2()
+  expect(d.joints.map(j => j.name).slice(0, 3)).toEqual(['FL_hip_joint', 'FL_thigh_joint', 'FL_calf_joint'])
+  expect(d.joints).toHaveLength(12)
+  expect(Object.keys(d.meshes).length).toBeGreaterThan(0)
+  expect(d.standingHeight).toBeGreaterThan(0.2)
+})
+
 test('g1 joints: 29 revolute in URDF order', () => {
   const d = loadG1()
   expect(d.joints).toHaveLength(29)
