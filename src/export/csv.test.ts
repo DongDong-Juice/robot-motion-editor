@@ -4,7 +4,7 @@ import { loadRobotDef } from '../robot/loadRobot'
 import type { RobotKind } from '../robot/types'
 import { addActor, newProject } from '../model/defaults'
 import { makeKey } from '../model/curve'
-import { quatYaw } from '../model/rootMath'
+import { eulerToQuat, quatYaw } from '../model/rootMath'
 import type { RobotDefs } from '../model/evaluate'
 import type { Project } from '../model/types'
 import { csvFileName, itemFrameRange, posesToCsv, samplePoses } from './csv'
@@ -51,12 +51,28 @@ test('local mode: first row x=y=0, yaw=0', () => {
   expect(quatYaw(poses[0].rootQuat)).toBeCloseTo(0)
 })
 
-test('quat sign continuous across yaw +-pi', () => {
+test('quat sign continuous when yaw jumps by 2pi (raw quat negates)', () => {
   const p = structuredClone(proj)
   const clip = p.clips[itemOf(p, g1.id).refId]
-  clip.channels['root.yaw'] = { keys: [makeKey(0, 3.0), makeKey(60, 3.3)] }
+  const k0 = makeKey(0, 0.1, 'hold'), k1 = makeKey(60, 0.1 + 2 * Math.PI, 'hold')
+  clip.channels['root.yaw'] = { keys: [k0, k1] }
   const poses = samplePoses(p, defs, g1.id, itemOf(p, g1.id).id, 'world')
   for (let k = 1; k < poses.length; k++) expect(dot(poses[k - 1].rootQuat, poses[k].rootQuat)).toBeGreaterThan(0)
+})
+
+test('local mode over time: motion along local +x, pitch preserved, yaw 0', () => {
+  const p = structuredClone(proj)
+  p.actors[0].placement = { x: 3, y: -2, yaw: 1.2 }
+  const clip = p.clips[itemOf(p, g1.id).refId]
+  clip.channels['root.x'] = { keys: [makeKey(0, 0, 'linear'), makeKey(119, 1, 'linear')] }
+  clip.channels['root.pitch'] = { keys: [makeKey(0, 0.3, 'hold')] }
+  const poses = samplePoses(p, defs, g1.id, itemOf(p, g1.id).id, 'local')
+  const last = poses[poses.length - 1]
+  expect(last.rootPos[0]).toBeCloseTo(1)
+  expect(last.rootPos[1]).toBeCloseTo(0)
+  expect(last.rootPos[2]).toBeCloseTo(poses[0].rootPos[2])
+  expect(quatYaw(last.rootQuat)).toBeCloseTo(0)
+  expect(Math.abs(dot(last.rootQuat, eulerToQuat(0, 0.3, 0)))).toBeCloseTo(1)
 })
 
 test('file names: sanitize and dedupe', () => {
