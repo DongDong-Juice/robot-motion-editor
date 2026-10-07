@@ -4,11 +4,13 @@ import { itemLen, sortedItems } from '../model/sequence'
 import type { Item, Track } from '../model/types'
 import { tv } from './viewState'
 import { drawRuler, hitMarker, LABEL_W, RULER_H } from './ruler'
+import { mediaUrl, subscribeMedia } from '../media/registry'
 import { frameToX, xToFrame, type TimeScale } from './timeScale'
 
 const ROW_H = 28, EDGE = 6
 const ROBOT = { g1: 'G1', go2: 'GO2' } as const
 const DENY = '이 위치에 놓을 수 없습니다'
+const isVideo = (t: Track) => t.kind === 'video'
 
 // In-progress drag preview; the store is untouched until mouseup.
 interface Drag { itemId: string; mode: 'move' | 'in' | 'out'; df: number }
@@ -29,11 +31,14 @@ export default function SequenceCanvas() {
     let W = 0, H = 0, raf = 0, drag: Drag | null = null, timer = 0
 
     const scale = (): TimeScale => ({ x0: LABEL_W - tv.scrollF * tv.ppf, pxPerFrame: tv.ppf })
-    const tracks = () => ed.getState().project.sequence.tracks.filter(t => t.kind === 'motion')
+    // V1 (always first) only shows once the project has media
+    const tracks = () => { const p = ed.getState().project; return p.sequence.tracks.filter(t => t.kind === 'motion' || (isVideo(t) && p.media.length > 0)) }
+    const refLen = (it: Item) => { const p = ed.getState().project; return p.clips[it.refId]?.length ?? p.media.find(m => m.id === it.refId)?.durationF ?? 0 }
+    const refName = (it: Item) => { const p = ed.getState().project; return p.clips[it.refId]?.name ?? p.media.find(m => m.id === it.refId)?.name ?? '' }
     // items of a track with the drag preview applied
     const shown = (t: Track): Item[] => t.items.map(it => {
       if (!drag || drag.itemId !== it.id) return it
-      const clipLen = ed.getState().project.clips[it.refId].length, d = drag.df
+      const clipLen = refLen(it), d = drag.df
       if (drag.mode === 'move') return { ...it, start: Math.max(0, it.start + d) }
       if (drag.mode === 'in') { const k = Math.min(Math.max(d, -it.trimIn), itemLen(it) - 1); return { ...it, start: it.start + k, trimIn: it.trimIn + k } }
       return { ...it, trimOut: it.trimOut + Math.min(Math.max(d, 1 - itemLen(it)), clipLen - it.trimOut) }
@@ -50,38 +55,43 @@ export default function SequenceCanvas() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H)
       ctx.font = '11px "IBM Plex Sans KR", sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left'
+      const hatch = (a: number, b: number, y: number, alpha: number) => {
+        ctx.save(); ctx.beginPath(); ctx.rect(a, y + 2, b - a, ROW_H - 5); ctx.clip()
+        ctx.strokeStyle = C.text; ctx.globalAlpha = alpha; ctx.lineWidth = 1; ctx.beginPath()
+        for (let hx = a - ROW_H; hx < b + ROW_H; hx += 6) {
+          ctx.moveTo(hx, y + ROW_H - 3); ctx.lineTo(hx + ROW_H - 5, y + 2)
+          ctx.moveTo(hx, y + 2); ctx.lineTo(hx + ROW_H - 5, y + ROW_H - 3)
+        }
+        ctx.stroke(); ctx.restore()
+      }
       tracks().forEach((t, i) => {
-        const y = RULER_H + i * ROW_H, actor = s.project.actors.find(a => a.id === t.actorId)
+        const y = RULER_H + i * ROW_H, actor = s.project.actors.find(a => a.id === t.actorId), video = isVideo(t)
         const color = actor?.color ?? C.text
         ctx.fillStyle = C.line; ctx.fillRect(0, y + ROW_H - 1, W, 1)
         ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, y, W - LABEL_W, ROW_H); ctx.clip()
         const items = sortedItems({ ...t, items: shown(t) })
         for (const it of items) {
           const x = frameToX(sc, it.start), w = itemLen(it) * tv.ppf, by = y + 2, bh = ROW_H - 5
-          ctx.fillStyle = color; ctx.globalAlpha = 0.18; ctx.fillRect(x, by, w, bh); ctx.globalAlpha = 1
-          ctx.strokeStyle = it.id === s.selItem ? C.accent : color; ctx.lineWidth = 1
+          if (video) { ctx.fillStyle = C.panel; ctx.fillRect(x, by, w, bh) }
+          else { ctx.fillStyle = color; ctx.globalAlpha = 0.18; ctx.fillRect(x, by, w, bh); ctx.globalAlpha = 1 }
+          if (video && !mediaUrl(it.refId)) hatch(x, x + w, y, 0.25) // offline
+          ctx.strokeStyle = it.id === s.selItem ? C.accent : video ? C.line : color; ctx.lineWidth = 1
           ctx.strokeRect(x + 0.5, by + 0.5, w - 1, bh - 1)
         }
         // crossfade: overlap of neighbours, hatched both ways
         for (let k = 0; k + 1 < items.length; k++) {
           const a = frameToX(sc, items[k + 1].start), b = frameToX(sc, items[k].start + itemLen(items[k]))
           if (b <= a) continue
-          ctx.save(); ctx.beginPath(); ctx.rect(a, y + 2, b - a, ROW_H - 5); ctx.clip()
-          ctx.strokeStyle = C.text; ctx.globalAlpha = 0.5; ctx.lineWidth = 1; ctx.beginPath()
-          for (let hx = a - ROW_H; hx < b + ROW_H; hx += 6) {
-            ctx.moveTo(hx, y + ROW_H - 3); ctx.lineTo(hx + ROW_H - 5, y + 2)
-            ctx.moveTo(hx, y + 2); ctx.lineTo(hx + ROW_H - 5, y + ROW_H - 3)
-          }
-          ctx.stroke(); ctx.restore()
+          hatch(a, b, y, 0.5)
         }
         ctx.fillStyle = C.text
         for (const it of items) {
           const x = Math.max(frameToX(sc, it.start), LABEL_W) + 4, right = frameToX(sc, it.start + itemLen(it)) - 4
-          if (right > x) ctx.fillText(s.project.clips[it.refId].name, x, y + ROW_H / 2, right - x)
+          if (right > x) ctx.fillText(refName(it) + (video && !mediaUrl(it.refId) ? ' (오프라인)' : ''), x, y + ROW_H / 2, right - x)
         }
         ctx.restore()
         ctx.fillStyle = C.bg; ctx.fillRect(0, y, LABEL_W, ROW_H - 1)
-        ctx.fillStyle = color; ctx.fillText(actor?.name ?? '', 8, y + ROW_H / 2, LABEL_W - 12)
+        ctx.fillStyle = color; ctx.fillText(video ? 'V1 참조영상' : actor?.name ?? '', 8, y + ROW_H / 2, LABEL_W - 12)
       })
       drawRuler(ctx, sc, W, RULER_H, s.project.sequence, s.frame, C)
       const px = Math.round(frameToX(sc, s.frame)) + 0.5
@@ -97,7 +107,7 @@ export default function SequenceCanvas() {
       schedule()
     }
     const ro = new ResizeObserver(resize); ro.observe(canvas); resize()
-    const unsub = ed.subscribe(schedule)
+    const unsub = ed.subscribe(schedule), unsubMedia = subscribeMedia(schedule)
 
     // ---- mouse ----
     const pos = (e: { clientX: number; clientY: number }) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top } }
@@ -165,7 +175,7 @@ export default function SequenceCanvas() {
         return
       }
       const hit = itemAt(x, y)
-      if (hit) s.openItem(hit.it.id)
+      if (hit && !isVideo(hit.t)) s.openItem(hit.it.id)
     }
 
     const onContext = (e: MouseEvent) => {
@@ -191,13 +201,20 @@ export default function SequenceCanvas() {
       schedule()
     }
 
-    const onDragOver = (e: DragEvent) => { if (e.dataTransfer?.types.includes('application/x-motion-clip')) e.preventDefault() }
+    const onDragOver = (e: DragEvent) => { const ty = e.dataTransfer?.types; if (ty?.includes('application/x-motion-clip') || ty?.includes('application/x-motion-media')) e.preventDefault() }
     const onDrop = (e: DragEvent) => {
-      const clipId = e.dataTransfer?.getData('application/x-motion-clip')
-      if (!clipId) return
+      const clipId = e.dataTransfer?.getData('application/x-motion-clip'), mediaId = e.dataTransfer?.getData('application/x-motion-media')
+      if (!clipId && !mediaId) return
       e.preventDefault()
       const { x, y } = pos(e), row = rowAt(y), t = tracks()[row], s = ed.getState()
-      if (!t?.actorId || x < LABEL_W) return
+      if (!t || y < RULER_H || x < LABEL_W) return
+      if (mediaId) {
+        if (!isVideo(t)) flash('영상은 V1 트랙에만 놓을 수 있습니다', row)
+        else if (!s.addVideoItem(mediaId, frameAt(x))) flash('영상 클립은 겹칠 수 없습니다', row)
+        return
+      }
+      if (isVideo(t)) { flash('V1 트랙에는 영상만 놓을 수 있습니다', row); return }
+      if (!t.actorId || !clipId) return
       if (s.addItem(t.actorId, clipId, frameAt(x))) return
       const robot = s.project.actors.find(a => a.id === t.actorId)?.robot, clip = s.project.clips[clipId]
       flash(robot && clip && clip.robot !== robot ? `이 트랙에는 ${ROBOT[robot]} 클립만 놓을 수 있습니다` : '겹치는 클립이 너무 많습니다', row)
@@ -211,7 +228,7 @@ export default function SequenceCanvas() {
     canvas.addEventListener('dragover', onDragOver)
     canvas.addEventListener('drop', onDrop)
     return () => {
-      ro.disconnect(); unsub(); cancelAnimationFrame(raf); clearTimeout(timer)
+      ro.disconnect(); unsub(); unsubMedia(); cancelAnimationFrame(raf); clearTimeout(timer)
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('dblclick', onDbl)
