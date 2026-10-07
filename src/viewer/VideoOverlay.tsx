@@ -23,7 +23,6 @@ export default function VideoOverlay() {
       if (v.getAttribute('src') !== url) { v.src = url; return } // loadedmetadata re-runs sync
       if (v.readyState < 1) return
       const a = syncAction(t, v, s.playing)
-      if (a.kind === 'hide') return
       if (a.kind === 'seek') v.currentTime = a.t
       if (a.play) { if (v.paused) v.play().catch(() => {}) } else if (!v.paused) v.pause()
     }

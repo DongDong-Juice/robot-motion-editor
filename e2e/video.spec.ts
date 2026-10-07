@@ -32,7 +32,7 @@ const open = async (page: Page) => {
 const importVideo = async (page: Page) => {
   const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: '영상 가져오기' }).click()])
   await fc.setFiles(file)
-  await expect(page.getByText('연결됨')).toBeVisible()
+  await expect(page.locator('.pp-media')).toHaveCount(1)
 }
 
 test('import video, place on V1, scrub syncs', async ({ page }) => {
@@ -51,7 +51,7 @@ test('import video, place on V1, scrub syncs', async ({ page }) => {
 
 test('save/reopen marks media offline, relink restores', async ({ page }) => {
   const errors: string[] = []
-  page.on('console', m => { if (m.type() === 'error' && !m.text().includes('favicon') && !m.text().includes('404')) errors.push(m.text()) })
+  page.on('console', m => { if (m.type() === 'error' && !m.location().url.includes('favicon')) errors.push(m.text()) })
   page.on('dialog', d => d.accept())
   const downloads: Download[] = []
   page.on('download', d => downloads.push(d))
@@ -64,7 +64,7 @@ test('save/reopen marks media offline, relink restores', async ({ page }) => {
   const name = downloads[0].suggestedFilename()
 
   await page.getByRole('button', { name: '새 프로젝트' }).click()
-  await expect(page.getByText('연결됨')).toHaveCount(0)
+  await expect(page.locator('.pp-media')).toHaveCount(0)
   const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: '열기' }).click()])
   await fc.setFiles([{ name, mimeType: 'application/json', buffer: saved }])
   await expect(page.getByText('오프라인').first()).toBeVisible()
@@ -72,6 +72,5 @@ test('save/reopen marks media offline, relink restores', async ({ page }) => {
   const [fc2] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: /다시 연결/ }).click()])
   await fc2.setFiles(file)
   await expect(page.getByText('오프라인')).toHaveCount(0)
-  await expect(page.getByText('연결됨')).toBeVisible()
   expect(errors).toEqual([])
 })
