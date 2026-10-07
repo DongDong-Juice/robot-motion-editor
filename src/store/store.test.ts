@@ -514,3 +514,38 @@ test('gizmoLock: root on the first frame of a stitched item', () => {
   s().select(actor, 'root.yaw'); s().openItem(trackItems(actor)[1].id); s().select(actor, 'root.yaw')
   expect(gizmoLock(s())).toBe('stitch') // clip view frame 120 = clip frame 0 = trimIn
 })
+
+test('addMedia creates single V1 on top; deleteMedia refuses used media', () => {
+  const before = s().project.sequence.tracks.length
+  const m = s().addMedia('a.mp4', 600)
+  const m2 = s().addMedia('a.mp4', 300)
+  const tr = s().project.sequence.tracks
+  expect(tr.length).toBe(before + 1)
+  expect(tr[0].kind).toBe('video')
+  expect(s().project.media.map(x => x.name)).toEqual(['a.mp4', 'a.mp4_2'])
+  expect(() => s().addMedia('b', 0)).toThrow()
+  expect(s().addVideoItem(m, 0)).toBe(true)
+  expect(s().deleteMedia(m)).toBe(false)
+  expect(s().deleteMedia(m2)).toBe(true)
+  s().undo()
+  expect(s().project.media.length).toBe(2)
+  expect(s().dirty).toBe(true)
+})
+
+test('video items: trim bounded by durationF, split works, overlap / motion add rejected', () => {
+  const m = s().addMedia('a.mp4', 600)
+  expect(s().addVideoItem(m, 0)).toBe(true)
+  const v = s().project.sequence.tracks[0]
+  const id = v.items[0].id
+  expect(s().addVideoItem(m, 100)).toBe(false) // overlap
+  expect(s().trimItem(id, 'out', 1)).toBe(false) // beyond durationF
+  expect(s().trimItem(id, 'out', -100)).toBe(true)
+  expect(s().splitItem(id, 200)).toBe(true)
+  expect(s().project.sequence.tracks[0].items.map(i => [i.start, i.trimIn, i.trimOut])).toEqual([[0, 0, 200], [200, 200, 500]])
+  expect(s().moveItem(id, 150)).toBe(false)
+  expect(s().addItem(v.id, c, 1000)).toBe(false) // motion clip cannot target the video track
+  expect(s().project.sequence.tracks[0].items.length).toBe(2)
+  s().openItem(id)
+  expect(s().editing).toBeNull() // video items have no clip view
+  expect(s().deleteItem(id)).toBe(true)
+})

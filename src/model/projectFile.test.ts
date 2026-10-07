@@ -68,3 +68,20 @@ test('inherited names are not robots or clips', () => {
   bad(p => { const c: any = Object.values(p.clips)[0]; c.robot = 'constructor' }, '.robot')
   bad(p => { p.sequence.tracks[0].items[0].refId = 'toString' }, 'refId')
 })
+
+test('video: old file opens; media/V1 problems rejected', () => {
+  const ok = (fn: (p: any) => void) => { const p: any = JSON.parse(serializeProject(mk())); fn(p); return parseProject(JSON.stringify(p), defs) }
+  const v = (items: any[] = []) => ({ id: 'v', kind: 'video', hidden: false, locked: false, items })
+  const m = { id: 'm', name: 'a', durationF: 600 }
+  const i = (id: string, start: number, trimOut: number, refId = 'm') => ({ id, refId, start, trimIn: 0, trimOut })
+  expect(parseProject(serializeProject(mk()), defs).media).toEqual([])
+  ok(p => { p.media = [m]; p.sequence.tracks.unshift(v([i('a', 0, 100)])) })
+  bad(p => { p.media = [{ ...m, durationF: 0 }] }, 'media.0.durationF')
+  bad(p => { p.media = [{ ...m, durationF: 1.5 }] }, 'media.0.durationF')
+  bad(p => { p.media = [m, m] }, 'media.1.id')
+  bad(p => { p.media = [m]; p.sequence.tracks.unshift(v([i('a', 0, 100, 'zz')])) }, 'refId')
+  bad(p => { p.media = [m]; p.sequence.tracks.unshift(v([i('a', 0, 601)])) }, 'trimOut')
+  bad(p => { p.media = [m]; p.sequence.tracks.unshift(v([i('a', 0, 100), i('b', 50, 100)])) }, '겹침')
+  bad(p => { p.media = [m]; p.sequence.tracks.unshift(v(), { ...v(), id: 'v2' }) }, '영상 트랙')
+  bad(p => { p.media = [m]; p.sequence.tracks.unshift({ ...v(), actorId: 'x' }) }, 'actorId')
+})

@@ -3,7 +3,8 @@ import { evalCurve, makeKey } from '../model/curve'
 import { addActor as addActorTo, newProject, nextClipName } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
 import { inCrossfade, resolve, sortedItems, validTrack } from '../model/sequence'
-import type { Actor, Item, Clip, Interp, Project, Tan } from '../model/types'
+import type { Actor, Item, Clip, Interp, Project, Tan, Track } from '../model/types'
+import { validVideoTrack, videoTrack } from '../model/video'
 import type { RobotKind } from '../robot/types'
 
 export type KeyRef = { channel: string; f: number }
@@ -31,6 +32,9 @@ export interface EditorState {
   newClip(robot: RobotKind): string
   importClip(clip: Clip): void
   deleteClip(clipId: string): boolean
+  addMedia(name: string, durationF: number): string
+  deleteMedia(mediaId: string): boolean
+  addVideoItem(mediaId: string, start: number): boolean
   addItem(actorId: string, clipId: string, start: number): boolean
   moveItem(itemId: string, start: number): boolean
   trimItem(itemId: string, side: 'in' | 'out', df: number): boolean
@@ -131,7 +135,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
     // all other curves stay shared with older snapshots (frozen in dev, so an undeclared mutation throws).
     const draft = (touched: Touched): Project => {
       const p = get().project
-      const next: Project = { ...p, actors: structuredClone(p.actors), sequence: structuredClone(p.sequence), clips: { ...p.clips } }
+      const next: Project = { ...p, actors: structuredClone(p.actors), sequence: structuredClone(p.sequence), clips: { ...p.clips }, media: [...p.media] }
       for (const { clipId, channels } of touched) {
         const clip = p.clips[clipId]
         if (!clip) continue
@@ -160,6 +164,10 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       return null
     }
 
+    // Track rule by kind: V1 uses media bounds and forbids overlap; motion tracks allow crossfades.
+    const validItems = (p: Project, t: Track) => t.kind === 'video' ? validVideoTrack(t.items, Object.fromEntries(p.media.map(m => [m.id, m]))) : validTrack(t.items)
+    const refLen = (p: Project, t: Track, it: Item) => t.kind === 'video' ? p.media.find(m => m.id === it.refId)?.durationF ?? 0 : p.clips[it.refId].length
+
     const putKey = (clip: Clip, channel: string, f: number, v: number) => {
       const j = defs[clip.robot].joints.find(j => j.name === channel)
       if (j) v = Math.min(Math.max(v, j.lower), j.upper)
@@ -176,7 +184,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       editing: null,
       openItem: itemId => {
         const t = get().project.sequence.tracks.find(t => t.items.some(i => i.id === itemId))
-        if (t) set({ editing: itemId, selItem: itemId, sel: { actorId: t.actorId ?? null, channel: null, keys: [] } })
+        if (t?.kind === 'motion') set({ editing: itemId, selItem: itemId, sel: { actorId: t.actorId ?? null, channel: null, keys: [] } })
       },
       closeItem: () => set(s => ({ editing: null, frame: Math.max(s.frame, 0) })),
       setIn: f => edit(p => { p.sequence.inF = f; if (f !== null && p.sequence.outF !== null && p.sequence.outF <= f) p.sequence.outF = null }, []),
@@ -326,6 +334,29 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         delete p.clips[clipId]
         return true
       }),
+      addMedia: (name, durationF) => {
+        if (!Number.isInteger(durationF) || durationF < 1) throw new Error(`invalid durationF ${durationF}`)
+        const id = crypto.randomUUID()
+        edit(p => {
+          if (!videoTrack(p)) p.sequence.tracks.unshift({ id: crypto.randomUUID(), kind: 'video', hidden: false, locked: false, items: [] })
+          const taken = new Set(p.media.map(m => m.name))
+          let n = name
+          for (let i = 2; taken.has(n); i++) n = `${name}_${i}`
+          p.media.push({ id, name: n, durationF })
+        }, [])
+        return id
+      },
+      deleteMedia: mediaId => tryEdit(p => {
+        if (!p.media.some(m => m.id === mediaId) || p.sequence.tracks.some(t => t.items.some(i => i.refId === mediaId))) return false
+        p.media = p.media.filter(m => m.id !== mediaId)
+        return true
+      }),
+      addVideoItem: (mediaId, start) => tryEdit(p => {
+        const m = p.media.find(m => m.id === mediaId), t = videoTrack(p)
+        if (!m || !t) return false
+        t.items.push({ id: crypto.randomUUID(), refId: mediaId, start: Math.round(start), trimIn: 0, trimOut: m.durationF })
+        return validItems(p, t)
+      }),
       addItem: (actorId, clipId, start) => tryEdit(p => {
         const clip = p.clips[clipId]
         const track = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actorId)
@@ -338,14 +369,14 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         const f = findItem(p, itemId)
         if (!f) return false
         f.it.start = Math.round(start)
-        return validTrack(f.t.items)
+        return validItems(p, f.t)
       }),
       trimItem: (itemId, side, df) => tryEdit(p => {
         const f = findItem(p, itemId)
         if (!f) return false
         const d = Math.round(df), it = f.it
         if (side === 'in') { it.start += d; it.trimIn += d } else it.trimOut += d
-        return it.trimIn >= 0 && it.trimIn < it.trimOut && it.trimOut <= p.clips[it.refId].length && validTrack(f.t.items)
+        return it.trimIn >= 0 && it.trimIn < it.trimOut && it.trimOut <= refLen(p, f.t, it) && validItems(p, f.t)
       }),
       splitItem: (itemId, frame) => tryEdit(p => {
         const f = findItem(p, itemId)
@@ -355,7 +386,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         const right: Item = { id: crypto.randomUUID(), refId: it.refId, start: Math.round(frame), trimIn: cut, trimOut: it.trimOut }
         it.trimOut = cut
         f.t.items.push(right)
-        return validTrack(f.t.items)
+        return validItems(p, f.t)
       }),
       deleteItem: itemId => {
         const ok = tryEdit(p => {

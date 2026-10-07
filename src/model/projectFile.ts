@@ -1,6 +1,7 @@
 import type { RobotDefs } from './evaluate'
 import { validTrack } from './sequence'
-import type { Project } from './types'
+import type { Media, Project } from './types'
+import { validVideoTrack } from './video'
 
 export const serializeProject = (p: Project): string => JSON.stringify(p, null, 1)
 
@@ -53,6 +54,15 @@ export function parseProject(text: string, defs: RobotDefs): Project {
     }
 
     if (!Array.isArray(p.media)) fail('media')
+    const media: Record<string, Media> = {}
+    p.media.forEach((m: any, i: number) => {
+      const at = `media.${i}`
+      if (!isObj(m) || !str(m.id) || !str(m.name)) fail(at)
+      if (!int(m.durationF) || m.durationF < 1) fail(`${at}.durationF`)
+      if (Object.hasOwn(media, m.id)) fail(`${at}.id`, '중복된 ID입니다')
+      media[m.id] = m
+    })
+    let videoTracks = 0
     const s = p.sequence
     if (!isObj(s)) fail('sequence')
     if (!Array.isArray(s.tracks)) fail('sequence.tracks')
@@ -61,6 +71,10 @@ export function parseProject(text: string, defs: RobotDefs): Project {
     s.tracks.forEach((t: any, i: number) => {
       const at = `sequence.tracks.${i}`
       if (!isObj(t) || !str(t.id) || !['video', 'motion'].includes(t.kind) || typeof t.hidden !== 'boolean' || typeof t.locked !== 'boolean') fail(at)
+      if (t.kind === 'video') {
+        if (++videoTracks > 1) fail(at, '영상 트랙은 하나만 둘 수 있습니다')
+        if (t.actorId !== undefined) fail(`${at}.actorId`, '영상 트랙에는 액터가 없어야 합니다')
+      }
       if (t.kind === 'motion' && !actorIds.has(t.actorId)) fail(`${at}.actorId`, '액터가 없습니다')
       if (t.kind === 'motion') { if (motionActors.has(t.actorId)) fail(`${at}.actorId`, '액터의 트랙이 중복됩니다'); motionActors.add(t.actorId) }
       if (!Array.isArray(t.items)) fail(`${at}.items`)
@@ -69,11 +83,16 @@ export function parseProject(text: string, defs: RobotDefs): Project {
         if (!isObj(it) || !str(it.id) || !int(it.start) || !int(it.trimIn) || !int(it.trimOut)) fail(it_)
         if (itemIds.has(it.id)) fail(`${it_}.id`, '중복된 ID입니다')
         itemIds.add(it.id)
+        if (t.kind === 'video') {
+          if (!str(it.refId) || !Object.hasOwn(media, it.refId)) fail(`${it_}.refId`, '영상이 없습니다')
+          if (it.trimOut > media[it.refId].durationF) fail(`${it_}.trimOut`, '영상 길이를 넘습니다')
+          return
+        }
         if (!str(it.refId) || !Object.hasOwn(p.clips, it.refId)) fail(`${it_}.refId`, '클립이 없습니다')
         if (t.kind === 'motion' && p.clips[it.refId].robot !== actorRobot[t.actorId]) fail(`${it_}.refId`, '클립의 로봇이 액터와 다릅니다')
         if (it.trimOut > p.clips[it.refId].length) fail(`${it_}.trimOut`, '클립 길이를 넘습니다')
       })
-      if (!validTrack(t.items)) fail(at, '항목 배치가 올바르지 않습니다 (겹침 또는 범위)')
+      if (!(t.kind === 'video' ? validVideoTrack(t.items, media) : validTrack(t.items))) fail(at, '항목 배치가 올바르지 않습니다 (겹침 또는 범위)')
     })
   } catch (e) {
     throw e instanceof Bad ? new Error(e.message) : e
