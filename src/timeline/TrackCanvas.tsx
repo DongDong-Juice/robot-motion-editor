@@ -229,6 +229,7 @@ export default function TrackCanvas() {
 
     const onKey = (e: KeyboardEvent) => {
       const t = e.target
+      if (t instanceof Element && t.closest('#project')) return
       if (t instanceof HTMLElement && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return
       const s = ed.getState()
       if (s.view !== 'tracks' || !s.sel.actorId || e.altKey) return

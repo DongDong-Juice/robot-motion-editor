@@ -41,7 +41,7 @@ export function startTransport(): () => void {
   raf = requestAnimationFrame(tick)
 
   const onKey = (e: KeyboardEvent) => {
-    if (typing(e.target) || e.altKey) return
+    if (typing(e.target) || e.altKey || (e.target instanceof Element && e.target.closest('#project'))) return
     const s = ed.getState()
     const step = (n: number) => {
       e.preventDefault()
