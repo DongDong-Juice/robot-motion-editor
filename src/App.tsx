@@ -8,6 +8,11 @@ import { formatTimecode } from './timeline/timeScale'
 import ExportDialog from './export/ExportDialog'
 import { sequenceEnd, startTransport } from './transport'
 
+function AutoKeyHint() {
+  const off = useEditor(s => !s.autoKey && !!s.sel.channel && !s.sel.channel.startsWith('group:'))
+  return off ? <div className="stage-hint">자동 키 꺼짐: 기즈모 변경은 저장되지 않습니다</div> : null
+}
+
 function Menubar() {
   const playing = useEditor(s => s.playing), frame = useEditor(s => s.frame)
   const end = useEditor(s => sequenceEnd(s.project))
@@ -48,6 +53,7 @@ export default function App() {
       <header id="menubar">{status === 'ready' ? <Menubar /> : 'Motion Editor'}</header>
       <aside id="project">Project</aside>
       <main id="stage">
+        {status === 'ready' && <AutoKeyHint />}
         {status === 'ready' ? <Stage /> : status === 'loading' ? '로봇 불러오는 중…' : status}
       </main>
       <aside id="inspector">{status === "ready" && <Inspector />}</aside>

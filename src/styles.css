@@ -27,7 +27,8 @@ body {
 #app > * { background: var(--panel); border: 1px solid var(--line); min-width: 0; min-height: 0; overflow: hidden; }
 #menubar { grid-area: menubar; }
 #project { grid-area: project; }
-#stage { grid-area: stage; background: var(--bg); }
+#stage { grid-area: stage; background: var(--bg); position: relative; }
+.stage-hint { position: absolute; left: 8px; bottom: 6px; z-index: 1; font-size: 11px; color: #8d96a3; pointer-events: none; }
 #inspector { grid-area: inspector; }
 #timeline { grid-area: timeline; }
 #inspector { overflow-y: auto; font-size: 13px; }
@@ -35,11 +36,11 @@ body {
 .insp-empty, .insp-hint, .insp-lim { color: #8d96a3; margin: 0; }
 .insp-row { display: flex; align-items: center; gap: 6px; }
 .insp-row label { display: flex; flex-direction: column; flex: 1; gap: 2px; min-width: 0; }
-.insp input[type=number], .insp select, .insp button {
+.insp input:not([type=range]):not([type=color]), .insp select, .insp button {
   background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 3px;
   font: inherit; padding: 3px 6px; min-width: 0;
 }
-.insp input[type=number] { width: 100%; box-sizing: border-box; }
+.insp input:not([type=range]):not([type=color]) { width: 100%; box-sizing: border-box; }
 .insp-ch input[type=number] { width: 72px; flex: none; }
 .insp input[type=range] { flex: 1; min-width: 0; accent-color: var(--text); }
 .insp input[type=range].near { accent-color: var(--accent); }

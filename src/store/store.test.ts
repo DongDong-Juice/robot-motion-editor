@@ -187,3 +187,35 @@ test('moveKeys clamps one shared delta across channels (no shear)', () => {
   expect(curve('root.x').keys.map(k => k.f)).toEqual([0, 10])
   expect(curve('root.y').keys.map(k => k.f)).toEqual([10])
 })
+
+const itemOfClip = () => s().project.sequence.tracks.flatMap(t => t.items).filter(i => i.refId === c)
+
+test('setClip: rename; blank name ignored', () => {
+  s().setClip(c, { name: '  walk  ' })
+  expect(s().project.clips[c].name).toBe('walk')
+  s().setClip(c, { name: '   ' })
+  expect(s().project.clips[c].name).toBe('walk')
+})
+
+test('setClip: shrink deletes keys past the end, trims items, prunes sel; one undo restores', () => {
+  s().setKey(c, ch, 10, 0.5); s().setKey(c, ch, 59, 0.6); s().setKey(c, ch, 60, 0.7); s().setKey(c, 'root.x', 100, 1)
+  s().selectKeys([{ channel: ch, f: 60 }, { channel: ch, f: 10 }], false)
+  const before = s().project
+  s().setClip(c, { length: 60 })
+  expect(s().project.clips[c].length).toBe(60)
+  expect(curve(ch).keys.map(k => k.f)).toEqual([10, 59])
+  expect(curve('root.x').keys).toHaveLength(0)
+  expect(itemOfClip().every(i => i.trimOut === 60)).toBe(true)
+  expect(s().sel.keys).toEqual([{ channel: ch, f: 10 }])
+  s().undo()
+  expect(s().project).toBe(before)
+})
+
+test('setClip: grow sets trimOut; length is a positive integer', () => {
+  s().setClip(c, { length: 600 })
+  expect(itemOfClip()[0].trimOut).toBe(600)
+  s().setClip(c, { length: 0 }); s().setClip(c, { length: NaN })
+  expect(s().project.clips[c].length).toBe(600)
+  s().setClip(c, { length: 10.6 })
+  expect(s().project.clips[c].length).toBe(11)
+})

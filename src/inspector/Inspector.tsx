@@ -5,6 +5,7 @@ import type { Interp } from '../model/types'
 import { clipFrameAt, getEditor, useEditor } from '../store/store'
 
 const ROOT = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw']
+// slider ranges only; root number input is never clamped
 const ROOT_RANGE: Record<string, [number, number]> = {
   'root.x': [-5, 5], 'root.y': [-5, 5], 'root.z': [0, 2],
   'root.roll': [-Math.PI, Math.PI], 'root.pitch': [-Math.PI, Math.PI], 'root.yaw': [-Math.PI, Math.PI],
@@ -25,7 +26,7 @@ export default function Inspector() {
   const item = project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actor.id)!.items[0]
   const pose = evaluateClip(clip, def, f)
 
-  const channels = sel.channel === 'root' ? ROOT : sel.channel ? [sel.channel] : []
+  const channels = sel.channel === 'root' ? ROOT : sel.channel && !sel.channel.startsWith('group:') ? [sel.channel] : []
   const info = (ch: string) => {
     const j = def.joints.findIndex(j => j.name === ch)
     if (j >= 0) return { joint: true, v: pose.q[j], lo: def.joints[j].lower, hi: def.joints[j].upper }
@@ -33,6 +34,7 @@ export default function Inspector() {
     return { joint: false, v: evalCurve(clip.channels[ch] ?? { keys: [] }, f, ch === 'root.z' ? def.standingHeight : 0), lo, hi }
   }
   const group = !sel.channel ? null
+    : sel.channel.startsWith('group:') ? sel.channel.slice(6)
     : sel.channel.startsWith('root') ? '루트'
     : def.groups.find(g => g.joints.includes(sel.channel!))?.name ?? null
 
@@ -66,6 +68,21 @@ export default function Inspector() {
           </label>
         ))}
       </div>
+      <div className="insp-row">
+        <label>클립 이름
+          <input key={`n${clip.name}`} defaultValue={clip.name}
+            onBlur={e => act.setClip(clipId, { name: e.target.value })}
+            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} />
+        </label>
+      </div>
+      <div className="insp-row">
+        <label>길이 (프레임)
+          <input type="number" min={1} step={1} key={`l${clip.length}`} defaultValue={clip.length}
+            onBlur={e => { act.setClip(clipId, { length: e.target.valueAsNumber }); e.target.value = String(ed.getState().project.clips[clipId].length) }}
+            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} />
+        </label>
+        <span className="insp-lim">{(clip.length / 60).toFixed(2)} 초</span>
+      </div>
       {channels.length > 0 && (
         <>
           <div className="insp-row">
@@ -85,13 +102,13 @@ export default function Inspector() {
                 <div className="insp-row">
                   <input type="range" className={near ? 'near' : ''} min={lo} max={hi} step={0.001} value={v} disabled={!autoKey}
                     aria-label={ch}
-                    onPointerDown={() => act.beginGesture()}
+                    onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); act.beginGesture() }}
                     onPointerUp={() => act.endGesture()}
                     onPointerCancel={() => act.endGesture()}
                     onChange={e => set(ch, +e.target.value)} />
                   <input type="number" key={`${f}-${v}-${d}`} defaultValue={num(v, d)} step={d ? 1 : 0.001} disabled={!autoKey}
                     aria-label={`${ch} 값`}
-                    onBlur={e => { const n = e.target.valueAsNumber; if (!Number.isFinite(n)) return; const r = Math.min(Math.max(d ? n * Math.PI / 180 : n, lo), hi); set(ch, r); e.target.value = num(r, d) }}
+                    onBlur={e => { const n = e.target.valueAsNumber; if (!Number.isFinite(n)) return; const a = d ? n * Math.PI / 180 : n, r = joint ? Math.min(Math.max(a, lo), hi) : a; set(ch, r); e.target.value = num(r, d) }}
                     onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} />
                   <span>{d ? '°' : isAngle(ch, joint) ? 'rad' : 'm'}</span>
                 </div>
@@ -108,9 +125,9 @@ export default function Inspector() {
               {INTERPS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </div>
-          {group && <button className="insp-group" onClick={() => act.keyGroup(actor.id, group)}>{group} 전체 키</button>}
         </>
       )}
+      {group && <button className="insp-group" onClick={() => act.keyGroup(actor.id, group)}>{group} 전체 키</button>}
     </div>
   )
 }
