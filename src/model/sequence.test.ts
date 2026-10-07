@@ -5,7 +5,7 @@ import { loadRobotDef } from '../robot/loadRobot'
 import { makeKey } from './curve'
 import { newProject } from './defaults'
 import { evaluate, evaluateItem, type Pose, type RobotDefs } from './evaluate'
-import { eulerToQuat, quatYaw } from './rootMath'
+import { eulerToQuat, quatAngle, quatMul, quatYaw, yawQuat } from './rootMath'
 import { blendPose, slerp, stitchTransforms } from './sequence'
 import type { Curve, Project } from './types'
 
@@ -87,4 +87,24 @@ test('evaluateItem ignores trims (clip frame outside trim)', () => {
   const { p } = build([[0, 30, 60, { 'root.x': lin([0, 0], [119, 119]) }]])
   expect(evaluateItem(p, defs, 'i0', 0).rootPos[0]).toBeCloseTo(0)
   expect(evaluateItem(p, defs, 'i0', 500).rootPos[0]).toBeCloseTo(119)
+})
+
+test('stitch with nonzero clip-start root: xy/yaw continuous, z/roll/pitch preserved', () => {
+  const b = {
+    'root.x': lin([0, 0.4], [59, 1.4]), 'root.y': lin([0, -0.3], [59, -0.3]), 'root.yaw': lin([0, 0.7], [59, 0.7]),
+    'root.z': lin([0, 0.5], [59, 0.5]), 'root.roll': lin([0, 0.1], [59, 0.1]), 'root.pitch': lin([0, 0.2], [59, 0.2]),
+  }
+  const { p, actor } = build([
+    [0, 0, 60, { 'root.x': lin([0, 0], [59, 1]), 'root.yaw': lin([0, 0], [59, Math.PI / 2]) }],
+    [60, 0, 60, b],
+  ])
+  const a = evaluate(p, defs, actor, 59), s = evaluate(p, defs, actor, 60)
+  expect(s.rootPos[0]).toBeCloseTo(a.rootPos[0], 5)
+  expect(s.rootPos[1]).toBeCloseTo(a.rootPos[1], 5)
+  expect(quatYaw(s.rootQuat)).toBeCloseTo(quatYaw(a.rootQuat), 5)
+  expect(s.rootPos[2]).toBeCloseTo(0.5, 5)
+  // roll/pitch survive: Rz(yaw)^-1 * q == clip's own roll/pitch/yaw=0.7 quat after removing stitch yaw
+  const own = eulerToQuat(0.1, 0.2, 0.7)
+  const yaw = quatYaw(a.rootQuat) - 0.7
+  expect(quatAngle(s.rootQuat, quatMul(yawQuat(yaw), own))).toBeCloseTo(0, 5)
 })

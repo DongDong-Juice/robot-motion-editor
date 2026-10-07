@@ -1,4 +1,4 @@
-import { evaluateClip, type Pose, type RobotDefs } from './evaluate'
+import { evaluateClip, type Pose, type RobotDefs } from './pose'
 import { quatMul, quatYaw, yawQuat, type Quat } from './rootMath'
 import type { Item, Project, Track } from './types'
 
@@ -7,10 +7,10 @@ export interface Xf { x: number; y: number; yaw: number } // clip root -> track 
 export const itemLen = (it: Item): number => it.trimOut - it.trimIn
 export const sortedItems = (track: Track): Item[] => [...track.items].sort((a, b) => a.start - b.start)
 
-// Item + clip frame for a stage frame: before first item -> its trimIn; gap/after -> previous item's last frame.
+// `items` must be sorted by start. Item + clip frame for a stage frame: before first item -> its trimIn; gap/after -> previous item's last frame.
 export function resolve(items: Item[], frame: number): { item: Item; cf: number } | null {
   let prev: Item | null = null
-  for (const it of sortedItems({ items } as Track)) {
+  for (const it of items) {
     if (frame < it.start) return prev ? { item: prev, cf: prev.trimOut - 1 } : { item: it, cf: it.trimIn }
     if (frame < it.start + itemLen(it)) return { item: it, cf: frame - it.start + it.trimIn }
     prev = it
