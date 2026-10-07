@@ -5,6 +5,7 @@ import Inspector from './inspector/Inspector'
 import Stage from './viewer/Stage'
 import Timeline from './timeline/Timeline'
 import { formatTimecode } from './timeline/timeScale'
+import ExportDialog from './export/ExportDialog'
 import { sequenceEnd, startTransport } from './transport'
 
 function Menubar() {
@@ -12,6 +13,7 @@ function Menubar() {
   const end = useEditor(s => sequenceEnd(s.project))
   const autoKey = useEditor(s => s.autoKey), view = useEditor(s => s.view)
   const st = useEditor(s => s)
+  const [exporting, setExporting] = useState(false)
   return (
     <>
       <span className="mb-title">Motion Editor</span>
@@ -19,6 +21,13 @@ function Menubar() {
       <span className="mb-time">{formatTimecode(frame)} / {formatTimecode(end)} · 60fps</span>
       <button aria-pressed={autoKey} onClick={st.toggleAutoKey}>자동 키</button>
       <button onClick={() => st.setView(view === 'tracks' ? 'graph' : 'tracks')}>{view === 'tracks' ? '트랙' : '그래프'}</button>
+      <span role="group" aria-label="액터+" className="mb-group">
+        <span>액터+</span>
+        <button onClick={() => st.addActor('g1')}>G1 추가</button>
+        <button onClick={() => st.addActor('go2')}>GO2 추가</button>
+      </span>
+      <button onClick={() => setExporting(true)}>내보내기</button>
+      <ExportDialog open={exporting} onClose={() => setExporting(false)} />
     </>
   )
 }
