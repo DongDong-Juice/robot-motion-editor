@@ -41,7 +41,9 @@ export function startTransport(): () => void {
   raf = requestAnimationFrame(tick)
 
   const onKey = (e: KeyboardEvent) => {
-    if (typing(e.target) || e.altKey || (e.target instanceof Element && e.target.closest('#project'))) return
+    if (typing(e.target) || e.altKey) return
+    // panel rows own Delete/Backspace and the plain editing keys; undo, Space and arrows still pass through
+    if (e.target instanceof Element && e.target.closest('#project') && !e.ctrlKey && !e.metaKey && ['Delete', 'Backspace', 'Escape', 'c', 'i', 'o', 'm'].includes(e.key.toLowerCase() === e.key ? e.key : e.key.toLowerCase())) return
     const s = ed.getState()
     const step = (n: number) => {
       e.preventDefault()
