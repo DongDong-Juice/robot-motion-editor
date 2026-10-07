@@ -1,0 +1,32 @@
+:root {
+  --bg: #22262D;
+  --panel: #2B3038;
+  --line: #3B424D;
+  --text: #D5DAE1;
+  --accent: #F0A43A;
+  --g1: #58B4D1;
+  --go2: #C9D65A;
+}
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'IBM Plex Sans KR', sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+#app {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 220px 1fr 280px;
+  grid-template-rows: 32px 1fr 40%;
+  grid-template-areas:
+    "menubar menubar menubar"
+    "project stage inspector"
+    "timeline timeline timeline";
+}
+#app > * { background: var(--panel); border: 1px solid var(--line); min-width: 0; min-height: 0; overflow: hidden; }
+#menubar { grid-area: menubar; }
+#project { grid-area: project; }
+#stage { grid-area: stage; background: var(--bg); }
+#inspector { grid-area: inspector; }
+#timeline { grid-area: timeline; }
