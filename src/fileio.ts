@@ -103,3 +103,37 @@ export async function saveTextFile(text: string, suggested: string, handle: Save
   setTimeout(() => URL.revokeObjectURL(url), 0)
   return { handle: null, name: suggested }
 }
+
+export const objectUrl = (file: File) => URL.createObjectURL(file)
+export const revokeUrl = (url: string) => URL.revokeObjectURL(url)
+
+export async function openMediaFiles(multiple: boolean): Promise<File[]> {
+  const pick = (window as unknown as { showOpenFilePicker?: OpenPicker }).showOpenFilePicker
+  if (typeof pick === 'function') {
+    try {
+      const hs = await pick.call(window, { multiple, types: [{ accept: { 'video/*': [] } }] })
+      return await Promise.all(hs.map(h => h.getFile()))
+    } catch (e) {
+      if (aborted(e)) return []
+      throw e
+    }
+  }
+  return new Promise(resolve => {
+    const input = document.createElement('input')
+    input.type = 'file'; input.accept = 'video/*'; input.multiple = multiple; input.hidden = true
+    let done = false
+    const finish = (files: File[]) => {
+      if (done) return
+      done = true
+      input.remove()
+      window.removeEventListener('focus', onFocus)
+      resolve(files)
+    }
+    const onFocus = () => setTimeout(() => finish([]), 1000)
+    input.addEventListener('change', () => finish([...(input.files ?? [])]))
+    input.addEventListener('cancel', () => finish([]))
+    window.addEventListener('focus', onFocus)
+    document.body.appendChild(input)
+    input.click()
+  })
+}

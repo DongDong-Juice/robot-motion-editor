@@ -1,4 +1,5 @@
 import { openTextFiles, saveTextFile, type SaveHandle } from './fileio'
+import { clearMedia } from './media/registry'
 import { parseProject, serializeProject } from './model/projectFile'
 import { getEditor } from './store/store'
 
@@ -13,6 +14,7 @@ const proceed = () => !getEditor().getState().dirty || confirm('저장하지 않
 export function newProjectFile() {
   if (!proceed()) return
   handle = null
+  clearMedia()
   getEditor().getState().newProjectFile()
 }
 
@@ -24,6 +26,7 @@ export async function openProject() {
     const s = getEditor().getState()
     s.loadProject(parseProject(f.text, s.defs), f.name)
     handle = null
+    clearMedia()
     say('열었습니다')
   } catch (e) { say(`열기 실패: ${why(e)}`) }
 }

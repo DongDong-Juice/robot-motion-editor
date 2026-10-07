@@ -100,6 +100,7 @@ body {
 .pp-btns button, .pp-row button { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 3px; font: inherit; padding: 2px 8px; cursor: pointer; }
 .pp-row button { padding: 0 5px; }
 .pp-btns button:disabled { opacity: .45; cursor: default; }
+.pp-off { color: var(--accent); }
 .pp-msg { color: var(--accent); margin: 0; }
 .pp-dlg { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 4px; }
 .pp-dlg label { display: block; margin: 2px 0; }

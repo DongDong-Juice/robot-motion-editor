@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import type { RobotKind } from '../robot/types'
 import { csvToClip } from '../export/importCsv'
-import { openTextFiles } from '../fileio'
+import { objectUrl, openMediaFiles, openTextFiles, revokeUrl } from '../fileio'
+import { mediaUrl, probeDuration, setMediaUrl, subscribeMedia } from '../media/registry'
 import { getEditor, useEditor } from '../store/store'
 
 type Files = { name: string; text: string }[]
@@ -53,6 +54,47 @@ export default function ProjectPanel() {
     setResult({ n, fails })
   }
 
+  const [, bump] = useReducer((n: number) => n + 1, 0)
+  useEffect(() => subscribeMedia(bump), []) // re-render when a url is (un)set
+  const [mres, setMres] = useState<{ n: number; lines: string[] } | null>(null)
+  const [mmsg, setMmsg] = useState(0)
+  useEffect(() => { if (mres) { const t = setTimeout(() => setMres(null), 10000); return () => clearTimeout(t) } }, [mres])
+  useEffect(() => { if (!mmsg) return; const t = setTimeout(() => setMmsg(0), 3000); return () => clearTimeout(t) }, [mmsg])
+  const probe = async (f: File) => {
+    const url = objectUrl(f)
+    try { return { url, durationF: await probeDuration(url) } } catch (e) { revokeUrl(url); throw e }
+  }
+  const importMedia = async () => {
+    setMres(null)
+    const files = await openMediaFiles(true)
+    if (!files.length) return
+    let n = 0
+    const lines: string[] = []
+    const s = ed.getState()
+    s.beginGesture() // one undo entry for the whole batch
+    try {
+      for (const f of files) {
+        try {
+          const { url, durationF } = await probe(f)
+          setMediaUrl(s.addMedia(f.name.replace(/\.[^.]*$/, ''), durationF), url); n++
+        } catch (e) { lines.push(`${f.name}: ${e instanceof Error ? e.message : String(e)}`) }
+      }
+    } finally { s.endGesture() }
+    setMres({ n, lines })
+  }
+  const relink = async (m: { id: string; durationF: number }) => {
+    setMres(null)
+    const [f] = await openMediaFiles(false)
+    if (!f) return
+    try {
+      const { url, durationF } = await probe(f)
+      setMediaUrl(m.id, url)
+      if (Math.abs(durationF - m.durationF) > 1)
+        setMres({ n: -1, lines: [`길이가 다른 영상입니다(${(durationF / 60).toFixed(2)}초 ≠ ${(m.durationF / 60).toFixed(2)}초)`] })
+    } catch (e) { setMres({ n: -1, lines: [`${f.name}: ${e instanceof Error ? e.message : String(e)}`] }) }
+  }
+  const delMedia = (id: string) => { if (!ed.getState().deleteMedia(id)) setMmsg(performance.now()) }
+
   const uses = (id: string) => project.sequence.tracks.reduce((n, t) => n + t.items.filter(i => i.refId === id).length, 0)
   const del = (id: string) => { if (!ed.getState().deleteClip(id)) setMsg(performance.now()) }
 
@@ -88,6 +130,24 @@ export default function ProjectPanel() {
           ))}
         </div>
       ))}
+      <h3>미디어</h3>
+      {project.media.map(m => {
+        const off = mediaUrl(m.id) == null
+        return (
+          <div key={m.id} className="pp-row" tabIndex={0} draggable
+            onDragStart={e => { e.dataTransfer.setData('application/x-motion-media', m.id); e.dataTransfer.effectAllowed = 'copy' }}
+            onKeyDown={e => { if (e.target === e.currentTarget && e.key === 'Delete') { e.stopPropagation(); delMedia(m.id) } }}>
+            <span className="pp-name">{m.name}</span>
+            <span className="pp-dim">{(m.durationF / 60).toFixed(2)}초</span>
+            {off ? <span className="pp-off">오프라인</span> : <span className="pp-dim">연결됨</span>}
+            {off && <button aria-label={`${m.name} 다시 연결`} onClick={() => relink(m)}>다시 연결</button>}
+            <button aria-label={`${m.name} 삭제`} onClick={() => delMedia(m.id)}>삭제</button>
+          </div>
+        )
+      })}
+      <div className="pp-btns">
+        <button onClick={importMedia}>영상 가져오기</button>
+      </div>
       <div className="pp-btns">
         {ROBOTS.map(([robot, label]) => <button key={robot} onClick={() => ed.getState().newClip(robot)}>새 {label} 클립</button>)}
         <button onClick={pick}>CSV 가져오기</button>
@@ -107,6 +167,13 @@ export default function ProjectPanel() {
           {result.fails.map(f => <p key={f}>{f}</p>)}
         </div>
       )}
+      {mres && (
+        <div className="pp-msg" role="status">
+          {mres.n >= 0 && <p>영상 {mres.n}개를 가져왔습니다</p>}
+          {mres.lines.map(f => <p key={f}>{f}</p>)}
+        </div>
+      )}
+      {mmsg > 0 && <p className="pp-msg">시퀀스에서 쓰는 영상은 삭제할 수 없습니다</p>}
       {msg > 0 && <p className="pp-msg">시퀀스에서 쓰는 클립은 삭제할 수 없습니다</p>}
     </div>
   )
