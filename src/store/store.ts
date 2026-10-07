@@ -20,6 +20,7 @@ export interface EditorState {
   setTangent(clipId: string, channel: string, f: number, side: 'in' | 'out', t: Tan, linked: boolean): void
   keyGroup(actorId: string, group: string): void
   setPlacement(actorId: string, pl: Partial<Actor['placement']>): void
+  setColor(actorId: string, hex: string): void
   addActor(robot: RobotKind): void
   beginGesture(): void; endGesture(): void
   undo(): void; redo(): void
@@ -146,6 +147,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       setPlacement: (actorId, pl) => edit(p => {
         Object.assign(p.actors.find(a => a.id === actorId)!.placement, pl)
       }),
+      setColor: (actorId, hex) => edit(p => { p.actors.find(a => a.id === actorId)!.color = hex }),
       addActor: robot => commit(addActorTo(structuredClone(get().project), robot)),
       beginGesture: () => {
         if (gesture) return

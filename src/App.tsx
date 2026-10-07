@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { fetchRobotDef } from './robot/loadRobot'
 import { initEditor } from './store/store'
+import Inspector from './inspector/Inspector'
 import Stage from './viewer/Stage'
 
 export default function App() {
@@ -19,7 +20,7 @@ export default function App() {
       <main id="stage">
         {status === 'ready' ? <Stage /> : status === 'loading' ? '로봇 불러오는 중…' : status}
       </main>
-      <aside id="inspector">Inspector</aside>
+      <aside id="inspector">{status === "ready" && <Inspector />}</aside>
       <section id="timeline">Timeline</section>
     </div>
   )

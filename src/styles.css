@@ -30,3 +30,20 @@ body {
 #stage { grid-area: stage; background: var(--bg); }
 #inspector { grid-area: inspector; }
 #timeline { grid-area: timeline; }
+#inspector { overflow-y: auto; font-size: 13px; }
+.insp, .insp-empty { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.insp-empty, .insp-hint, .insp-lim { color: #8d96a3; margin: 0; }
+.insp-row { display: flex; align-items: center; gap: 6px; }
+.insp-row label { display: flex; flex-direction: column; flex: 1; gap: 2px; min-width: 0; }
+.insp input[type=number], .insp select, .insp button {
+  background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 3px;
+  font: inherit; padding: 3px 6px; min-width: 0;
+}
+.insp input[type=number] { width: 100%; box-sizing: border-box; }
+.insp-ch input[type=number] { width: 72px; flex: none; }
+.insp input[type=range] { flex: 1; min-width: 0; accent-color: var(--text); }
+.insp input[type=range].near { accent-color: var(--accent); }
+.insp button { cursor: pointer; }
+.insp button:disabled, .insp input:disabled, .insp select:disabled { opacity: .45; cursor: default; }
+.insp :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.insp-name { font-weight: 500; }

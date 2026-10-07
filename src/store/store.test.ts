@@ -172,3 +172,11 @@ test('empty gesture leaves no undo entry', () => {
   s().undo()
   expect(curve(ch).keys).toHaveLength(0)
 })
+
+test('setColor is undoable', () => {
+  const old = s().project.actors[0].color
+  s().setColor(actor, '#112233')
+  expect(s().project.actors[0].color).toBe('#112233')
+  s().undo()
+  expect(s().project.actors[0].color).toBe(old)
+})
