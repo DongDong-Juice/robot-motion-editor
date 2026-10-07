@@ -64,6 +64,8 @@ export default function ProjectPanel() {
   useEffect(() => subscribeMedia(bump), []) // re-render when a url is (un)set
   const [mres, setMres] = useState<{ n?: number; lines: string[] } | null>(null)
   const [mmsg, setMmsg] = useState(0)
+  const [lmsg, setLmsg] = useState(0)
+  useEffect(() => { if (!lmsg) return; const t = setTimeout(() => setLmsg(0), 3000); return () => clearTimeout(t) }, [lmsg])
   useEffect(() => { if (mres) { const t = setTimeout(() => setMres(null), 10000); return () => clearTimeout(t) } }, [mres])
   useEffect(() => { if (!mmsg) return; const t = setTimeout(() => setMmsg(0), 3000); return () => clearTimeout(t) }, [mmsg])
   const probe = async (f: File) => {
@@ -130,7 +132,7 @@ export default function ProjectPanel() {
                 else if (e.key === 'Delete') { e.stopPropagation(); del(c.id) }
               }}>
               {renaming === c.id
-                ? <RenameInput name={c.name} onDone={v => { if (v?.trim()) ed.getState().setClip(c.id, { name: v }); setRenaming(null) }} />
+                ? <RenameInput name={c.name} onDone={v => { if (v?.trim() && !ed.getState().setClip(c.id, { name: v })) setLmsg(performance.now()); setRenaming(null) }} />
                 : <span className="pp-name">{c.name}</span>}
               <span className="pp-dim">{(c.length / 60).toFixed(2)}초 · {uses(c.id)}</span>
               <button aria-label={`${c.name} 삭제`} onClick={() => del(c.id)}>삭제</button>
@@ -168,7 +170,7 @@ export default function ProjectPanel() {
           {([30, 60] as const).map(v => (
             <label key={v}><input type="radio" name="fps" checked={fps === v} onChange={() => setFps(v)} />{v}fps</label>
           ))}
-          <label><input type="checkbox" checked={simp} onChange={e => setSimp(e.target.checked)} />가져올 때 키 줄이기</label>
+          <label><input type="checkbox" checked={simp} onChange={e => setSimp(e.target.checked)} />가져올 때 키 줄이기 (오차 0.001)</label>
           <div className="pp-btns"><button id="pp-go">가져오기</button><button value="cancel" type="submit" formNoValidate>취소</button></div>
         </form>
       </dialog>
@@ -185,6 +187,7 @@ export default function ProjectPanel() {
         </div>
       )}
       {mmsg > 0 && <p className="pp-msg">시퀀스에서 쓰는 영상은 삭제할 수 없습니다</p>}
+      {lmsg > 0 && <p className="pp-msg">잠긴 트랙입니다</p>}
       {msg > 0 && <p className="pp-msg">시퀀스에서 쓰는 클립은 삭제할 수 없습니다</p>}
     </div>
   )
