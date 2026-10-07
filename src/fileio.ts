@@ -34,14 +34,12 @@ export async function writeTextFiles(
 
 type OpenPicker = (o: { multiple: boolean; types: { accept: Record<string, string[]> }[] }) => Promise<FileSystemFileHandle[]>
 
-const readAll = (files: File[]) => Promise.all(files.map(async f => ({ name: f.name, text: await f.text() })))
-
-export async function openTextFiles(accept: string, multiple: boolean): Promise<{ name: string; text: string }[]> {
+export async function openFiles(accept: string, mime: Record<string, string[]>, multiple: boolean): Promise<File[]> {
   const pick = (window as unknown as { showOpenFilePicker?: OpenPicker }).showOpenFilePicker
   if (typeof pick === 'function') {
     try {
-      const hs = await pick.call(window, { multiple, types: [{ accept: { 'text/plain': accept.split(',') } }] })
-      return await readAll(await Promise.all(hs.map(h => h.getFile())))
+      const hs = await pick.call(window, { multiple, types: [{ accept: mime }] })
+      return await Promise.all(hs.map(h => h.getFile()))
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return []
       throw e
@@ -56,7 +54,7 @@ export async function openTextFiles(accept: string, multiple: boolean): Promise<
       done = true
       input.remove()
       window.removeEventListener('focus', onFocus)
-      readAll(files).then(resolve)
+      resolve(files)
     }
     // Cancel: the `cancel` event, or window focus returning with no change event (older browsers).
     const onFocus = () => setTimeout(() => finish([]), 1000)
@@ -66,6 +64,11 @@ export async function openTextFiles(accept: string, multiple: boolean): Promise<
     document.body.appendChild(input)
     input.click()
   })
+}
+
+export async function openTextFiles(accept: string, multiple: boolean): Promise<{ name: string; text: string }[]> {
+  const files = await openFiles(accept, { 'text/plain': accept.split(',') }, multiple)
+  return Promise.all(files.map(async f => ({ name: f.name, text: await f.text() })))
 }
 
 // Opaque to callers: a FileSystemFileHandle when the browser has one, else null.
@@ -107,33 +110,4 @@ export async function saveTextFile(text: string, suggested: string, handle: Save
 export const objectUrl = (file: File) => URL.createObjectURL(file)
 export const revokeUrl = (url: string) => URL.revokeObjectURL(url)
 
-export async function openMediaFiles(multiple: boolean): Promise<File[]> {
-  const pick = (window as unknown as { showOpenFilePicker?: OpenPicker }).showOpenFilePicker
-  if (typeof pick === 'function') {
-    try {
-      const hs = await pick.call(window, { multiple, types: [{ accept: { 'video/*': [] } }] })
-      return await Promise.all(hs.map(h => h.getFile()))
-    } catch (e) {
-      if (aborted(e)) return []
-      throw e
-    }
-  }
-  return new Promise(resolve => {
-    const input = document.createElement('input')
-    input.type = 'file'; input.accept = 'video/*'; input.multiple = multiple; input.hidden = true
-    let done = false
-    const finish = (files: File[]) => {
-      if (done) return
-      done = true
-      input.remove()
-      window.removeEventListener('focus', onFocus)
-      resolve(files)
-    }
-    const onFocus = () => setTimeout(() => finish([]), 1000)
-    input.addEventListener('change', () => finish([...(input.files ?? [])]))
-    input.addEventListener('cancel', () => finish([]))
-    window.addEventListener('focus', onFocus)
-    document.body.appendChild(input)
-    input.click()
-  })
-}
+export const openMediaFiles = (multiple: boolean) => openFiles('video/*', { 'video/*': [] }, multiple)
