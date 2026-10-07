@@ -2,7 +2,7 @@ import { loadDef } from '../test/defs'
 import { beforeEach, expect, test } from 'vitest'
 
 import type { RobotDefs } from '../model/evaluate'
-import { createEditorStore, editTarget, gizmoLock } from './store'
+import { createEditorStore, editLock, editTarget, gizmoLock } from './store'
 import { makeKey } from '../model/curve'
 
 const load = loadDef
@@ -518,6 +518,29 @@ test('gizmoLock: root on the first frame of a stitched item', () => {
   s().setFrame(120); s().select(actor, ch); expect(gizmoLock(s())).toBe(null)
   s().select(actor, 'root.yaw'); s().openItem(trackItems(actor)[1].id); s().select(actor, 'root.yaw')
   expect(gizmoLock(s())).toBe('stitch') // clip view frame 120 = clip frame 0 = trimIn
+})
+
+test('setValue/keyGroup rejected in crossfade (sequence view), allowed in clip view', () => {
+  expect(s().addItem(actor, c, 100)).toBe(true)
+  s().toggleAutoKey(); s().setFrame(110)
+  expect(editLock(s(), actor, ch)).toBe('crossfade')
+  const before = s().project
+  s().setValue(actor, ch, 0.5); s().keyGroup(actor, '왼팔'); s().keyGroup(actor, '루트')
+  expect(s().project).toBe(before)
+  s().openItem(trackItems(actor)[1].id)
+  s().setValue(actor, ch, 0.5)
+  expect(s().project).not.toBe(before)
+})
+
+test('setValue/keyGroup on stitch frame: root x/y/yaw rejected, z allowed', () => {
+  expect(s().addItem(actor, c, 120)).toBe(true)
+  s().toggleAutoKey(); s().setFrame(120)
+  expect(editLock(s(), actor, 'root.z')).toBe(null)
+  const before = s().project
+  s().setValue(actor, 'root.x', 0.3); s().keyGroup(actor, '루트')
+  expect(s().project).toBe(before)
+  s().setValue(actor, 'root.z', 0.7)
+  expect(s().project).not.toBe(before)
 })
 
 test('addMedia creates single V1 on top; deleteMedia refuses used media', () => {

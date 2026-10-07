@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { evalCurve } from '../model/curve'
 import { evaluateClip } from '../model/evaluate'
 import type { Interp } from '../model/types'
-import { editTarget, getEditor, useEditor } from '../store/store'
+import { editLock, editTarget, getEditor, useEditor } from '../store/store'
 import { playRange } from '../transport'
 
 const ROOT = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw']
@@ -56,6 +56,14 @@ export default function Inspector() {
   const atKeys = channels.filter(ch => clip.channels[ch]?.keys.some(k => k.f === f)).map(ch => ({ channel: ch, f }))
   const curInterp = atKeys.length ? clip.channels[atKeys[0].channel].keys.find(k => k.f === f)!.interp : ''
 
+  const lockOf = (ch: string) => editLock({ project, frame, editing }, actor.id, ch)
+  const locks = channels.map(lockOf)
+  const groupNames = group === '루트' ? ROOT : def.groups.find(g => g.name === group)?.joints ?? []
+  const groupLocks = groupNames.map(lockOf)
+  const xfade = locks.includes('crossfade') || groupLocks.includes('crossfade')
+  const stitch = locks.includes('stitch') || groupLocks.includes('stitch')
+  const anyLock = locks.some(Boolean)
+
   const num = (v: number, d: boolean) => (d ? (v * 180) / Math.PI : v).toFixed(d ? 1 : 3)
   const set = (ch: string, v: number) => ed.getState().setValue(actor.id, ch, v)
   const act = ed.getState()
@@ -103,6 +111,8 @@ export default function Inspector() {
       </div>
       {simpMsg && <p className="insp-hint" role="status">{simpMsg.n > 0 ? `키 ${simpMsg.n}개를 줄였습니다` : '줄일 키가 없습니다'}</p>}
       {lenMsg && <p className="insp-hint" role="status">다른 클립과 겹쳐서 길이를 바꿀 수 없습니다</p>}
+      {xfade && <p className="insp-hint" role="status">크로스페이드 구간에서는 클립 보기에서 편집하세요</p>}
+      {!xfade && stitch && <p className="insp-hint" role="status">이 프레임의 루트 위치·방향은 앞 클립 끝에 맞춰집니다</p>}
       {channels.length > 0 && (
         <>
           <div className="insp-row">
@@ -119,14 +129,14 @@ export default function Inspector() {
             return (
               <div className="insp-ch" key={ch}>
                 <div className="insp-name">{ch}</div>
-                  <input type="range" className={near ? 'near' : ''} min={lo} max={hi} step={0.001} value={v} disabled={!autoKey}
+                  <input type="range" className={near ? 'near' : ''} min={lo} max={hi} step={0.001} value={v} disabled={!autoKey || !!lockOf(ch)}
                     aria-label={ch}
                     onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); act.beginGesture() }}
                     onPointerUp={() => act.endGesture()}
                     onPointerCancel={() => act.endGesture()}
                     onChange={e => set(ch, +e.target.value)} />
                 <div className="insp-row">
-                  <input type="number" key={`${f}-${v}-${d}`} defaultValue={num(v, d)} step={d ? 1 : 0.001} disabled={!autoKey}
+                  <input type="number" key={`${f}-${v}-${d}`} defaultValue={num(v, d)} step={d ? 1 : 0.001} disabled={!autoKey || !!lockOf(ch)}
                     aria-label={`${ch} 값`}
                     onBlur={e => { const n = e.target.valueAsNumber; if (!Number.isFinite(n)) return; const a = d ? n * Math.PI / 180 : n, r = joint ? Math.min(Math.max(a, lo), hi) : a; set(ch, r); e.target.value = num(r, d) }}
                     onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} />
@@ -137,9 +147,9 @@ export default function Inspector() {
             )
           })}
           <div className="insp-row">
-            <button onClick={() => channels.forEach(ch => act.setKey(clipId, ch, f, info(ch).v))}>키 추가</button>
-            <button disabled={!atKeys.length} onClick={() => act.deleteKeys(clipId, atKeys)}>키 삭제</button>
-            <select aria-label="보간" disabled={!atKeys.length} value={curInterp}
+            <button disabled={anyLock} onClick={() => channels.forEach(ch => act.setKey(clipId, ch, f, info(ch).v))}>키 추가</button>
+            <button disabled={!atKeys.length || anyLock} onClick={() => act.deleteKeys(clipId, atKeys)}>키 삭제</button>
+            <select aria-label="보간" disabled={!atKeys.length || anyLock} value={curInterp}
               onChange={e => act.setInterp(clipId, atKeys, e.target.value as Interp)}>
               {!curInterp && <option value="" />}
               {INTERPS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -147,7 +157,7 @@ export default function Inspector() {
           </div>
         </>
       )}
-      {group && <button className="insp-group" onClick={() => act.keyGroup(actor.id, group)}>{group} 전체 키</button>}
+      {group && <button className="insp-group" disabled={groupLocks.some(Boolean)} onClick={() => act.keyGroup(actor.id, group)}>{group} 전체 키</button>}
     </div>
   )
 }

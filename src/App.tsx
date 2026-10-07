@@ -19,7 +19,7 @@ function AutoKeyHint() {
 
 export function CrossfadeHint() {
   const lock = useEditor(gizmoLock)
-  return lock === 'crossfade' ? <div className="stage-hint hi">크로스페이드 구간에서는 클립 보기에서 루트를 편집하세요</div>
+  return lock === 'crossfade' ? <div className="stage-hint hi">크로스페이드 구간에서는 클립 보기에서 편집하세요</div>
     : lock === 'stitch' ? <div className="stage-hint hi">이 프레임의 루트 위치·방향은 앞 클립 끝에 맞춰집니다</div> : null
 }
 

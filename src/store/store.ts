@@ -87,16 +87,23 @@ export function editingItem(s: Pick<EditorState, 'project' | 'editing'>) {
   return null
 }
 
-// Why the stage gizmo of the selected channel is off: a crossfade shows a blend (sequence view, any channel);
-// the first frame of a stitched item has its root x/y/yaw matched to the previous item.
-export function gizmoLock(s: Pick<EditorState, 'project' | 'frame' | 'editing' | 'sel'>): 'crossfade' | 'stitch' | null {
-  const { actorId, channel } = s.sel
-  const track = actorId && channel && !channel.startsWith('group:') && s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actorId)
+// Why edits of `channel` are off: a crossfade shows a blend (sequence view, any channel);
+// the first frame of a stitched item has its root x/y/yaw matched to the previous item (z/roll/pitch stay editable).
+export function editLock(s: Pick<EditorState, 'project' | 'frame' | 'editing'>, actorId: string, channel: string): 'crossfade' | 'stitch' | null {
+  const track = s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actorId)
   if (!track) return null
   if (!s.editing && inCrossfade(track, s.frame)) return 'crossfade'
-  if (!channel!.startsWith('root')) return null
-  const t = editTarget(s, actorId!), item = t && track.items.find(i => i.id === t.itemId)
+  if (!['root.x', 'root.y', 'root.yaw'].includes(channel)) return null
+  const t = editTarget(s, actorId), item = t && track.items.find(i => i.id === t.itemId)
   return item && t.f === item.trimIn && sortedItems(track)[0] !== item ? 'stitch' : null
+}
+
+// Stage gizmo lock for the selected channel. The root gizmo moves x/y/yaw together, so any root channel uses root.x
+// (a z/roll/pitch selection still locks it on a stitch frame; splitting handles is out of scope).
+export function gizmoLock(s: Pick<EditorState, 'project' | 'frame' | 'editing' | 'sel'>): 'crossfade' | 'stitch' | null {
+  const { actorId, channel } = s.sel
+  if (!actorId || !channel || channel.startsWith('group:')) return null
+  return editLock(s, actorId, channel.startsWith('root') ? 'root.x' : channel)
 }
 
 // One shared delta for every selected key (all channels) so min f >= 0 and max f <= length-1.
@@ -228,7 +235,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       setValue: (actorId, channel, v) => {
         if (!get().autoKey) return
         const t = editTarget(get(), actorId)
-        if (!t) return
+        if (!t || editLock(get(), actorId, channel)) return
         get().setKey(t.clipId, channel, t.f, v)
       },
       setKey: (clipId, channel, f, v) => edit(p => putKey(p.clips[clipId], channel, f, v), [{ clipId, channels: [channel] }]),
@@ -282,6 +289,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         const { clipId, f } = t
         const names = group === '루트' ? ROOT : def.groups.find(g => g.name === group)?.joints
         if (!names) throw new Error(`unknown group ${group}`)
+        if (names.some(n => editLock(get(), actorId, n))) return
         edit(p => {
           const clip = p.clips[clipId]
           const pose = evaluateClip(clip, def, f)
