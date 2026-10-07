@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { getEditor, useEditor } from '../store/store'
 import { itemLen, sortedItems } from '../model/sequence'
 import type { Item, Track } from '../model/types'
-import { tv } from './viewState'
+import { seqFlash, tv } from './viewState'
 import { drawRuler, hitMarker, LABEL_W, RULER_H } from './ruler'
 import { mediaUrl, subscribeMedia } from '../media/registry'
 import { frameToX, xToFrame, type TimeScale } from './timeScale'
@@ -66,6 +66,8 @@ export default function SequenceCanvas() {
       setMsg({ text, left: LABEL_W + 4, top: RULER_H + (row + 1) * ROW_H + 2 })
       clearTimeout(timer); timer = window.setTimeout(() => setMsg(null), 2000)
     }
+
+    seqFlash.fn = (text, itemId) => flash(text, tracks().findIndex(t => t.items.some(i => i.id === itemId)))
 
     const draw = () => {
       raf = 0
@@ -261,6 +263,7 @@ export default function SequenceCanvas() {
     canvas.addEventListener('dragover', onDragOver)
     canvas.addEventListener('drop', onDrop)
     return () => {
+      seqFlash.fn = null
       ro.disconnect(); unsub(); unsubMedia(); cancelAnimationFrame(raf); clearTimeout(timer)
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)

@@ -123,7 +123,7 @@ export default function Inspector() {
             <span aria-hidden>◆</span>
             <button aria-label="다음 키" onClick={() => jump(1)}>▶</button>
           </div>
-          {!autoKey && <p className="insp-hint">자동 키를 켜거나 키 추가를 누르세요</p>}
+          {!autoKey && !lockedTrack && <p className="insp-hint">자동 키를 켜거나 키 추가를 누르세요</p>}
           {channels.map(ch => {
             const { joint, v, lo, hi } = info(ch)
             const d = deg && isAngle(ch, joint)

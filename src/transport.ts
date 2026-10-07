@@ -2,6 +2,7 @@ import { editingItem, getEditor, type EditorState } from './store/store'
 import { sortedItems } from './model/sequence'
 import type { Project } from './model/types'
 import { openProject, saveProject } from './projectActions'
+import { seqFlash } from './timeline/viewState'
 
 export function sequenceEnd(p: Project): number {
   let end = 0
@@ -24,6 +25,13 @@ export function splitTarget(s: Pick<EditorState, 'project' | 'editing' | 'selIte
   if (s.selItem && tracks.some(t => t.items.some(i => i.id === s.selItem))) return s.selItem
   const track = tracks.find(t => t.kind === 'motion' && t.actorId === s.sel.actorId)
   return (track && sortedItems(track).filter(i => s.frame > i.start && s.frame < i.start + i.trimOut - i.trimIn).at(-1)?.id) ?? null
+}
+
+// Delete/C on an item of a locked track: the store rejects it; say why.
+const lockedItem = (s: Pick<EditorState, 'project'>, id: string) => {
+  const yes = s.project.sequence.tracks.some(t => t.locked && t.items.some(i => i.id === id))
+  if (yes) seqFlash.fn?.('잠긴 트랙입니다', id)
+  return yes
 }
 
 const typing =(t: EventTarget | null) =>
@@ -78,13 +86,13 @@ export function startTransport(): () => void {
     } else if (e.key === 'ArrowLeft') step(e.shiftKey ? -10 : -1)
     else if (e.key === 'ArrowRight') step(e.shiftKey ? 10 : 1)
     else if (e.key === 'Escape') { if (s.editing && !e.defaultPrevented && !(e.target as Element | null)?.closest?.('dialog[open]')) s.closeItem() }
-    else if (e.key === 'Delete') { if (!s.editing && s.selItem) { e.preventDefault(); s.deleteItem(s.selItem) } }
+    else if (e.key === 'Delete') { if (!s.editing && s.selItem) { e.preventDefault(); if (!lockedItem(s, s.selItem)) s.deleteItem(s.selItem) } }
     else if (e.key.toLowerCase() === 'i') s.setIn(Math.max(s.frame, 0))
     else if (e.key.toLowerCase() === 'o') s.setOut(Math.max(s.frame, 0))
     else if (e.key.toLowerCase() === 'm') s.addMarker(Math.max(s.frame, 0))
     else if (e.key.toLowerCase() === 'c') {
       const id = splitTarget(s)
-      if (id) s.splitItem(id, s.frame)
+      if (id && !lockedItem(s, id)) s.splitItem(id, s.frame)
     }
     else if (s.editing && e.key === 'Tab' && e.target instanceof Element && e.target.closest('#timeline')) {
       e.preventDefault(); s.setView(s.view === 'tracks' ? 'graph' : 'tracks')
