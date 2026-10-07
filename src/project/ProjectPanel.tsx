@@ -56,7 +56,7 @@ export default function ProjectPanel() {
 
   const [, bump] = useReducer((n: number) => n + 1, 0)
   useEffect(() => subscribeMedia(bump), []) // re-render when a url is (un)set
-  const [mres, setMres] = useState<{ n: number; lines: string[] } | null>(null)
+  const [mres, setMres] = useState<{ n?: number; lines: string[] } | null>(null)
   const [mmsg, setMmsg] = useState(0)
   useEffect(() => { if (mres) { const t = setTimeout(() => setMres(null), 10000); return () => clearTimeout(t) } }, [mres])
   useEffect(() => { if (!mmsg) return; const t = setTimeout(() => setMmsg(0), 3000); return () => clearTimeout(t) }, [mmsg])
@@ -68,19 +68,17 @@ export default function ProjectPanel() {
     setMres(null)
     const files = await openMediaFiles(true)
     if (!files.length) return
-    let n = 0
     const lines: string[] = []
+    const ok: { name: string; url: string; durationF: number }[] = []
+    for (const f of files) { // probe everything first so the gesture below has no awaits
+      try { ok.push({ name: f.name.replace(/\.[^.]*$/, ''), ...(await probe(f)) }) }
+      catch (e) { lines.push(`${f.name}: ${e instanceof Error ? e.message : String(e)}`) }
+    }
     const s = ed.getState()
     s.beginGesture() // one undo entry for the whole batch
-    try {
-      for (const f of files) {
-        try {
-          const { url, durationF } = await probe(f)
-          setMediaUrl(s.addMedia(f.name.replace(/\.[^.]*$/, ''), durationF), url); n++
-        } catch (e) { lines.push(`${f.name}: ${e instanceof Error ? e.message : String(e)}`) }
-      }
-    } finally { s.endGesture() }
-    setMres({ n, lines })
+    try { for (const o of ok) setMediaUrl(s.addMedia(o.name, o.durationF), o.url) }
+    finally { s.endGesture() }
+    setMres({ n: ok.length, lines })
   }
   const relink = async (m: { id: string; durationF: number }) => {
     setMres(null)
@@ -88,10 +86,11 @@ export default function ProjectPanel() {
     if (!f) return
     try {
       const { url, durationF } = await probe(f)
+      if (!ed.getState().project.media.some(x => x.id === m.id)) { revokeUrl(url); return } // deleted meanwhile
       setMediaUrl(m.id, url)
       if (Math.abs(durationF - m.durationF) > 1)
-        setMres({ n: -1, lines: [`길이가 다른 영상입니다(${(durationF / 60).toFixed(2)}초 ≠ ${(m.durationF / 60).toFixed(2)}초)`] })
-    } catch (e) { setMres({ n: -1, lines: [`${f.name}: ${e instanceof Error ? e.message : String(e)}`] }) }
+        setMres({ lines: [`길이가 다른 영상입니다(${(durationF / 60).toFixed(2)}초 ≠ ${(m.durationF / 60).toFixed(2)}초)`] })
+    } catch (e) { setMres({ lines: [`${f.name}: ${e instanceof Error ? e.message : String(e)}`] }) }
   }
   const delMedia = (id: string) => { if (!ed.getState().deleteMedia(id)) setMmsg(performance.now()) }
 
@@ -169,7 +168,7 @@ export default function ProjectPanel() {
       )}
       {mres && (
         <div className="pp-msg" role="status">
-          {mres.n >= 0 && <p>영상 {mres.n}개를 가져왔습니다</p>}
+          {mres.n !== undefined && <p>영상 {mres.n}개를 가져왔습니다</p>}
           {mres.lines.map(f => <p key={f}>{f}</p>)}
         </div>
       )}
