@@ -7,12 +7,16 @@ export { evaluateClip, type Pose, type RobotDefs }
 
 const emptyClip = (robot: RobotKind): Clip => ({ id: '', name: '', robot, length: 0, channels: {} })
 
-function trackPose(p: Project, defs: RobotDefs, track: Track, robot: RobotKind, frame: number): Pose {
+type ClipEval = typeof evaluateClip
+// Root channels only (q empty), for callers that need just the root path, e.g. stage trails.
+const evaluateClipRoot: ClipEval = (clip, def, f) => evaluateClip(clip, { ...def, joints: [] }, f)
+
+function trackPose(p: Project, defs: RobotDefs, track: Track, robot: RobotKind, frame: number, ev: ClipEval): Pose {
   const def = defs[robot]
   const xfs = stitchTransforms(p, defs, track)
   const at = (it: Item, cf: number): Pose | null => {
     const clip = p.clips[it.refId]
-    return clip ? applyXf(evaluateClip(clip, def, cf), xfs.get(it.id)!) : null
+    return clip ? applyXf(ev(clip, def, cf), xfs.get(it.id)!) : null
   }
   const items = sortedItems(track)
   for (let i = 0; i + 1 < items.length; i++) {
@@ -24,16 +28,20 @@ function trackPose(p: Project, defs: RobotDefs, track: Track, robot: RobotKind, 
     }
   }
   const hit = resolve(items, frame)
-  return (hit && at(hit.item, hit.cf)) || evaluateClip(emptyClip(robot), def, 0)
+  return (hit && at(hit.item, hit.cf)) || ev(emptyClip(robot), def, 0)
 }
 
-export function evaluate(p: Project, defs: RobotDefs, actorId: string, frame: number): Pose {
+function evaluateWith(p: Project, defs: RobotDefs, actorId: string, frame: number, ev: ClipEval): Pose {
   const actor = p.actors.find(a => a.id === actorId)
   if (!actor) throw new Error(`unknown actor ${actorId}`)
   const track = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actorId)
-  const pose = track ? trackPose(p, defs, track, actor.robot, frame) : evaluateClip(emptyClip(actor.robot), defs[actor.robot], 0)
+  const pose = track ? trackPose(p, defs, track, actor.robot, frame, ev) : ev(emptyClip(actor.robot), defs[actor.robot], 0)
   return applyXf(pose, actor.placement)
 }
+
+export const evaluate = (p: Project, defs: RobotDefs, actorId: string, frame: number): Pose => evaluateWith(p, defs, actorId, frame, evaluateClip)
+// Same item/blend/stitch logic with joints skipped (q is empty).
+export const evaluateRoot = (p: Project, defs: RobotDefs, actorId: string, frame: number): Pose => evaluateWith(p, defs, actorId, frame, evaluateClipRoot)
 
 // World pose of an item at a raw clip frame (trims ignored, clamped to the clip).
 export function evaluateItem(p: Project, defs: RobotDefs, itemId: string, clipFrame: number): Pose {

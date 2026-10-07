@@ -79,7 +79,7 @@ export function editingItem(s: Pick<EditorState, 'project' | 'editing'>) {
 // the first frame of a stitched item has its root x/y/yaw matched to the previous item.
 export function gizmoLock(s: Pick<EditorState, 'project' | 'frame' | 'editing' | 'sel'>): 'crossfade' | 'stitch' | null {
   const { actorId, channel } = s.sel
-  const track = actorId && channel && s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actorId)
+  const track = actorId && channel && !channel.startsWith('group:') && s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actorId)
   if (!track) return null
   if (!s.editing && inCrossfade(track, s.frame)) return 'crossfade'
   if (!channel!.startsWith('root')) return null

@@ -4,7 +4,7 @@ import { loadRobotDef } from '../robot/loadRobot'
 import type { RobotKind } from '../robot/types'
 import { makeKey } from './curve'
 import { addActor, newProject } from './defaults'
-import { evaluate, evaluateClip, type RobotDefs } from './evaluate'
+import { evaluate, evaluateClip, evaluateRoot, type RobotDefs } from './evaluate'
 import { eulerToQuat, quatAngle, quatYaw, type Quat } from './rootMath'
 import type { Clip, Project } from './types'
 
@@ -80,4 +80,17 @@ test('addActor does not mutate and names/places the new actor', () => {
   expect(a.placement.x).toBeCloseTo(3)
   expect(Object.keys(p2.clips)).toHaveLength(3)
   expect(p2.sequence.tracks.filter(t => t.actorId === a.id)[0].items).toHaveLength(1)
+})
+
+test('evaluateRoot equals evaluate root across stitch, crossfade, gaps', () => {
+  const { proj, actorId, clip } = projectWithRootX(0.5, { x: 1, y: -2, yaw: 0.7 })
+  clip.channels['root.yaw'] = { keys: [makeKey(0, 0, 'linear'), makeKey(119, 1.2, 'linear')] }
+  clip.channels['root.pitch'] = { keys: [makeKey(0, 0.1, 'linear')] }
+  const items = proj.sequence.tracks.find(t => t.actorId === actorId)!.items
+  items.push({ id: 'b', refId: clip.id, start: 100, trimIn: 10, trimOut: 120 }, { id: 'c', refId: clip.id, start: 230, trimIn: 0, trimOut: 60 })
+  for (let f = -3; f < 300; f++) {
+    const a = evaluate(proj, defs, actorId, f), b = evaluateRoot(proj, defs, actorId, f)
+    a.rootPos.forEach((v, i) => expect(b.rootPos[i]).toBeCloseTo(v, 9))
+    a.rootQuat.forEach((v, i) => expect(b.rootQuat[i]).toBeCloseTo(v, 9))
+  }
 })

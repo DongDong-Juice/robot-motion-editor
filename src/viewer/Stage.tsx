@@ -3,11 +3,11 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { evalCurve } from '../model/curve'
-import { evaluate, evaluateItem } from '../model/evaluate'
+import { evaluate, evaluateItem, evaluateRoot } from '../model/evaluate'
 import { nearestAngle } from '../model/rootMath'
-import { inCrossfade, stitchTransforms, worldToClipRoot } from '../model/sequence'
+import { stitchTransforms, worldToClipRoot } from '../model/sequence'
 import type { Clip } from '../model/types'
-import { editingItem, editTarget, getEditor } from '../store/store'
+import { editingItem, editTarget, getEditor, gizmoLock } from '../store/store'
 import { sequenceEnd } from '../transport'
 import { buildRobot, pivotAngle, type RobotRig } from './buildRobot'
 
@@ -125,8 +125,8 @@ export default function Stage() {
         e.trailKey = key; e.trailClips = clips
         const pts: number[] = []
         if (track?.items.length) {
-          for (let f = 0; f < sequenceEnd(project); f++) {
-            const p = evaluate(project, defs, a.id, f).rootPos
+          for (let f = 0, end = sequenceEnd(project); f < end; f++) {
+            const p = evaluateRoot(project, defs, a.id, f).rootPos
             pts.push(p[0], p[1], 0.002)
           }
         }
@@ -135,11 +135,8 @@ export default function Stage() {
       }
     }
 
-    // sequence view inside a crossfade of the selected actor's track: the displayed root is a blend, not invertible
-    const rootLocked = () => {
-      const s = store.getState()
-      return !s.editing && s.project.sequence.tracks.some(t => t.actorId === s.sel.actorId && inCrossfade(t, s.frame))
-    }
+    // crossfade (displayed pose is a blend, not invertible) or stitched first frame (root x/y/yaw pinned): no gizmo
+    const locked = () => gizmoLock(store.getState()) !== null
     const syncSelection = () => {
       const s = store.getState()
       const { sel } = s
@@ -153,7 +150,7 @@ export default function Stage() {
         }
       const e = sel.actorId ? entries.get(sel.actorId) : undefined
       // re-attaching mid-drag would reset TransformControls' axis and kill the drag
-      const target = !e ? null : ch === 'root' ? (rootLocked() ? null : e.rig.root) : ch ? e.rig.jointPivots[ch] ?? null : null
+      const target = !e || locked() ? null : ch === 'root' ? e.rig.root : ch ? e.rig.jointPivots[ch] ?? null : null
       if (!tc.dragging && tc.object !== (target ?? undefined)) {
         tc.detach()
         if (target) tc.attach(target)
@@ -163,7 +160,7 @@ export default function Stage() {
         tc.setMode(rootMode)
         tc.setSpace(rootMode === 'rotate' ? 'local' : 'world')
         tc.showX = tc.showY = tc.showZ = true
-      } else if (e && ch && e.rig.jointPivots[ch]) {
+      } else if (e && ch && e.rig.jointPivots[ch] && tc.object) {
         const robot = s.project.actors.find(a => a.id === sel.actorId)!.robot
         const ax = s.defs[robot].joints.find(j => j.name === ch)!.axis
         tc.setMode('rotate')
@@ -265,9 +262,9 @@ export default function Stage() {
       if (s.project !== prev.project) syncActors()
       applyAll()
       const key = (p: typeof s.project) => p.actors.map(a => a.id + a.robot).join()
-      const locked = rootLocked()
-      if (s.sel !== prev.sel || key(s.project) !== key(prev.project) || locked !== wasLocked) syncSelection()
-      wasLocked = locked
+      const lk = locked()
+      if (s.sel !== prev.sel || key(s.project) !== key(prev.project) || lk !== wasLocked) syncSelection()
+      wasLocked = lk
     })
 
     const loop = () => {

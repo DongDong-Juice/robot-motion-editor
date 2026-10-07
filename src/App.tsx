@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
 import { fetchRobotDef } from './robot/loadRobot'
-import { getEditor, initEditor, useEditor } from './store/store'
+import { getEditor, gizmoLock, initEditor, useEditor } from './store/store'
 import Inspector from './inspector/Inspector'
 import Stage from './viewer/Stage'
 import ProjectPanel from './project/ProjectPanel'
-import { inCrossfade } from './model/sequence'
 import Timeline from './timeline/Timeline'
 import { formatTimecode } from './timeline/timeScale'
 import ExportDialog from './export/ExportDialog'
@@ -17,8 +16,9 @@ function AutoKeyHint() {
 }
 
 export function CrossfadeHint() {
-  const on = useEditor(s => !s.editing && !!s.sel.channel?.startsWith('root') && s.project.sequence.tracks.some(t => t.actorId === s.sel.actorId && inCrossfade(t, s.frame)))
-  return on ? <div className="stage-hint hi">크로스페이드 구간에서는 클립 보기에서 루트를 편집하세요</div> : null
+  const lock = useEditor(gizmoLock)
+  return lock === 'crossfade' ? <div className="stage-hint hi">크로스페이드 구간에서는 클립 보기에서 루트를 편집하세요</div>
+    : lock === 'stitch' ? <div className="stage-hint hi">이 프레임의 루트 위치·방향은 앞 클립 끝에 맞춰집니다</div> : null
 }
 
 function Menubar() {
