@@ -554,3 +554,14 @@ test('video items: trim bounded by durationF, split works, overlap / motion add 
   expect(s().editing).toBeNull() // video items have no clip view
   expect(s().deleteItem(id)).toBe(true)
 })
+
+test('simplifyClip: reduces dense keys across channels, returns count, one undo; no edit when 0', () => {
+  for (let f = 0; f < 100; f++) { s().setKey(c, ch, f, 0.001 * f); s().setKey(c, 'root.x', f, 0.5) }
+  const n = s().simplifyClip(c)
+  expect(n).toBe(98 * 2)
+  expect(curve(ch).keys.map(k => k.f)).toEqual([0, 99])
+  expect(s().simplifyClip(c)).toBe(0)
+  s().undo()
+  expect(curve(ch).keys).toHaveLength(100)
+  expect(curve('root.x').keys).toHaveLength(100)
+})

@@ -19,6 +19,8 @@ export default function Inspector() {
   const { project, defs, frame, autoKey, sel, editing } = useEditor(s => s)
   const [deg, setDeg] = useState(true)
   const [lenMsg, setLenMsg] = useState(false)
+  const [tol, setTol] = useState(0.001)
+  const [simpMsg, setSimpMsg] = useState<number | null>(null)
   const actor = project.actors.find(a => a.id === sel.actorId)
   if (!actor) return <div className="insp-empty">무대에서 링크를 클릭하거나 타임라인에서 채널을 고르세요.</div>
 
@@ -92,6 +94,13 @@ export default function Inspector() {
         </label>
         <span className="insp-lim">{(clip.length / 60).toFixed(2)} 초</span>
       </div>
+      <div className="insp-row">
+        <label>허용 오차
+          <input type="number" min={0.00001} step={0.0001} value={tol} onChange={e => setTol(e.target.valueAsNumber)} />
+        </label>
+        <button disabled={!(tol >= 0.00001)} onClick={() => { setSimpMsg(act.simplifyClip(clipId, tol, tol)); setTimeout(() => setSimpMsg(null), 3000) }}>키 줄이기</button>
+      </div>
+      {simpMsg !== null && <p className="insp-hint" role="status">{simpMsg > 0 ? `키 ${simpMsg}개를 줄였습니다` : '줄일 키가 없습니다'}</p>}
       {lenMsg && <p className="insp-hint" role="status">다른 클립과 겹쳐서 길이를 바꿀 수 없습니다</p>}
       {channels.length > 0 && (
         <>

@@ -1,9 +1,10 @@
 import { createStore, useStore, type StoreApi } from 'zustand'
 import { evalCurve, makeKey } from '../model/curve'
+import { simplifyCurve, simplifyTolerance } from '../model/simplify'
 import { addActor as addActorTo, newProject, nextClipName } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
 import { inCrossfade, resolve, sortedItems, validTrack } from '../model/sequence'
-import type { Actor, Item, Clip, Interp, Project, Tan, Track } from '../model/types'
+import type { Actor, Item, Clip, Curve, Interp, Project, Tan, Track } from '../model/types'
 import { validVideoTrack, videoTrack } from '../model/video'
 import type { RobotKind } from '../robot/types'
 
@@ -37,6 +38,7 @@ export interface EditorState {
   addMarker(f: number): void; renameMarker(index: number, name: string): void; deleteMarker(index: number): void
   newClip(robot: RobotKind): string
   importClip(clip: Clip): void
+  simplifyClip(clipId: string, rot?: number, pos?: number): number
   deleteClip(clipId: string): boolean
   addMedia(name: string, durationF: number): string
   deleteMedia(mediaId: string): boolean
@@ -338,6 +340,20 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         for (let n = 2; taken.has(name); n++) name = `${clip.name}_${n}`
         p.clips[clip.id] = { ...clip, name }
       }, []),
+      simplifyClip: (clipId, rot = 0.001, pos = 0.001) => {
+        const clip = get().project.clips[clipId]
+        if (!clip) return 0
+        const next: Record<string, Curve> = {}
+        let cut = 0
+        for (const [ch, c] of Object.entries(clip.channels)) {
+          const r = simplifyCurve(c, simplifyTolerance(ch, rot, pos))
+          cut += c.keys.length - r.keys.length
+          next[ch] = r
+        }
+        if (cut === 0) return 0
+        edit(p => { Object.assign(p.clips[clipId].channels, next) }, [{ clipId, channels: 'all' }])
+        return cut
+      },
       deleteClip: clipId => tryEdit(p => {
         if (!p.clips[clipId] || p.sequence.tracks.some(t => t.items.some(i => i.refId === clipId))) return false
         delete p.clips[clipId]

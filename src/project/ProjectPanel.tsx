@@ -1,6 +1,7 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
 import type { RobotKind } from '../robot/types'
 import { csvToClip } from '../export/importCsv'
+import { simplifyCurve, simplifyTolerance } from '../model/simplify'
 import { objectUrl, openMediaFiles, openTextFiles, revokeUrl } from '../fileio'
 import { mediaUrl, probeDuration, setMediaUrl, subscribeMedia } from '../media/registry'
 import { getEditor, projectGeneration, useEditor } from '../store/store'
@@ -33,12 +34,13 @@ export default function ProjectPanel() {
   const [result, setResult] = useState<{ n: number; fails: string[] } | null>(null)
   const dlg = useRef<HTMLDialogElement>(null)
   const [fps, setFps] = useState<30 | 60>(30)
+  const [simp, setSimp] = useState(true)
   useEffect(() => { if (result) { const t = setTimeout(() => setResult(null), 10000); return () => clearTimeout(t) } }, [result])
   useEffect(() => { if (pending && !dlg.current?.open) dlg.current?.showModal() }, [pending])
   const pick = async () => {
     setResult(null)
     const files = await openTextFiles('.csv', true)
-    if (files.length) { setFps(30); setPending(files) }
+    if (files.length) { setFps(30); setSimp(true); setPending(files) }
   }
   const doImport = () => {
     const files = pending!
@@ -47,7 +49,11 @@ export default function ProjectPanel() {
     const fails: string[] = []
     ed.getState().beginGesture() // one undo entry for the whole batch
     for (const f of files) {
-      try { ed.getState().importClip(csvToClip(f.text, ed.getState().defs, fps, f.name.replace(/\.csv$/i, ''))); n++ }
+      try {
+        const clip = csvToClip(f.text, ed.getState().defs, fps, f.name.replace(/\.csv$/i, ''))
+        if (simp) for (const ch of Object.keys(clip.channels)) clip.channels[ch] = simplifyCurve(clip.channels[ch], simplifyTolerance(ch, 0.001, 0.001))
+        ed.getState().importClip(clip); n++
+      }
       catch (e) { fails.push(`${f.name}: ${e instanceof Error ? e.message : String(e)}`) }
     }
     ed.getState().endGesture()
@@ -162,6 +168,7 @@ export default function ProjectPanel() {
           {([30, 60] as const).map(v => (
             <label key={v}><input type="radio" name="fps" checked={fps === v} onChange={() => setFps(v)} />{v}fps</label>
           ))}
+          <label><input type="checkbox" checked={simp} onChange={e => setSimp(e.target.checked)} />가져올 때 키 줄이기</label>
           <div className="pp-btns"><button id="pp-go">가져오기</button><button value="cancel" type="submit" formNoValidate>취소</button></div>
         </form>
       </dialog>
