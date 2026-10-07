@@ -65,6 +65,16 @@ test('inherited names are not robots or clips', () => {
   bad(p => { p.sequence.tracks[0].items[0].refId = 'toString' }, 'refId')
 })
 
+test('media id __proto__ is a plain id: duplicates and bounds still checked', () => {
+  const v = (items: any[]) => ({ id: 'v', kind: 'video', hidden: false, locked: false, items })
+  const m = { id: '__proto__', name: 'a', durationF: 600 }
+  const it = (trimOut: number) => ({ id: 'a', refId: '__proto__', start: 0, trimIn: 0, trimOut })
+  const run = (fn: (p: any) => void) => { const p: any = JSON.parse(serializeProject(mk())); fn(p); return parseProject(JSON.stringify(p), defs) }
+  expect(run(p => { p.media = [m]; p.sequence.tracks.unshift(v([it(100)])) }).media).toHaveLength(1)
+  expect(() => run(p => { p.media = [m]; p.sequence.tracks.unshift(v([it(601)])) })).toThrow('trimOut')
+  expect(() => run(p => { p.media = [m, m] })).toThrow('media.1.id')
+})
+
 test('video: old file opens; media/V1 problems rejected', () => {
   const ok = (fn: (p: any) => void) => { const p: any = JSON.parse(serializeProject(mk())); fn(p); return parseProject(JSON.stringify(p), defs) }
   const v = (items: any[] = []) => ({ id: 'v', kind: 'video', hidden: false, locked: false, items })

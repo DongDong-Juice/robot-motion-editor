@@ -54,7 +54,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
     }
 
     if (!Array.isArray(p.media)) fail('media')
-    const media: Record<string, Media> = {}
+    const media: Record<string, Media> = Object.create(null) // no prototype: an id of "__proto__" is just a key
     p.media.forEach((m: any, i: number) => {
       const at = `media.${i}`
       if (!isObj(m) || !str(m.id) || !str(m.name)) fail(at)
