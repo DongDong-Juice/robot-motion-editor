@@ -2,7 +2,7 @@ import { createStore, useStore, type StoreApi } from 'zustand'
 import { evalCurve, makeKey } from '../model/curve'
 import { addActor as addActorTo, newProject, nextClipName } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
-import { resolve, sortedItems, validTrack } from '../model/sequence'
+import { inCrossfade, resolve, sortedItems, validTrack } from '../model/sequence'
 import type { Actor, Item, Clip, Interp, Project, Tan } from '../model/types'
 import type { RobotKind } from '../robot/types'
 
@@ -75,39 +75,82 @@ export function editingItem(s: Pick<EditorState, 'project' | 'editing'>) {
   return null
 }
 
+// Why the stage gizmo of the selected channel is off: a crossfade shows a blend (sequence view, any channel);
+// the first frame of a stitched item has its root x/y/yaw matched to the previous item.
+export function gizmoLock(s: Pick<EditorState, 'project' | 'frame' | 'editing' | 'sel'>): 'crossfade' | 'stitch' | null {
+  const { actorId, channel } = s.sel
+  const track = actorId && channel && s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actorId)
+  if (!track) return null
+  if (!s.editing && inCrossfade(track, s.frame)) return 'crossfade'
+  if (!channel!.startsWith('root')) return null
+  const t = editTarget(s, actorId!), item = t && track.items.find(i => i.id === t.itemId)
+  return item && t.f === item.trimIn && sortedItems(track)[0] !== item ? 'stitch' : null
+}
+
 // One shared delta for every selected key (all channels) so min f >= 0 and max f <= length-1.
 export function clampDf(length: number, keys: KeyRef[], df: number): number {
   if (!keys.length) return 0
   return Math.min(Math.max(Math.round(df), -Math.min(...keys.map(k => k.f))), length - 1 - Math.max(...keys.map(k => k.f)))
 }
 
+// Clips and channels an edit mutates; 'all' = every channel of the clip.
+type Touched = { clipId: string; channels: string[] | 'all' }[]
+const chans = (keys: KeyRef[]) => [...new Set(keys.map(k => k.channel))]
+
+// Dev/test only: deep-freeze clips so code mutating a shared (undeclared) curve throws. Frozen curves are skipped.
+function freezeClips(p: Project): Project {
+  if (!import.meta.env.DEV) return p
+  for (const clip of Object.values(p.clips)) {
+    for (const c of Object.values(clip.channels)) {
+      if (Object.isFrozen(c)) continue
+      for (const k of c.keys) { Object.freeze(k.inTan); Object.freeze(k.outTan); Object.freeze(k) }
+      Object.freeze(c.keys); Object.freeze(c)
+    }
+    Object.freeze(clip.channels); Object.freeze(clip)
+  }
+  return p
+}
+
 export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
   return createStore<EditorState>((set, get) => {
     let undoS: Project[] = [], redoS: Project[] = []
-    let gesture: Project | null = null // project at gesture start; edits inside it share one undo entry
+    let gesture = false // edits inside a gesture share one undo entry
+    let gestureMoved = false // the gesture has committed (pushed its undo entry, cleared redo)
 
-    // One user action = one undo entry: mutate a clone, push the old project.
+    // One user action = one undo entry: mutate a clone, push the old project. In a gesture only the first change pushes.
     const commit = (next: Project) => {
-      if (!gesture) { undoS = [...undoS, get().project].slice(-MAX_UNDO); redoS = [] }
-      set({ project: next, editing: keepEditing(next), dirty: true })
+      if (!gesture || !gestureMoved) { undoS = [...undoS, get().project].slice(-MAX_UNDO); redoS = [] }
+      if (gesture) gestureMoved = true
+      set({ project: freezeClips(next), editing: keepEditing(next), dirty: true })
     }
     const keepEditing = (p: Project) => {
       const e = get().editing
       return e && p.sequence.tracks.some(t => t.items.some(i => i.id === e)) ? e : null
     }
-    // Only `touched` clips are cloned; other clips are shared with older snapshots by reference.
-    const edit = (fn: (p: Project) => void, touched: string[]) => {
+    // Copy-on-write draft: actors/sequence cloned; per touched clip only the declared channels get fresh curves,
+    // all other curves stay shared with older snapshots (frozen in dev, so an undeclared mutation throws).
+    const draft = (touched: Touched): Project => {
       const p = get().project
       const next: Project = { ...p, actors: structuredClone(p.actors), sequence: structuredClone(p.sequence), clips: { ...p.clips } }
-      for (const id of touched) next.clips[id] = structuredClone(p.clips[id])
+      for (const { clipId, channels } of touched) {
+        const clip = p.clips[clipId]
+        if (!clip) continue
+        const chs = { ...clip.channels }
+        for (const n of channels === 'all' ? Object.keys(chs) : channels)
+          if (chs[n]) chs[n] = { keys: chs[n].keys.map(k => ({ ...k, inTan: { ...k.inTan }, outTan: { ...k.outTan } })) }
+        next.clips[clipId] = { ...clip, channels: chs }
+      }
+      return next
+    }
+    const edit = (fn: (p: Project) => void, touched: Touched) => {
+      const next = draft(touched)
       fn(next)
       commit(next)
     }
 
     // Mutate a candidate; commit only if fn returns true (rejection leaves project and stacks untouched).
-    const tryEdit = (fn: (p: Project) => boolean): boolean => {
-      const p = get().project
-      const next: Project = { ...p, actors: structuredClone(p.actors), sequence: structuredClone(p.sequence), clips: { ...p.clips } }
+    const tryEdit = (fn: (p: Project) => boolean, touched: Touched = []): boolean => {
+      const next = draft(touched)
       if (!fn(next)) return false
       commit(next)
       return true
@@ -145,7 +188,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       }, []),
       renameMarker: (i, name) => edit(p => { if (p.sequence.markers[i]) p.sequence.markers[i].name = name }, []),
       deleteMarker: i => edit(p => { p.sequence.markers.splice(i, 1) }, []),
-      defs, project: newProject(), frame: 0, playing: false, autoKey: false, view: 'tracks',
+      defs, project: freezeClips(newProject()), frame: 0, playing: false, autoKey: false, view: 'tracks',
       sel: { actorId: null, channel: null, keys: [] },
       setFrame: frame => set({ frame }),
       setPlaying: playing => set({ playing }),
@@ -169,7 +212,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         if (!t) return
         get().setKey(t.clipId, channel, t.f, v)
       },
-      setKey: (clipId, channel, f, v) => edit(p => putKey(p.clips[clipId], channel, f, v), [clipId]),
+      setKey: (clipId, channel, f, v) => edit(p => putKey(p.clips[clipId], channel, f, v), [{ clipId, channels: [channel] }]),
       deleteKeys: (clipId, keys) => edit(p => {
         const clip = p.clips[clipId]
         for (const r of keys) {
@@ -177,7 +220,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
           if (c) c.keys = c.keys.filter(k => k.f !== r.f)
         }
         set(s => ({ sel: { ...s.sel, keys: s.sel.keys.filter(k => !keys.some(r => r.channel === k.channel && r.f === k.f)) } }))
-      }, [clipId]),
+      }, [{ clipId, channels: chans(keys) }]),
       moveKeys: (clipId, keys, df) => {
         const moved: KeyRef[] = []
         edit(p => {
@@ -194,7 +237,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
             c.keys = [...c.keys.filter(k => !from.has(k.f) && !dest.has(k.f)), ...mv].sort((a, b) => a.f - b.f)
             moved.push(...mv.map(k => ({ channel, f: k.f })))
           }
-        }, [clipId])
+        }, [{ clipId, channels: chans(keys) }])
         set(s => ({ sel: { ...s.sel, keys: moved } }))
       },
       setInterp: (clipId, keys, interp) => edit(p => {
@@ -204,14 +247,14 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
           k.interp = interp
           if (interp === 'bezier') { k.inTan.dv = 0; k.outTan.dv = 0 }
         }
-      }, [clipId]),
+      }, [{ clipId, channels: chans(keys) }]),
       setTangent: (clipId, channel, f, side, t, linked) => edit(p => {
         const k = findKey(p.clips[clipId], { channel, f })
         if (!k) return
         const [mine, other] = side === 'out' ? [k.outTan, k.inTan] : [k.inTan, k.outTan]
         mine.df = t.df; mine.dv = t.dv
         if (linked && t.df !== 0) other.dv = (t.dv / t.df) * other.df
-      }, [clipId]),
+      }, [{ clipId, channels: [channel] }]),
       keyGroup: (actorId, group) => {
         const actor = get().project.actors.find(a => a.id === actorId)!
         const def = defs[actor.robot]
@@ -229,7 +272,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
               : pose.q[def.joints.findIndex(j => j.name === n)]
             putKey(clip, n, f, v)
           }
-        }, [clipId])
+        }, [{ clipId, channels: names }])
       },
       setClip: (clipId, patch) => {
         const name = patch.name?.trim() || undefined
@@ -238,21 +281,27 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         if (name === undefined && len === undefined) return true
         const gone: KeyRef[] = []
         const ok = tryEdit(p => {
-          const clip = p.clips[clipId] = structuredClone(p.clips[clipId])
+          const clip = p.clips[clipId]
           if (name) clip.name = name
           if (len === undefined) return true
+          const old = clip.length
           clip.length = len
           for (const [channel, c] of Object.entries(clip.channels)) {
             for (const k of c.keys) if (k.f > len - 1) gone.push({ channel, f: k.f })
             c.keys = c.keys.filter(k => k.f <= len - 1)
           }
+          // an item ending at the clip end follows the new end; other trims are kept, clamped into the clip
           for (const t of p.sequence.tracks) {
             let hit = false
-            for (const it of t.items) if (it.refId === clipId) { it.trimOut = len; it.trimIn = Math.min(it.trimIn, len - 1); hit = true }
+            for (const it of t.items) if (it.refId === clipId) {
+              it.trimOut = it.trimOut === old ? len : Math.min(it.trimOut, len)
+              it.trimIn = Math.min(it.trimIn, it.trimOut - 1)
+              hit = true
+            }
             if (hit && !validTrack(t.items)) return false
           }
           return true
-        })
+        }, [{ clipId, channels: len === undefined ? [] : 'all' }])
         if (ok && gone.length) set(s => ({ sel: { ...s.sel, keys: s.sel.keys.filter(k => !gone.some(r => r.channel === k.channel && r.f === k.f)) } }))
         return ok
       },
@@ -320,27 +369,25 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       },
       fileName: null, dirty: false,
       loadProject: (project, fileName) => {
-        undoS = []; redoS = []; gesture = null
-        set({ project, fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] } })
+        undoS = []; redoS = []; gesture = false; gestureMoved = false
+        set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] } })
       },
       markSaved: fileName => set({ fileName, dirty: false }),
       newProjectFile: () => get().loadProject(newProject(), null),
       beginGesture: () => {
         if (gesture) return
-        gesture = get().project
-        undoS = [...undoS, gesture].slice(-MAX_UNDO); redoS = []
+        gesture = true; gestureMoved = false // undo entry + redo clear wait for the first commit
       },
-      endGesture: () => {
-        if (gesture && get().project === gesture) undoS = undoS.slice(0, -1) // nothing changed
-        gesture = null
-      },
+      endGesture: () => { gesture = false },
       undo: () => {
+        get().endGesture()
         const prev = undoS.at(-1)
         if (!prev) return
         undoS = undoS.slice(0, -1); redoS = [...redoS, get().project]
         set(s => ({ project: prev, editing: keepEditing(prev), dirty: true, sel: { ...s.sel, keys: [] } }))
       },
       redo: () => {
+        get().endGesture()
         const next = redoS.at(-1)
         if (!next) return
         redoS = redoS.slice(0, -1); undoS = [...undoS, get().project]

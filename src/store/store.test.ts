@@ -3,7 +3,8 @@ import { beforeEach, expect, test } from 'vitest'
 import { loadRobotDef } from '../robot/loadRobot'
 import type { RobotKind } from '../robot/types'
 import type { RobotDefs } from '../model/evaluate'
-import { createEditorStore, editTarget } from './store'
+import { createEditorStore, editTarget, gizmoLock } from './store'
+import { makeKey } from '../model/curve'
 
 const load = (k: RobotKind) => {
   const r = (f: string) => JSON.parse(readFileSync(new URL(`../../public/robots/${k}/${f}`, import.meta.url), 'utf8'))
@@ -409,4 +410,107 @@ test('setClip: growing a clip into its neighbour is rejected without an edit', (
   expect(s().project).toBe(before)
   expect(track.items.length).toBe(1) // original snapshot untouched
   expect(s().setClip(c, { name: 'ok' })).toBe(true)
+})
+
+// --- copy-on-write edits (C1) ---
+test('committed clips, curves and keys are frozen; declared channels are fresh copies', () => {
+  s().setKey(c, ch, 0, 0.5); s().setKey(c, 'root.x', 0, 1)
+  const before = s().project
+  expect(() => { s().project.clips[c].channels[ch].keys[0].v = 9 }).toThrow(TypeError)
+  expect(() => { s().project.clips[c].channels['root.x'].keys.push(makeKey(5, 1)) }).toThrow(TypeError)
+  expect(() => { s().project.clips[c].channels[ch].keys[0].inTan.dv = 1 }).toThrow(TypeError)
+  s().setKey(c, ch, 0, 0.7) // declared channel: new curve, others shared
+  expect(curve(ch)).not.toBe(before.clips[c].channels[ch])
+  expect(curve('root.x')).toBe(before.clips[c].channels['root.x'])
+  expect(before.clips[c].channels[ch].keys[0].v).toBe(0.5)
+})
+
+test('perf: setKey on a 5000x36 clip copies only the touched channel', () => {
+  const names = Array.from({ length: 36 }, (_, i) => i < 6 ? ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw'][i] : `ch${i}`)
+  const id = 'big'
+  s().importClip({ id, name: 'big', robot: 'g1', length: 5000, channels: Object.fromEntries(names.map(n => [n, { keys: Array.from({ length: 5000 }, (_, f) => makeKey(f, Math.sin(f), 'linear')) }])) })
+  s().setKey(id, 'root.x', 0, 0) // warm-up
+  let ms = 0
+  for (let i = 0; i < 10; i++) {
+    const prev = s().project.clips[id]
+    const t0 = performance.now()
+    s().setKey(id, 'root.x', 100 + i, 1)
+    ms += performance.now() - t0
+    const next = s().project.clips[id]
+    expect(next.channels['root.x']).not.toBe(prev.channels['root.x'])
+    expect(names.filter(n => next.channels[n] === prev.channels[n])).toHaveLength(35)
+  }
+  expect(ms / 10).toBeLessThan(30)
+})
+
+// --- setClip keeps trims (I1) ---
+const items = () => [...trackItems(actor)].sort((a, b) => a.start - b.start).map(i => [i.trimIn, i.trimOut])
+
+test('setClip: split items keep their cut; the item at the end follows the new length', () => {
+  expect(s().splitItem(item0().id, 50)).toBe(true)
+  expect(s().setClip(c, { length: 200 })).toBe(true)
+  expect(items()).toEqual([[0, 50], [50, 200]])
+})
+
+test('setClip: a trimmed item keeps its trim when the clip grows', () => {
+  expect(s().trimItem(item0().id, 'out', -30)).toBe(true)
+  expect(s().setClip(c, { length: 130 })).toBe(true)
+  expect(items()).toEqual([[0, 90]])
+})
+
+test('setClip: shrinking below a trim clamps the item', () => {
+  expect(s().trimItem(item0().id, 'in', 40)).toBe(true) // [40,120]
+  expect(s().trimItem(item0().id, 'out', -30)).toBe(true) // [40,90]
+  expect(s().setClip(c, { length: 30 })).toBe(true)
+  expect(items()).toEqual([[29, 30]])
+})
+
+// --- gestures (M5) ---
+test('undo during a gesture ends it first; endGesture then pops nothing', () => {
+  s().toggleAutoKey()
+  s().setKey(c, ch, 3, 1)
+  const afterKey = s().project
+  s().beginGesture(); s().setValue(actor, ch, 0.4)
+  s().undo() // ends the gesture, then undoes it
+  expect(s().project).toBe(afterKey)
+  s().endGesture()
+  s().undo()
+  expect(curve(ch).keys).toHaveLength(0)
+})
+
+test('beginGesture keeps redo until the gesture changes the project', () => {
+  s().setKey(c, ch, 3, 1); s().undo()
+  s().beginGesture(); s().endGesture()
+  s().redo()
+  expect(keyAt(ch, 3).v).toBe(1)
+  s().undo()
+  s().toggleAutoKey()
+  s().beginGesture(); s().setValue(actor, ch, 0.2); s().endGesture()
+  const p = s().project
+  s().redo()
+  expect(s().project).toBe(p) // redo was cleared by the change
+})
+
+// --- gizmo locks (M4, T6) ---
+test('gizmoLock: crossfade locks root and joints in sequence view, not in clip view', () => {
+  expect(s().addItem(actor, c, 100)).toBe(true) // overlap 100..119
+  s().select(actor, ch); s().setFrame(110)
+  expect(gizmoLock(s())).toBe('crossfade')
+  s().select(actor, 'root.x')
+  expect(gizmoLock(s())).toBe('crossfade')
+  s().setFrame(130)
+  expect(gizmoLock(s())).toBe(null)
+  s().setFrame(110); s().openItem(trackItems(actor)[1].id)
+  expect(gizmoLock(s())).toBe(null)
+})
+
+test('gizmoLock: root on the first frame of a stitched item', () => {
+  expect(s().addItem(actor, c, 120)).toBe(true)
+  s().select(actor, 'root.x'); s().setFrame(120)
+  expect(gizmoLock(s())).toBe('stitch')
+  s().setFrame(121); expect(gizmoLock(s())).toBe(null)
+  s().setFrame(0); expect(gizmoLock(s())).toBe(null) // first item is not stitched
+  s().setFrame(120); s().select(actor, ch); expect(gizmoLock(s())).toBe(null)
+  s().select(actor, 'root.yaw'); s().openItem(trackItems(actor)[1].id); s().select(actor, 'root.yaw')
+  expect(gizmoLock(s())).toBe('stitch') // clip view frame 120 = clip frame 0 = trimIn
 })
