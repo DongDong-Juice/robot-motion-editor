@@ -53,6 +53,7 @@ test('locked track rejects every edit action with project unchanged', () => {
     ['setValue', () => { s().toggleAutoKey(); s().setValue(actor, ch, 0.9); s().toggleAutoKey() }],
     ['keyGroup', () => s().keyGroup(actor, '루트')],
     ['simplifyClip', () => s().simplifyClip(c)],
+    ['setPlacement', () => s().setPlacement(actor, { x: 5 })],
     ['setClip name', () => s().setClip(c, { name: 'zzz' })],
     ['setClip length', () => s().setClip(c, { length: 50 })],
   ]

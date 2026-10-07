@@ -340,9 +340,9 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         if (ok && gone.length) set(s => ({ sel: { ...s.sel, keys: s.sel.keys.filter(k => !gone.some(r => r.channel === k.channel && r.f === k.f)) } }))
         return ok
       },
-      setPlacement: (actorId, pl) => edit(p => {
+      setPlacement: (actorId, pl) => { if (trackLocked(get().project, actorId)) return; edit(p => {
         Object.assign(p.actors.find(a => a.id === actorId)!.placement, pl)
-      }, []),
+      }, []) },
       setColor: (actorId, hex) => edit(p => { p.actors.find(a => a.id === actorId)!.color = hex }, []),
       addActor: robot => commit(addActorTo({ ...get().project, actors: structuredClone(get().project.actors), sequence: structuredClone(get().project.sequence), clips: { ...get().project.clips } }, robot)),
       newClip: robot => {

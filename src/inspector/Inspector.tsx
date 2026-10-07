@@ -78,7 +78,7 @@ export default function Inspector() {
       <div className="insp-row">
         {(['x', 'y', 'yaw'] as const).map(k => (
           <label key={k}>{k}
-            <input type="number" step={k === 'yaw' ? 1 : 0.01}
+            <input type="number" step={k === 'yaw' ? 1 : 0.01} disabled={lockedTrack}
               value={k === 'yaw' ? +(actor.placement.yaw * 180 / Math.PI).toFixed(1) : actor.placement[k]}
               onChange={e => {
                 const v = e.target.valueAsNumber
