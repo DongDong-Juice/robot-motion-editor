@@ -67,3 +67,39 @@ export async function openTextFiles(accept: string, multiple: boolean): Promise<
     input.click()
   })
 }
+
+// Opaque to callers: a FileSystemFileHandle when the browser has one, else null.
+export type SaveHandle = unknown
+type SavePicker = (o: { suggestedName: string; types: { description: string; accept: Record<string, string[]> }[] }) => Promise<FileSystemFileHandle>
+const aborted = (e: unknown) => e instanceof DOMException && e.name === 'AbortError'
+
+export async function saveTextFile(text: string, suggested: string, handle: SaveHandle | null):
+  Promise<{ handle: SaveHandle | null; name: string } | null> {
+  const write = async (h: FileSystemFileHandle) => {
+    const w = await h.createWritable()
+    await w.write(text)
+    await w.close()
+    return { handle: h, name: h.name }
+  }
+  if (handle) {
+    try { return await write(handle as FileSystemFileHandle) } catch (e) {
+      if (!(e instanceof DOMException && e.name === 'NotAllowedError')) throw e // permission lost: fall through to the picker
+    }
+  }
+  const pick = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker
+  if (typeof pick === 'function') {
+    try {
+      return await write(await pick.call(window, { suggestedName: suggested, types: [{ description: 'Motion project', accept: { 'application/json': ['.motion.json'] } }] }))
+    } catch (e) {
+      if (aborted(e)) return null
+      throw e
+    }
+  }
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = suggested
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 0)
+  return { handle: null, name: suggested }
+}

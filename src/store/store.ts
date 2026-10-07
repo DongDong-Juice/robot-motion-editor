@@ -37,6 +37,8 @@ export interface EditorState {
   splitItem(itemId: string, frame: number): boolean
   deleteItem(itemId: string): boolean
   beginGesture(): void; endGesture(): void
+  fileName: string | null; dirty: boolean
+  loadProject(p: Project, fileName: string | null): void; markSaved(fileName: string): void; newProjectFile(): void
   undo(): void; redo(): void
 }
 
@@ -87,7 +89,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
     // One user action = one undo entry: mutate a clone, push the old project.
     const commit = (next: Project) => {
       if (!gesture) { undoS = [...undoS, get().project].slice(-MAX_UNDO); redoS = [] }
-      set({ project: next, editing: keepEditing(next) })
+      set({ project: next, editing: keepEditing(next), dirty: true })
     }
     const keepEditing = (p: Project) => {
       const e = get().editing
@@ -312,6 +314,13 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         if (ok && get().selItem === itemId) set({ selItem: null })
         return ok
       },
+      fileName: null, dirty: false,
+      loadProject: (project, fileName) => {
+        undoS = []; redoS = []; gesture = null
+        set({ project, fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] } })
+      },
+      markSaved: fileName => set({ fileName, dirty: false }),
+      newProjectFile: () => get().loadProject(newProject(), null),
       beginGesture: () => {
         if (gesture) return
         gesture = get().project
@@ -325,13 +334,13 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         const prev = undoS.at(-1)
         if (!prev) return
         undoS = undoS.slice(0, -1); redoS = [...redoS, get().project]
-        set(s => ({ project: prev, editing: keepEditing(prev), sel: { ...s.sel, keys: [] } }))
+        set(s => ({ project: prev, editing: keepEditing(prev), dirty: true, sel: { ...s.sel, keys: [] } }))
       },
       redo: () => {
         const next = redoS.at(-1)
         if (!next) return
         redoS = redoS.slice(0, -1); undoS = [...undoS, get().project]
-        set(s => ({ project: next, editing: keepEditing(next), sel: { ...s.sel, keys: [] } }))
+        set(s => ({ project: next, editing: keepEditing(next), dirty: true, sel: { ...s.sel, keys: [] } }))
       },
     }
   })

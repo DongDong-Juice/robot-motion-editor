@@ -1,6 +1,7 @@
 import { editingItem, getEditor, type EditorState } from './store/store'
 import { sortedItems } from './model/sequence'
 import type { Project } from './model/types'
+import { openProject, saveProject } from './projectActions'
 
 export function sequenceEnd(p: Project): number {
   let end = 0
@@ -41,6 +42,11 @@ export function startTransport(): () => void {
   raf = requestAnimationFrame(tick)
 
   const onKey = (e: KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && ['s', 'o'].includes(e.key.toLowerCase())) { // file shortcuts work everywhere
+      e.preventDefault()
+      if (!e.repeat) { if (e.key.toLowerCase() === 's') saveProject(e.shiftKey); else openProject() }
+      return
+    }
     if (typing(e.target) || e.altKey) return
     // panel rows own Delete/Backspace and the plain editing keys; undo, Space and arrows still pass through
     if (e.target instanceof Element && e.target.closest('#project') && !e.ctrlKey && !e.metaKey && ['Delete', 'Backspace', 'Escape', 'c', 'i', 'o', 'm'].includes(e.key.length === 1 ? e.key.toLowerCase() : e.key)) return

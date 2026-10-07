@@ -104,3 +104,4 @@ body {
 .pp-dlg { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 4px; }
 .pp-dlg label { display: block; margin: 2px 0; }
 .pp-dlg p, .pp-msg p { margin: 0 0 4px; }
+.mb-msg { color: var(--accent); }
