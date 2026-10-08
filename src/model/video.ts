@@ -3,6 +3,10 @@ import type { Item, Media, Project, Track } from './types'
 
 export const videoTrack = (p: Project): Track | null => p.sequence.tracks.find(t => t.kind === 'video') ?? null
 
+// First free frame after the last V1 item (0 when V1 is missing or empty).
+export const videoEnd = (p: Project): number =>
+  Math.max(0, ...(videoTrack(p)?.items ?? []).map(i => i.start + itemLen(i)))
+
 // V1 rule: start >= 0, 0 <= trimIn < trimOut <= media.durationF, no overlap (touching is fine).
 export function validVideoTrack(items: Item[], media: Record<string, Media>): boolean {
   const s = [...items].sort((a, b) => a.start - b.start)

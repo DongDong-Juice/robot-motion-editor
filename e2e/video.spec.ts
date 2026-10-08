@@ -35,18 +35,27 @@ const importVideo = async (page: Page) => {
   await expect(page.locator('.pp-media')).toHaveCount(1)
 }
 
-test('import video, place on V1, scrub syncs', async ({ page }) => {
+test('import video auto-places on V1 in split view, scrub syncs', async ({ page }) => {
   await open(page)
   await importVideo(page)
+  // import alone places the video at frame 0 and switches the preview to split
+  const auto = await page.evaluate(() => {
+    const s = (window as any).__editor.getState()
+    const v1 = s.project.sequence.tracks.find((t: any) => t.kind === 'video')
+    return { items: v1.items.map((i: any) => i.start), mode: s.videoMode }
+  })
+  expect(auto).toEqual({ items: [0], mode: 'split' })
   await page.evaluate(() => {
     const e = (window as any).__editor, s = e.getState()
-    s.addVideoItem(s.project.media[0].id, 60)
+    const v1 = s.project.sequence.tracks.find((t: any) => t.kind === 'video')
+    s.moveItem(v1.items[0].id, 60)
     e.getState().setFrame(90)
   })
   const video = page.locator('#stage video')
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => Math.abs(v.currentTime - 0.5) <= 1 / 60), { timeout: 5000 }).toBe(true)
   await page.evaluate(() => (window as any).__editor.getState().setFrame(30))
-  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => getComputedStyle(v).display)).toBe('none')
+  // split keeps the slot but hides the picture outside the item
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => getComputedStyle(v).visibility)).toBe('hidden')
 })
 
 test('save/reopen marks media offline, relink restores', async ({ page }) => {

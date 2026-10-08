@@ -3,6 +3,7 @@ import type { RobotKind } from '../robot/types'
 import { csvToClip } from '../export/importCsv'
 import { objectUrl, openMediaFiles, openTextFiles, revokeUrl } from '../fileio'
 import { mediaUrl, probeDuration, setMediaUrl, subscribeMedia } from '../media/registry'
+import { videoEnd } from '../model/video'
 import { getEditor, projectGeneration, useEditor } from '../store/store'
 
 type Files = { name: string; text: string }[]
@@ -84,8 +85,17 @@ export default function ProjectPanel() {
     if (gen !== projectGeneration()) { ok.forEach(o => revokeUrl(o.url)); return } // another project was opened meanwhile
     const s = ed.getState()
     s.beginGesture() // one undo entry for the whole batch
-    try { for (const o of ok) setMediaUrl(s.addMedia(o.name, o.durationF), o.url) }
-    finally { s.endGesture() }
+    let placed = 0
+    try {
+      for (const o of ok) {
+        const id = s.addMedia(o.name, o.durationF)
+        setMediaUrl(id, o.url)
+        // place it on V1 right away so the preview shows without a manual drag
+        if (s.addVideoItem(id, videoEnd(ed.getState().project))) placed++
+        else lines.push(`${o.name}: 잠긴 트랙입니다`)
+      }
+    } finally { s.endGesture() }
+    if (placed) s.setVideoMode('split')
     setMres({ n: ok.length, lines })
   }
   const relink = async (m: { id: string; durationF: number }) => {
