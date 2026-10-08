@@ -1,13 +1,15 @@
-import { test, expect } from '@playwright/test'
+import fs from 'node:fs'
+import { test, expect, type Download } from '@playwright/test'
 
 const row = Array.from({ length: 36 }, (_, i) => (i === 6 ? 1 : 0)).join(',')
 const csv = Buffer.from([row, row, row].join('\n') + '\n')
 
-test('CSV import: fps choice applies each time, bad file reported, one undo per batch', async ({ page }) => {
+test('headerless CSV import: fps choice applies each time, bad file reported, one undo per batch', async ({ page }) => {
   await page.addInitScript(() => { delete (window as any).showOpenFilePicker })
   await page.goto('/')
   await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
   const clips = () => page.evaluate(() => Object.values((window as any).__editor.getState().project.clips) as { name: string; length: number }[])
+  expect(await page.evaluate(() => (window as any).__editor.getState().project.actors.length)).toBe(0) // starts empty
   const before = (await clips()).length
   const run = async (files: { name: string; mimeType: string; buffer: Buffer }[], fps: '30fps' | '60fps') => {
     const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: 'CSV 가져오기' }).click()])
@@ -26,4 +28,57 @@ test('CSV import: fps choice applies each time, bad file reported, one undo per 
   expect((await clips()).some(c => c.name === 'a_2')).toBe(true)
   await page.evaluate(() => (window as any).__editor.getState().undo())
   expect((await clips()).length).toBe(before + 2)
+})
+
+test('headed CSV import creates the G1 actor; export reproduces the input', async ({ page }) => {
+  await page.addInitScript(() => { delete (window as any).showOpenFilePicker; delete (window as any).showDirectoryPicker })
+  const downloads: Download[] = []
+  page.on('download', d => downloads.push(d))
+  const errors: string[] = []
+  page.on('pageerror', e => errors.push(String(e)))
+  await page.goto('/')
+  await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
+  const joints = await page.evaluate(() => (window as any).__editor.getState().defs.g1.joints.map((j: { name: string }) => j.name) as string[])
+  const head = ['frequency(fps)', 'RobotType', 'DOF Number', 'time(ms)', 'position X(m)', 'position Y(m)', 'position Z(m)',
+    'quaternion X', 'quaternion Y', 'quaternion Z', 'quaternion W', ...joints].join(',') + ','
+  const N = 60
+  const data = Array.from({ length: N }, (_, i) => {
+    const yaw = 0.02 * i, qz = Math.sin(yaw / 2), qw = Math.cos(yaw / 2)
+    return [60, 0, 29, Math.round(i * 1000 / 60), (0.01 * i).toFixed(6), (0.2 * Math.sin(i / 9)).toFixed(6), '0.790000',
+      '0.000000', '0.000000', qz.toFixed(6), qw.toFixed(6), ...joints.map((_, j) => (0.02 * Math.sin(i / 9 + j)).toFixed(6))].join(',') + ','
+  })
+  const input = [head, ...data].join('\n') + '\n'
+
+  const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: 'CSV 가져오기' }).click()])
+  await fc.setFiles([{ name: 'gen.csv', mimeType: 'text/csv', buffer: Buffer.from(input) }])
+  await page.getByLabel('가져올 때 키 줄이기').uncheck() // keep every frame so the export matches to 1e-5
+  await page.getByRole('button', { name: '가져오기', exact: true }).click()
+  await expect(page.locator('.pp-msg')).toContainText('클립 1개를 가져왔습니다')
+
+  const placed = await page.evaluate(() => {
+    const p = (window as any).__editor.getState().project
+    return { actors: p.actors.map((a: any) => a.robot), items: p.sequence.tracks.map((t: any) => ({ actor: t.actorId === p.actors[0].id, items: t.items.map((i: any) => [p.clips[i.refId].name, i.start, i.trimOut - i.trimIn]) })) }
+  })
+  expect(placed).toEqual({ actors: ['g1'], items: [{ actor: true, items: [['gen', 0, N]] }] })
+
+  await page.getByRole('button', { name: '내보내기' }).click()
+  await page.getByRole('radio', { name: '월드' }).check()
+  await page.getByRole('button', { name: /CSV 내보내기|무시하고 내보내기/ }).click()
+  await expect.poll(() => downloads.length).toBe(1)
+  const out = fs.readFileSync((await downloads[0].path())!, 'utf8').trimEnd().split('\n')
+  const inp = input.trimEnd().split('\n')
+  expect(out[0]).toBe(inp[0])
+  expect(out).toHaveLength(N + 1)
+  for (let r = 1; r <= N; r++) {
+    const a = inp[r].split(','), b = out[r].split(',')
+    expect(b).toHaveLength(a.length)
+    expect(b.slice(0, 4)).toEqual(a.slice(0, 4)) // fps, type, DOF and time(ms) exact
+    const q = a.slice(7, 11).map(Number), o = b.slice(7, 11).map(Number)
+    const sign = q.reduce((s, v, i) => s + v * o[i], 0) < 0 ? -1 : 1 // quaternion sign may flip
+    a.slice(4, a.length - 1).forEach((v, c) => {
+      const want = c >= 3 && c < 7 ? sign * Number(b[c + 4]) : Number(b[c + 4])
+      expect(Math.abs(Number(v) - want)).toBeLessThan(1e-5)
+    })
+  }
+  expect(errors).toEqual([])
 })

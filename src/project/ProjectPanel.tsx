@@ -52,7 +52,8 @@ export default function ProjectPanel() {
       try {
         const clip = csvToClip(f.text, ed.getState().defs, fps, f.name.replace(/\.csv$/i, ''))
         if (simp) for (const ch of Object.keys(clip.channels)) clip.channels[ch] = simplifyCurve(clip.channels[ch], simplifyTolerance(ch, 0.001, 0.001))
-        ed.getState().importClip(clip); n++
+        if (!ed.getState().importClipToActor(clip)) throw new Error('잠긴 트랙입니다')
+        n++
       }
       catch (e) { fails.push(`${f.name}: ${e instanceof Error ? e.message : String(e)}`) }
     }
@@ -166,7 +167,7 @@ export default function ProjectPanel() {
       </div>
       <dialog ref={dlg} className="pp-dlg" onKeyDown={e => e.stopPropagation()} onClose={() => setPending(null)}>
         <form method="dialog" onSubmit={e => { if ((e.nativeEvent as SubmitEvent).submitter?.id === 'pp-go') doImport() }}>
-          <p>원본 프레임레이트</p>
+          <p>헤더 없는 CSV의 fps</p>
           {([30, 60] as const).map(v => (
             <label key={v}><input type="radio" name="fps" checked={fps === v} onChange={() => setFps(v)} />{v}fps</label>
           ))}

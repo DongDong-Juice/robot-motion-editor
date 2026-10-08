@@ -295,6 +295,7 @@ export default function SequenceCanvas() {
           return <span key={t.id}>{flag('hidden', '숨기기')}{flag('locked', '잠그기')}</span>
         })}
       </div>
+      {!rows.length && <div className="seq-empty">CSV 가져오기로 모션을 불러오세요</div>}
       {msg && <div className="seq-msg" style={{ left: msg.left, top: msg.top }}>{msg.text}</div>}
       {rename && (
         <input className="seq-rename" autoFocus value={rename.value} style={{ left: rename.left }}

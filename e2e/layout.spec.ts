@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test'
 test('resize handle: arrows resize without stepping the frame; drag leaves no focus', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
+  await page.evaluate(() => (window as any).__editor.getState().addActor('g1')) // frames only step within the sequence
   const frame = () => page.evaluate(() => (window as any).__editor.getState().frame)
   const f0 = await frame()
   const h = page.getByRole('separator', { name: '프로젝트 패널 너비' })

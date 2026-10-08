@@ -14,13 +14,14 @@ test('import CSV, place two items with crossfade, export all', async ({ page }) 
   page.on('download', d => downloads.push(d))
   await page.goto('/')
   await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
+  await page.evaluate(() => (window as any).__editor.getState().addActor('go2')) // the app starts empty; the CSV import creates the G1
 
   const rows = Array.from({ length: 60 }, () => Array.from({ length: 36 }, (_, i) => (i === 0 ? 5 : i === 1 ? 7 : i === 6 ? 1 : 0)).join(','))
   const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: 'CSV 가져오기' }).click()])
   await fc.setFiles([{ name: 'walk_g1.csv', mimeType: 'text/csv', buffer: Buffer.from(rows.join('\n') + '\n') }])
   await page.getByLabel('60fps').check()
   await page.getByRole('button', { name: '가져오기', exact: true }).click()
-  await expect(page.getByText('walk_g1').first()).toBeVisible()
+  await expect(page.locator('.pp-name', { hasText: 'walk_g1' })).toBeVisible()
 
   const placed = await page.evaluate(() => {
     const s = (window as any).__editor.getState()
@@ -37,11 +38,11 @@ test('import CSV, place two items with crossfade, export all', async ({ page }) 
   const lines = (t: string) => t.trim().split('\n')
   const imp = files.find(f => f.name === 'G1_walk_g1.csv')!
   expect(imp).toBeTruthy()
-  expect(lines(imp.text)).toHaveLength(60)
-  expect(lines(imp.text)[0].split(',')).toHaveLength(36)
-  const [x, y] = lines(imp.text)[0].split(',')
+  expect(lines(imp.text)).toHaveLength(61)
+  expect(lines(imp.text)[0].split(',')).toHaveLength(41)
+  const [x, y] = lines(imp.text)[1].split(',').slice(4, 6)
   expect([Number(x), Number(y)]).toEqual([0, 0])
-  expect(files.some(f => f.name.startsWith('GO2_') && lines(f.text)[0].split(',').length === 19)).toBe(true)
+  expect(files.some(f => f.name.startsWith('GO2_') && lines(f.text)[1].split(',').length === 24)).toBe(true)
 })
 
 test('save and reopen restores sequence', async ({ page }) => {
@@ -53,6 +54,7 @@ test('save and reopen restores sequence', async ({ page }) => {
   await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
 
   await page.evaluate(() => {
+    ;(window as any).__editor.getState().addActor('g1')
     const s = (window as any).__editor.getState()
     const item = s.project.sequence.tracks.find((t: any) => t.kind === 'motion').items[0]
     s.setKey(item.refId, Object.keys(s.project.clips[item.refId].channels)[0] ?? 'root.x', 10, 0.25)

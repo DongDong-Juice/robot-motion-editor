@@ -93,6 +93,7 @@ body {
 .tl-body { position: relative; flex: 1; min-height: 0; }
 .tl-body > .track-canvas, .tl-body > .seq-canvas { position: absolute; inset: 0; }
 .seq-msg { position: absolute; z-index: 2; font-size: 12px; color: var(--accent); background: var(--panel); padding: 1px 6px; pointer-events: none; }
+.seq-empty { position: absolute; left: 176px; top: 32px; font-size: 12px; color: #8d96a3; pointer-events: none; }
 .seq-rename { position: absolute; z-index: 2; top: 2px; width: 110px; font: inherit; font-size: 12px; background: var(--bg); color: var(--text); border: 1px solid var(--accent); }
 
 .insp-ch input[type=range] { display: block; width: 100%; min-width: 120px; box-sizing: border-box; margin: 2px 0; }
