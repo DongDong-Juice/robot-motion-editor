@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { getEditor, useEditor } from '../store/store'
+import type { Project } from '../model/types'
 import Stage from './Stage'
 import VideoOverlay from './VideoOverlay'
 import { clampRatio, dockSide, equalRatios, moveDivider, paneRects, ROW_MIN, rowWidths, type Side } from './paneLayout'
@@ -23,6 +24,41 @@ function CompareTitle({ id }: { id: string }) {
       <span>비교 프리뷰 · {useCompareLabel(id)}</span>
       <button aria-label="비교 닫기" onClick={() => getEditor().getState().closeComparePane(id)}>✕</button>
     </div>
+  )
+}
+
+const findItem = (p: Project, id: string) => {
+  for (const t of p.sequence.tracks) { const it = t.items.find(i => i.id === id); if (it) return { t, it } }
+  return null
+}
+// Clip preview: loops one item's [trimIn, trimOut) on its own clock; 기본자세 세팅 ripple-inserts a rest-pose lead-in before it.
+function ItemPreview({ id }: { id: string }) {
+  const item = useEditor(s => findItem(s.project, id)?.it ?? null)
+  const label = useEditor(s => {
+    const f = findItem(s.project, id)
+    return f ? `${s.project.actors.find(a => a.id === f.t.actorId)?.name ?? ''} / ${s.project.clips[f.it.refId]?.name ?? ''}` : ''
+  })
+  const [msg, setMsg] = useState<string | null>(null)
+  const timer = useRef(0)
+  useEffect(() => () => clearTimeout(timer.current), [])
+  const rest = () => {
+    const s = getEditor().getState(), ok = s.prependRestPose(id)
+    setMsg(ok ? '기본자세 구간을 추가했습니다' : findItem(s.project, id)?.t.locked ? '잠긴 트랙입니다' : '기본자세 구간을 넣을 수 없습니다')
+    clearTimeout(timer.current); timer.current = window.setTimeout(() => setMsg(null), 2000)
+  }
+  if (!item) return null
+  return (
+    <>
+      <div className="pane-title static">
+        <span>클립 프리뷰 · {label}</span>
+        <button aria-label="클립 프리뷰 닫기" onClick={() => getEditor().getState().closeItemPreview()}>✕</button>
+      </div>
+      <div className="stage-3d">
+        <Stage compareClipId={item.refId} range={[item.trimIn, item.trimOut]} />
+        <button className="pv-rest" onClick={rest}>기본자세 세팅</button>
+        {msg && <div className="pv-msg" role="status">{msg}</div>}
+      </div>
+    </>
   )
 }
 
@@ -113,9 +149,10 @@ export default function StagePanes({ robot }: { robot: ReactNode }) {
     save(pr.current)
   }
 
-  // robot row: [main | compare...]; equal widths whenever the pane set changes (not persisted)
-  const compare = useEditor(s => s.comparePanes)
-  const n = compare.length + 1, ids = compare.join()
+  // robot row: [main | clip preview? | compare...]; equal widths whenever the pane set changes (not persisted)
+  const compare = useEditor(s => s.comparePanes), itemPreview = useEditor(s => s.itemPreview)
+  const extra = [...(itemPreview ? [{ preview: true, id: itemPreview }] : []), ...compare.map(id => ({ preview: false, id }))]
+  const n = extra.length + 1, ids = extra.map(e => e.id).join()
   const [row, setRow] = useState({ ids, r: [1] })
   const ratios = row.ids === ids && row.r.length === n ? row.r : equalRatios(n)
   const rowEl = useRef<HTMLDivElement>(null)
@@ -167,17 +204,16 @@ export default function StagePanes({ robot }: { robot: ReactNode }) {
           {titled && <div className={split ? 'pane-title' : 'pane-title static'} {...(split ? titleProps('robot') : {})}><span>로봇 프리뷰</span></div>}
           {robot}
         </section>
-        {compare.map((id, i) => { // divider i sits between pane i and i+1
+        {extra.map(({ preview: pv, id }, i) => { // divider i sits between pane i and i+1
           return (
-            <Fragment key={id}>
-              <div className="pane-sep" role="separator" tabIndex={0} aria-label={`비교 프리뷰 분할 ${i + 1}`} aria-orientation="vertical"
+            <Fragment key={(pv ? 'pv:' : 'cmp:') + id}>
+              <div className="pane-sep" role="separator" tabIndex={0} aria-label={pv ? '클립 프리뷰 분할' : `비교 프리뷰 분할 ${i + 1 - (itemPreview ? 1 : 0)}`} aria-orientation="vertical"
                 aria-valuenow={Math.round(ratios[i] * 100)} aria-valuemin={ROW_MIN * 100} aria-valuemax={Math.round((ratios[i] + ratios[i + 1] - ROW_MIN) * 100)}
                 onPointerDown={e => { if (e.button !== 0) return; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); e.currentTarget.focus(); setRowDrag(i) }}
                 onPointerMove={e => rowMove(e, i)} onPointerUp={rowEnd} onPointerCancel={rowEnd}
                 onDoubleClick={() => setRatios(equalRatios(n))} onKeyDown={e => rowKey(e, i)} />
-              <section className="pane pane-robot" aria-label="비교 프리뷰" style={{ flex: `${ratios[i + 1]} 1 0` }}>
-                <CompareTitle id={id} />
-                <div className="stage-3d"><Stage compareClipId={id} /></div>
+              <section className="pane pane-robot" aria-label={pv ? '클립 프리뷰' : '비교 프리뷰'} style={{ flex: `${ratios[i + 1]} 1 0` }}>
+                {pv ? <ItemPreview id={id} /> : <><CompareTitle id={id} /><div className="stage-3d"><Stage compareClipId={id} /></div></>}
               </section>
             </Fragment>
           )

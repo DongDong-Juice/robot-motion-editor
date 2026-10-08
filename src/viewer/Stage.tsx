@@ -5,12 +5,14 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { evalCurve } from '../model/curve'
 import { COLOR } from '../model/defaults'
 import { evaluate, evaluateClip, evaluateItem, evaluateRoot } from '../model/evaluate'
+import { rebasePose } from '../model/pose'
 import { nearestAngle } from '../model/rootMath'
 import { stitchTransforms, worldToClipRoot } from '../model/sequence'
 import type { Clip, Project } from '../model/types'
 import { clipLocked, editingItem, editTarget, getEditor, gizmoLock, trackLocked } from '../store/store'
 import { sequenceEnd } from '../transport'
 import { buildRobot, pivotAngle, type RobotRig } from './buildRobot'
+import type { RobotDef } from '../robot/types'
 
 const css = (n: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim()
 const EXTENT = 5
@@ -38,12 +40,15 @@ function makeGrid(): THREE.LineSegments {
 // trailKey/trailClips: what the cached trail was built from (items + placement serialized, clips by identity)
 interface Entry { rig: RobotRig; trail: THREE.Line; dot: THREE.Points; ghost: boolean; trailKey?: string; trailClips?: (Clip | undefined)[] }
 
-/** One 3D view. `compareClipId` = a view-only compare pane: one robot at the origin driven by that clip from sequence frame 0 (no gizmo, picking or actors). Omitted = the main pane (every actor). */
-export default function Stage({ compareClipId: cid }: { compareClipId?: string }) {
+/** One 3D view. `compareClipId` = a view-only compare pane: one robot at the origin driven by that clip from sequence frame 0 (no gizmo, picking or actors). Omitted = the main pane (every actor).
+ * With `range` = [from, to) clip frames, the compare robot instead loops that range on its own 60 fps clock, root re-based so frame `from` sits at the origin. */
+export default function Stage({ compareClipId: cid, range }: { compareClipId?: string; range?: [number, number] }) {
+  const [lo, hi] = range ?? [0, 0]
   const host = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const el = host.current!
+    const ranged = hi > lo
     const store = getEditor()
     const target = TARGET.clone()
     const scene = new THREE.Scene()
@@ -71,7 +76,7 @@ export default function Stage({ compareClipId: cid }: { compareClipId?: string }
     // dev/e2e hook
     // dev/e2e hook: __stage = main pane, __stages = every pane by key ('main' or the compare clip id)
     const hook = { camera, tc, entries: () => entries, renderer }
-    const hookKey = cid ?? 'main'
+    const hookKey = ranged ? 'preview' : cid ?? 'main'
     if (import.meta.env.DEV) {
       const w = window as any
       ;(w.__stages ??= {})[hookKey] = hook
@@ -79,6 +84,11 @@ export default function Stage({ compareClipId: cid }: { compareClipId?: string }
     }
 
     let dirty = true, raf = 0
+    const t0 = performance.now()
+    let shownF = -1
+    // compare-pane pose at clip frame f (re-based to the range start when looping a range)
+    const clipPose = (clip: Clip, def: RobotDef, f: number) =>
+      ranged ? rebasePose(evaluateClip(clip, def, f), evaluateClip(clip, def, lo)) : evaluateClip(clip, def, f)
     const entries = new Map<string, Entry>()
     let rootMode: 'translate' | 'rotate' = 'translate'
     let last: number[] = []
@@ -135,14 +145,17 @@ export default function Stage({ compareClipId: cid }: { compareClipId?: string }
       if (e.trailClips?.[0] === clip) return
       e.trailClips = [clip]
       const noJoints = { ...defs[clip.robot], joints: [] }, pts: number[] = []
-      for (let f = 0; f < clip.length; f++) { const p = evaluateClip(clip, noJoints, f).rootPos; pts.push(p[0], p[1], 0.002) }
+      for (let f = ranged ? lo : 0, end = ranged ? Math.min(hi, clip.length) : clip.length; f < end; f++) { const p = clipPose(clip, noJoints, f).rootPos; pts.push(p[0], p[1], 0.002) }
       e.trail.geometry.dispose()
       e.trail.geometry = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pts, 3))
     }
     const applyClip = () => {
       const s = store.getState(), clip = s.project.clips[cid!], e = entries.get(cid!)
       if (!clip || !e) return
-      const pose = evaluateClip(clip, s.defs[clip.robot], Math.min(Math.max(s.frame, 0), clip.length - 1))
+      const f = ranged ? lo + Math.floor((performance.now() - t0) * 60 / 1000) % Math.max(hi - lo, 1) : s.frame
+      if (ranged && f === shownF) return
+      shownF = f
+      const pose = clipPose(clip, s.defs[clip.robot], Math.min(Math.max(f, 0), clip.length - 1))
       e.rig.applyPose(pose)
       e.dot.position.set(pose.rootPos[0], pose.rootPos[1], 0.002)
       dirty = true
@@ -313,7 +326,7 @@ export default function Stage({ compareClipId: cid }: { compareClipId?: string }
     let wasLocked = false
     if (cid) { syncClip(); applyClip() } else { syncActors(); applyAll(); syncSelection() }
     const unsub = store.subscribe((s, prev) => {
-      if (cid) { if (s.project !== prev.project) syncClip(); applyClip(); return }
+      if (cid) { if (s.project !== prev.project) { syncClip(); shownF = -1 } applyClip(); return }
       if (s.project !== prev.project) syncActors()
       applyAll()
       const key = (p: typeof s.project) => p.actors.map(a => a.id + a.robot).join()
@@ -324,6 +337,7 @@ export default function Stage({ compareClipId: cid }: { compareClipId?: string }
 
     const loop = () => {
       raf = requestAnimationFrame(loop)
+      if (ranged) applyClip()
       if (!dirty) return
       dirty = false
       renderer.render(scene, camera)
@@ -346,7 +360,7 @@ export default function Stage({ compareClipId: cid }: { compareClipId?: string }
         if (w.__stage === hook) delete w.__stage
       }
     }
-  }, [cid])
+  }, [cid, lo, hi])
 
   return <div ref={host} tabIndex={0} style={{ width: '100%', height: '100%', outline: 'none' }} />
 }
