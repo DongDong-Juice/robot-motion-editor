@@ -45,6 +45,8 @@ export interface EditorState {
   newClip(robot: RobotKind): string
   // Add an imported clip to the assets. If no actor of its robot exists, create one (no default clip) and place the clip at 0; otherwise assets only (null).
   importClipToActor(clip: Clip): { actorId: string; itemId: string } | null
+  // New actor (no default clip) for the clip's robot with the clip at `start`; null = unknown clip. One undo entry.
+  placeClipAsNewActor(clipId: string, start: number): { actorId: string; itemId: string } | null
   simplifyClip(clipId: string, rot?: number, pos?: number): number
   deleteClip(clipId: string): boolean
   addMedia(name: string, durationF: number): string
@@ -388,6 +390,20 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
           out = { actorId: actor.id, itemId: item.id }
           return true
         })
+        return out
+      },
+      placeClipAsNewActor: (clipId, start) => {
+        let out: { actorId: string; itemId: string } | null = null
+        tryEdit(p => {
+          const clip = p.clips[clipId]
+          if (!clip) return false
+          Object.assign(p, addActorTo(p, clip.robot, false))
+          const actor = p.actors.at(-1)!, track = p.sequence.tracks.at(-1)!
+          const item = { id: crypto.randomUUID(), refId: clipId, start: Math.round(start), trimIn: 0, trimOut: clip.length }
+          track.items.push(item)
+          out = { actorId: actor.id, itemId: item.id }
+          return true
+        }) // clips are only referenced, never mutated: nothing touched
         return out
       },
       simplifyClip: (clipId, rot = 0.001, pos = 0.001) => {

@@ -1,6 +1,7 @@
 import { clipLocked, editingItem, getEditor, useEditor } from '../store/store'
 import { sequenceEnd } from '../transport'
 import GraphCanvas from './GraphCanvas'
+import { draggedAsset, dropAssetInClipView, isAssetDrag } from './assetDrop'
 import SequenceCanvas from './SequenceCanvas'
 import TrackCanvas from './TrackCanvas'
 import { formatTimecode } from './timeScale'
@@ -38,7 +39,8 @@ export default function Timeline() {
     <div className="tl-wrap">
       <TimelineHeader />
       {!editing ? <SequenceCanvas /> : (
-        <div className="tl-body">
+        <div className="tl-body" onDragOver={ev => { if (isAssetDrag(ev.dataTransfer)) ev.preventDefault() }}
+          onDrop={ev => { const a = draggedAsset(ev.dataTransfer); if (a) { ev.preventDefault(); dropAssetInClipView(a) } }}>
           {view === 'tracks' ? <TrackCanvas /> : <GraphCanvas />}
           {e && clipLocked(project, e.clip.id) && <div className="seq-msg" role="status" style={{ left: 164, top: 28 }}>잠긴 트랙입니다</div>}
         </div>

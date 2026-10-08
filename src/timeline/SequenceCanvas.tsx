@@ -6,11 +6,13 @@ import { seqFlash, tv } from './viewState'
 import { followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { sequenceEnd } from '../transport'
 import { drawRuler, hitMarker, LABEL_W, RULER_H } from './ruler'
+import { dropPlacement } from '../model/dropPlacement'
+import { COLOR } from '../model/defaults'
+import { draggedAsset, dropAsset, isAssetDrag } from './assetDrop'
 import { mediaUrl, subscribeMedia } from '../media/registry'
 import { formatTimecode, frameToX, hoverFrame, hoverScrub, xToFrame, type TimeScale } from './timeScale'
 
 const ROW_H = 28, CHILD_H = 22, EDGE = 6
-const ROBOT = { g1: 'G1', go2: 'GO2' } as const
 const DENY = '이 위치에 놓을 수 없습니다'
 const LOCKED = '잠긴 트랙입니다'
 const ICON_HIT = 18 // hit area; icons are drawn 14px, eye then padlock at the label column's right edge
@@ -69,7 +71,7 @@ export default function SequenceCanvas() {
     const css = getComputedStyle(document.documentElement)
     const col = (n: string) => css.getPropertyValue(n).trim()
     const C = { bg: col('--bg'), panel: col('--panel'), line: col('--line'), text: col('--text'), accent: col('--accent') }
-    let W = 0, H = 0, raf = 0, drag: Drag | null = null, timer = 0, scrollY = 0
+    let W = 0, H = 0, raf = 0, drag: Drag | null = null, ghost: { y: number; start: number; len: number; color: string } | null = null, timer = 0, scrollY = 0
 
     const scale = (): TimeScale => ({ x0: LABEL_W - tv.scrollF * tv.ppf, pxPerFrame: tv.ppf })
     // V1 (always first) only shows once the project has media
@@ -174,6 +176,13 @@ export default function SequenceCanvas() {
         drawEye(ctx, EYE_X, y + ROW_H / 2, t.hidden, t.hidden ? C.accent : C.line)
         drawLock(ctx, LOCK_X, y + ROW_H / 2, t.locked, t.locked ? C.accent : C.line)
       })
+      if (ghost) {
+        ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, RULER_H, W - LABEL_W, H - RULER_H); ctx.clip()
+        const gx = frameToX(sc, ghost.start), gw = ghost.len * tv.ppf
+        ctx.globalAlpha = 0.3; ctx.fillStyle = ghost.color; ctx.fillRect(gx, ghost.y + 2, gw, ROW_H - 5)
+        ctx.globalAlpha = 1; ctx.strokeStyle = ghost.color; ctx.strokeRect(gx + 0.5, ghost.y + 2.5, gw - 1, ROW_H - 6)
+        ctx.restore()
+      }
       drawRuler(ctx, sc, W, RULER_H, s.project.sequence, s.frame, C)
       const px = Math.round(frameToX(sc, s.frame)) + 0.5
       if (px >= LABEL_W) { ctx.fillStyle = C.accent; ctx.fillRect(px - 0.5, RULER_H, 1, H - RULER_H) }
@@ -305,25 +314,33 @@ export default function SequenceCanvas() {
       schedule()
     }
 
-    const onDragOver = (e: DragEvent) => { const ty = e.dataTransfer?.types; if (ty?.includes('application/x-motion-clip') || ty?.includes('application/x-motion-media')) e.preventDefault() }
-    const onDrop = (e: DragEvent) => {
-      const clipId = e.dataTransfer?.getData('application/x-motion-clip'), mediaId = e.dataTransfer?.getData('application/x-motion-media')
-      if (!clipId && !mediaId) return
+    // ---- asset drag from the project panel: the ghost bar and the drop use the same dropPlacement ----
+    const setGhost = (g: typeof ghost) => { ghost = g; schedule() }
+    const dropAt = (e: DragEvent) => { const { x, y } = pos(e); return { row: layout()[rowAt(y)], frame: frameAt(x) } } // a child row drops onto its track
+    const onDragOver = (e: DragEvent) => {
+      if (!isAssetDrag(e.dataTransfer ?? null)) return
       e.preventDefault()
-      const { x, y } = pos(e), row = rowAt(y), t = layout()[row]?.t, s = ed.getState() // a child row drops onto its track
-      if (!t || y < RULER_H || x < LABEL_W) return
-      if (t.locked) { flash(LOCKED, row); return }
-      if (mediaId) {
-        if (!isVideo(t)) flash('영상은 V1 트랙에만 놓을 수 있습니다', row)
-        else if (!s.addVideoItem(mediaId, frameAt(x))) flash('영상 클립은 겹칠 수 없습니다', row)
-        return
+      const asset = draggedAsset(null)
+      if (!asset) return
+      const { row, frame } = dropAt(e), p = ed.getState().project, pl = dropPlacement(p, asset, row?.t.id ?? null, frame)
+      if (pl.kind === 'reject') return setGhost(null)
+      const rows = layout(), last = rows.at(-1), bottom = last ? last.y + last.h : RULER_H - scrollY
+      if (pl.kind === 'newActor') setGhost({ y: bottom, start: pl.start, len: p.clips[asset.id].length, color: COLOR[pl.robot] })
+      else {
+        const t = pl.kind === 'video' ? rows.find(r => !r.it && isVideo(r.t)) : rows.find(r => !r.it && r.t.id === pl.trackId)
+        const actor = p.actors.find(a => a.id === t?.t.actorId)
+        setGhost(t ? { y: t.y, start: pl.start, len: asset.kind === 'clip' ? p.clips[asset.id].length : p.media.find(m => m.id === asset.id)!.durationF, color: actor?.color ?? C.accent } : null)
       }
-      if (isVideo(t)) { flash('V1 트랙에는 영상만 놓을 수 있습니다', row); return }
-      if (!t.actorId || !clipId) return
-      if (s.addItem(t.actorId, clipId, frameAt(x))) return
-      const robot = s.project.actors.find(a => a.id === t.actorId)?.robot, clip = s.project.clips[clipId]
-      flash(robot && clip && clip.robot !== robot ? `이 트랙에는 ${ROBOT[robot]} 클립만 놓을 수 있습니다` : '겹치는 클립이 너무 많습니다', row)
     }
+    const onDrop = (e: DragEvent) => {
+      setGhost(null)
+      const asset = draggedAsset(e.dataTransfer ?? null)
+      if (!asset) return
+      e.preventDefault()
+      const { row, frame } = dropAt(e), reason = dropAsset(asset, row?.t.id ?? null, frame)
+      if (reason) flash(reason, Math.max(0, layout().findIndex(r => r === row)))
+    }
+    const clearGhost = () => { if (ghost) setGhost(null) }
 
     canvas.addEventListener('mousedown', onDown)
     canvas.addEventListener('mousemove', onMove)
@@ -332,6 +349,8 @@ export default function SequenceCanvas() {
     canvas.addEventListener('wheel', onWheel, { passive: false })
     canvas.addEventListener('dragover', onDragOver)
     canvas.addEventListener('drop', onDrop)
+    canvas.addEventListener('dragleave', clearGhost)
+    addEventListener('dragend', clearGhost)
     return () => {
       seqFlash.fn = null
       ro.disconnect(); unsub(); unsubMedia(); hover.stop(); cancelAnimationFrame(raf); clearTimeout(timer)
@@ -342,6 +361,8 @@ export default function SequenceCanvas() {
       canvas.removeEventListener('wheel', onWheel)
       canvas.removeEventListener('dragover', onDragOver)
       canvas.removeEventListener('drop', onDrop)
+      canvas.removeEventListener('dragleave', clearGhost)
+      removeEventListener('dragend', clearGhost)
     }
   }, [])
 

@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef, useState } from 'react'
 import { relinkMedia, setImportResult, useImportUi } from '../importActions'
 import { mediaUrl, subscribeMedia } from '../media/registry'
 import { getEditor, useEditor } from '../store/store'
+import { setDragged } from '../timeline/assetDrop'
 
 function RenameInput({ name, onDone }: { name: string; onDone: (v: string | null) => void }) {
   const cancelled = useRef(false)
@@ -86,7 +87,8 @@ export default function ProjectPanel() {
       {clips.length > 0 && <h3>모션 (CSV)</h3>}
       {clips.map(c => (
         <div key={c.id} className="pp-card" tabIndex={0} draggable={renaming !== c.id}
-          onDragStart={e => { e.dataTransfer.setData('application/x-motion-clip', c.id); e.dataTransfer.effectAllowed = 'copy' }}
+          onDragStart={e => { e.dataTransfer.setData('application/x-motion-clip', c.id); e.dataTransfer.effectAllowed = 'copy'; setDragged({ kind: 'clip', id: c.id }) }}
+          onDragEnd={() => setDragged(null)}
           onDoubleClick={() => setRenaming(c.id)} {...menuProps('clip', c.id)}>
           <div className="pp-head">
             {renaming === c.id
@@ -105,7 +107,8 @@ export default function ProjectPanel() {
         const off = mediaUrl(m.id) == null
         return (
           <div key={m.id} className="pp-card pp-media" tabIndex={0} draggable
-            onDragStart={e => { e.dataTransfer.setData('application/x-motion-media', m.id); e.dataTransfer.effectAllowed = 'copy' }}
+            onDragStart={e => { e.dataTransfer.setData('application/x-motion-media', m.id); e.dataTransfer.effectAllowed = 'copy'; setDragged({ kind: 'media', id: m.id }) }}
+            onDragEnd={() => setDragged(null)}
             {...menuProps('media', m.id)}>
             <div className="pp-head"><span className="pp-name" title={m.name}>{m.name}</span></div>
             <div className="pp-box">

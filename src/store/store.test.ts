@@ -723,3 +723,16 @@ test('comparePanes: pruned when the clip is deleted or the import is undone; cle
   e.getState().newProjectFile()
   expect(e.getState().comparePanes).toEqual([])
 })
+
+test('placeClipAsNewActor: new actor with the clip at start, one undo entry, clips untouched', () => {
+  const e = createEditorStore(defs)
+  const before = e.getState().project
+  const r = e.getState().placeClipAsNewActor(Object.keys(before.clips)[0], 77)!
+  const p = e.getState().project
+  expect(p.actors).toHaveLength(3)
+  expect(p.actors.at(-1)!.id).toBe(r.actorId)
+  expect(p.sequence.tracks.at(-1)!.items).toEqual([expect.objectContaining({ id: r.itemId, start: 77 })])
+  expect(Object.keys(p.clips)).toEqual(Object.keys(before.clips)) // no default clip
+  e.getState().undo()
+  expect(e.getState().project).toBe(before)
+})
