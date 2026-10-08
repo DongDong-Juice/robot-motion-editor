@@ -111,7 +111,18 @@ body {
 .exp-warn { list-style: none; margin: 0 0 8px; padding: 0; max-height: 160px; overflow: auto; }
 .exp-warn button { width: 100%; text-align: left; border-color: var(--accent); }
 .tl-wrap { display: flex; flex-direction: column; height: 100%; }
-.tl-crumb { flex: none; padding: 3px 8px; font-size: 12px; border-bottom: 1px solid var(--line); }
+.tl-head {
+  flex: none; display: flex; align-items: center; gap: 12px; height: 30px; padding: 0 10px;
+  font-size: 13px; white-space: nowrap; overflow-x: auto; background: var(--panel); border-bottom: 1px solid var(--line);
+}
+.tl-head > button {
+  flex: none; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 3px;
+  font: inherit; padding: 2px 10px; cursor: pointer;
+}
+.tl-head > button[aria-pressed=true] { border-color: var(--accent); color: var(--accent); }
+.tl-head > button:disabled { opacity: .45; cursor: default; }
+.tl-head :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tl-crumb { font-size: 12px; padding-left: 12px; border-left: 1px solid var(--line); }
 .tl-crumb button { background: none; color: var(--accent); border: 0; font: inherit; cursor: pointer; padding: 0; }
 .tl-body { position: relative; flex: 1; min-height: 0; }
 .tl-body > .track-canvas, .tl-body > .seq-canvas { position: absolute; inset: 0; }

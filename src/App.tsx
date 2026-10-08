@@ -7,9 +7,8 @@ import StagePanes from './viewer/StagePanes'
 import { videoTrack } from './model/video'
 import ProjectPanel from './project/ProjectPanel'
 import Timeline from './timeline/Timeline'
-import { formatTimecode } from './timeline/timeScale'
 import ExportDialog from './export/ExportDialog'
-import { sequenceEnd, startTransport } from './transport'
+import { startTransport } from './transport'
 import { newProjectFile, onMessage, openProject, saveProject } from './projectActions'
 import { MENUBAR_H, layoutBounds, useLayout, type Layout } from './layout/useLayout'
 
@@ -25,9 +24,6 @@ export function CrossfadeHint() {
 }
 
 function Menubar() {
-  const playing = useEditor(s => s.playing), frame = useEditor(s => s.frame)
-  const end = useEditor(s => sequenceEnd(s.project))
-  const autoKey = useEditor(s => s.autoKey), view = useEditor(s => s.view), editing = useEditor(s => s.editing !== null)
   const st = useEditor(s => s)
   const videoMode = useEditor(s => s.videoMode), videoOpacity = useEditor(s => s.videoOpacity)
   const hasVideo = useEditor(s => !!videoTrack(s.project)?.items.length)
@@ -57,10 +53,6 @@ function Menubar() {
       </span>
       <span className="mb-title">{title}</span>
       {msg && <span role="status" className="mb-msg">{msg}</span>}
-      <button onClick={() => st.setPlaying(!playing)} aria-label={playing ? '정지' : '재생'}>{playing ? '■' : '▶'}</button>
-      <span className="mb-time">{formatTimecode(frame)} / {formatTimecode(end)} · 60fps</span>
-      <button aria-pressed={autoKey} onClick={st.toggleAutoKey}>자동 키</button>
-      <button disabled={!editing} onClick={() => st.setView(view === 'tracks' ? 'graph' : 'tracks')}>{view === 'tracks' ? '트랙' : '그래프'}</button>
       <span role="group" aria-label="액터+" className="mb-group">
         <span>액터+</span>
         <button onClick={() => st.addActor('g1')}>G1 추가</button>

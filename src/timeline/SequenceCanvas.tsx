@@ -285,7 +285,7 @@ export default function SequenceCanvas() {
   const project = useEditor(s => s.project)
   const rows = project.sequence.tracks.filter(t => t.kind === 'motion' || (isVideo(t) && project.media.length > 0))
   return (
-    <div className="tl-body" style={{ height: '100%' }}>
+    <div className="tl-body">
       <canvas ref={cv} tabIndex={0} className="track-canvas seq-canvas" />
       <div className="sr-only">
         {rows.map(t => {
