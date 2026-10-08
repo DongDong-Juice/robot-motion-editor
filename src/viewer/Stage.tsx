@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
@@ -14,6 +14,7 @@ import { clipLocked, editingItem, editTarget, getEditor, gizmoLock, trackLocked 
 import { sequenceEnd } from '../transport'
 import { buildRobot, pivotAngle, type RobotRig } from './buildRobot'
 import type { RobotDef } from '../robot/types'
+import { followStep } from './follow'
 
 const css = (n: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim()
 const EXTENT = 5
@@ -44,9 +45,13 @@ interface Entry { rig: RobotRig; trail: THREE.Line; dot: THREE.Points; ghost: bo
 /** One 3D view. `compareClipId` = a view-only compare pane: one robot at the origin driven by that clip from sequence frame 0 (no gizmo, picking or actors). Omitted = the main pane (every actor).
  * With `itemId` + `range`, an item flagged restPose plays its derived rest-pose clip instead (preview only).
  * With `range` = [from, to) clip frames, the compare robot instead loops that range on its own 60 fps clock, root re-based so frame `from` sits at the origin. */
-export default function Stage({ compareClipId: cid, range, itemId }: { compareClipId?: string; range?: [number, number]; itemId?: string }) {
+export default function Stage({ compareClipId: cid, range, itemId, children }: { compareClipId?: string; range?: [number, number]; itemId?: string; children?: ReactNode }) {
   const [lo, hi] = range ?? [0, 0]
   const host = useRef<HTMLDivElement>(null)
+  // 로봇 따라가기: per-pane local UI state, read by the render loop through a ref
+  const [follow, setFollow] = useState(false)
+  const followRef = useRef(false)
+  followRef.current = follow
 
   useEffect(() => {
     const el = host.current!
@@ -77,7 +82,7 @@ export default function Stage({ compareClipId: cid, range, itemId }: { compareCl
     if (!cid) scene.add(tc.getHelper())
     // dev/e2e hook
     // dev/e2e hook: __stage = main pane, __stages = every pane by key ('main' or the compare clip id)
-    const hook = { camera, tc, entries: () => entries, renderer }
+    const hook = { camera, tc, entries: () => entries, renderer, camTarget: () => orbit.target.toArray() }
     const hookKey = ranged ? 'preview' : cid ?? 'main'
     if (import.meta.env.DEV) {
       const w = window as any
@@ -313,7 +318,7 @@ export default function Stage({ compareClipId: cid, range, itemId }: { compareCl
       const v = VIEWS[ev.key]
       if (v) {
         const d = camera.position.distanceTo(orbit.target)
-        camera.position.copy(target).add(new THREE.Vector3(...v).normalize().multiplyScalar(d))
+        camera.position.copy(followRef.current ? orbit.target : target).add(new THREE.Vector3(...v).normalize().multiplyScalar(d))
         orbit.update()
       } else if (!cid && ev.key.toLowerCase() === 'r' && store.getState().sel.channel?.startsWith('root')) {
         rootMode = rootMode === 'translate' ? 'rotate' : 'translate'
@@ -344,9 +349,29 @@ export default function Stage({ compareClipId: cid, range, itemId }: { compareCl
       wasLocked = lk
     })
 
+    // tracked robot: compare/clip pane = its one robot; main = selected actor if shown, else the first shown one
+    const tracked = () => {
+      if (cid) return entries.get(cid)
+      const s = store.getState(), sel = s.sel.actorId && entries.get(s.sel.actorId)
+      if (sel && sel.rig.root.visible) return sel
+      return s.project.actors.map(a => entries.get(a.id)).find(e => e?.rig.root.visible)
+    }
+    const pos = new THREE.Vector3()
+    let wasFollowing = false
+    const followCam = () => {
+      const on = followRef.current, e = on ? tracked() : undefined
+      if (!e) { wasFollowing = false; return }
+      e.rig.root.getWorldPosition(pos)
+      const r = followStep(orbit.target.toArray(), camera.position.toArray(), pos.toArray(), wasFollowing ? 0.15 : 1)
+      wasFollowing = true
+      const moved = Math.abs(r.target[0] - orbit.target.x) + Math.abs(r.target[1] - orbit.target.y) + Math.abs(r.target[2] - orbit.target.z) > 1e-6
+      orbit.target.fromArray(r.target); camera.position.fromArray(r.camera)
+      if (moved) { orbit.update(); dirty = true }
+    }
     const loop = () => {
       raf = requestAnimationFrame(loop)
       if (ranged) applyClip()
+      followCam()
       if (!dirty) return
       dirty = false
       renderer.render(scene, camera)
@@ -374,5 +399,13 @@ export default function Stage({ compareClipId: cid, range, itemId }: { compareCl
     }
   }, [cid, lo, hi, itemId])
 
-  return <div ref={host} tabIndex={0} style={{ width: '100%', height: '100%', outline: 'none' }} />
+  return (
+    <>
+      <div ref={host} tabIndex={0} style={{ width: '100%', height: '100%', outline: 'none' }} />
+      <div className="pv-tools">
+        <button className="pv-btn" aria-pressed={follow} onClick={() => setFollow(f => !f)}>로봇 따라가기</button>
+        {children}
+      </div>
+    </>
+  )
 }
