@@ -9,7 +9,9 @@ import ProjectPanel from './project/ProjectPanel'
 import Timeline from './timeline/Timeline'
 import ExportDialog from './export/ExportDialog'
 import { startTransport } from './transport'
-import { newProjectFile, onMessage, openProject, saveProject } from './projectActions'
+import { onMessage } from './projectActions'
+import FileMenu from './FileMenu'
+import CsvFpsDialog from './project/CsvFpsDialog'
 import { MENUBAR_H, layoutBounds, useLayout, type Layout } from './layout/useLayout'
 
 function AutoKeyHint() {
@@ -45,19 +47,9 @@ function Menubar() {
   }, [])
   return (
     <>
-      <span role="group" aria-label="파일" className="mb-group">
-        <button onClick={newProjectFile}>새 프로젝트</button>
-        <button onClick={openProject}>열기</button>
-        <button onClick={() => saveProject()}>저장</button>
-        <button onClick={() => saveProject(true)}>다른 이름으로 저장</button>
-      </span>
+      <FileMenu onExport={() => setExporting(true)} />
       <span className="mb-title">{title}</span>
       {msg && <span role="status" className="mb-msg">{msg}</span>}
-      <span role="group" aria-label="액터+" className="mb-group">
-        <span>액터+</span>
-        <button onClick={() => st.addActor('g1')}>G1 추가</button>
-        <button onClick={() => st.addActor('go2')}>GO2 추가</button>
-      </span>
       {hasVideo && (
         <span role="group" aria-label="영상" className="mb-group">
           <span>영상:</span>
@@ -66,7 +58,6 @@ function Menubar() {
           {videoMode === 'overlay' && <input type="range" aria-label="영상 투명도" min={0} max={1} step={0.05} value={videoOpacity} onChange={e => st.setVideoOpacity(+e.target.value)} />}
         </span>
       )}
-      <button onClick={() => setExporting(true)}>내보내기</button>
       <ExportDialog open={exporting} onClose={() => setExporting(false)} />
     </>
   )
@@ -127,6 +118,7 @@ export default function App() {
     <div id="app" style={{ gridTemplateColumns: `${layout.left}px 1fr ${layout.right}px`, gridTemplateRows: `${MENUBAR_H}px 1fr ${layout.bottom}px` }}>
       <header id="menubar">{status === 'ready' ? <Menubar /> : 'Motion Editor'}</header>
       <aside id="project">{status === 'ready' && <ProjectPanel />}</aside>
+      {status === 'ready' && <CsvFpsDialog />}
       <main id="stage">
         {status === 'ready'
           ? <StagePanes robot={<div className="stage-3d"><AutoKeyHint /><CrossfadeHint /><Stage /></div>} />

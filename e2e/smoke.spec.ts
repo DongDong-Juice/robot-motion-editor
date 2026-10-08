@@ -1,5 +1,11 @@
 import fs from 'node:fs'
-import { test, expect, type Download } from '@playwright/test'
+import { test, expect, type Download, type Page } from '@playwright/test'
+
+const menu = async (page: Page, name: string) => {
+  await page.getByRole('button', { name: '파일', exact: true }).click()
+  await page.getByRole('menuitem', { name, exact: true }).click()
+}
+
 
 test('load both robots, key, export CSV', async ({ page }) => {
   await page.addInitScript(() => { delete (window as any).showDirectoryPicker })
@@ -14,7 +20,7 @@ test('load both robots, key, export CSV', async ({ page }) => {
     s.toggleAutoKey(); s.select(id, 'left_elbow_joint'); s.setFrame(30)
     s.setValue(id, 'left_elbow_joint', 1.0)
   })
-  await page.getByRole('button', { name: '내보내기' }).click()
+  await menu(page, '내보내기')
   await page.getByRole('button', { name: /CSV 내보내기|무시하고 내보내기/ }).click()
   await expect.poll(() => downloads.length).toBe(2)
   const texts = await Promise.all(downloads.map(async d => fs.readFileSync((await d.path())!, 'utf8')))

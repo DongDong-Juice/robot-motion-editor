@@ -98,6 +98,12 @@ body {
 }
 .tl-menu button { background: none; color: var(--text); border: 0; font: inherit; font-size: 13px; padding: 5px 12px; text-align: left; cursor: pointer; }
 .tl-menu button:hover { background: var(--bg); }
+.mb-menu { position: fixed; z-index: 10; display: flex; flex-direction: column; min-width: 200px; background: var(--panel); border: 1px solid var(--line); border-radius: 3px; padding: 2px 0; }
+#menubar .mb-menu button { display: flex; justify-content: space-between; gap: 24px; background: none; border: 0; border-radius: 0; padding: 5px 12px; text-align: left; }
+#menubar .mb-menu button:hover, #menubar .mb-menu button:focus { background: var(--bg); }
+#menubar .mb-menu button:focus-visible { outline-offset: -2px; }
+.mb-sep { height: 1px; margin: 3px 0; background: var(--line); }
+.mb-hint { color: #8d96a3; }
 .mb-group { display: flex; align-items: center; gap: 6px; }
 .exp { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 3px; font-size: 13px; min-width: 420px; max-width: 90vw; }
 .exp::backdrop { background: rgba(0, 0, 0, .5); }
@@ -134,6 +140,8 @@ body {
 .stage-hint.hi { bottom: 24px; color: var(--accent); }
 #project { overflow-y: auto; font-size: 13px; }
 .pp { padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.pp h2 { font-size: 14px; font-weight: 500; margin: 0; }
+.pp-tag { font-size: 10px; color: #8d96a3; border: 1px solid var(--line); border-radius: 3px; padding: 0 3px; flex: none; }
 .pp h3 { font-size: 12px; font-weight: 500; color: #8d96a3; margin: 8px 0 2px; }
 .pp-row { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 3px; cursor: default; }
 .pp-row:hover, .pp-row[aria-selected=true] { background: var(--bg); }

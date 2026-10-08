@@ -7,7 +7,7 @@ import { makeKey } from '../model/curve'
 import { evaluateClip, type Pose, type RobotDefs } from '../model/evaluate'
 import type { Clip } from '../model/types'
 import { normalizedPose, posesToCsv, samplePoses } from './csv'
-import { csvToClip } from './importCsv'
+import { csvToClip, isHeadedCsv } from './importCsv'
 
 const load = loadDef
 const defs: RobotDefs = { g1: load('g1'), go2: load('go2') }
@@ -166,4 +166,11 @@ test.skipIf(!existsSync(SAMPLE))('real sample: header and first 300 rows import 
   expect(clip.robot).toBe('g1')
   expect(clip.length).toBe(300)
   expect(clip.channels.left_knee_joint.keys).toHaveLength(300)
+})
+
+test('isHeadedCsv: header detection for skipping the fps dialog', () => {
+  expect(isHeadedCsv(headed(2))).toBe(true)
+  expect(isHeadedCsv('\n a, Frequency(FPS) ,b\r\n1,2,3\n')).toBe(true)
+  expect(isHeadedCsv('0,0,0,0,0,0,1\n')).toBe(false)
+  expect(isHeadedCsv('')).toBe(false)
 })

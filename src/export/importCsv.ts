@@ -67,13 +67,20 @@ function parseHeaded(head: string[], lines: Line[], defs: RobotDefs): Parsed {
   return { robot, rows, fps }
 }
 
+/** True when a header cell is `frequency(fps)` (trimmed, case-insensitive): the headed format that carries its own fps. */
+export const isHeaded = (cells: string[]) => cells.some(c => c.trim().toLowerCase() === 'frequency(fps)')
+export const isHeadedCsv = (text: string) => {
+  const first = text.split(/\r?\n/).find(l => l.trim())
+  return !!first && isHeaded(first.split(','))
+}
+
 // Unitree RL motion CSV -> editable clip with a linear key on every channel/frame.
 // srcFps is only used for the headerless format; the headed one carries its own.
 export function csvToClip(text: string, defs: RobotDefs, srcFps: 30 | 60 | undefined, name: string): Clip {
   const lines: Line[] = []
   text.split(/\r?\n/).forEach((line, i) => { if (line.trim()) lines.push({ cells: line.split(',').map(s => s.trim()), n: i + 1 }) })
   if (!lines.length) throw new Error('데이터가 없습니다')
-  const headed = lines[0].cells.some(c => c.toLowerCase() === 'frequency(fps)')
+  const headed = isHeaded(lines[0].cells)
   if (headed && lines.length < 2) throw new Error('데이터가 없습니다')
   const { robot, rows, fps } = headed ? parseHeaded(lines[0].cells, lines.slice(1), defs) : parseHeadless(lines, srcFps ?? 60)
 

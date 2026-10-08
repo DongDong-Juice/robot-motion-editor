@@ -1,5 +1,11 @@
 import fs from 'node:fs'
-import { test, expect, type Download } from '@playwright/test'
+import { test, expect, type Download, type Page } from '@playwright/test'
+
+const menu = async (page: Page, name: string) => {
+  await page.getByRole('button', { name: '파일', exact: true }).click()
+  await page.getByRole('menuitem', { name, exact: true }).click()
+}
+
 
 const row = Array.from({ length: 36 }, (_, i) => (i === 6 ? 1 : 0)).join(',')
 const csv = Buffer.from([row, row, row].join('\n') + '\n')
@@ -12,7 +18,7 @@ test('headerless CSV import: fps choice applies each time, bad file reported, on
   expect(await page.evaluate(() => (window as any).__editor.getState().project.actors.length)).toBe(0) // starts empty
   const before = (await clips()).length
   const run = async (files: { name: string; mimeType: string; buffer: Buffer }[], fps: '30fps' | '60fps') => {
-    const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: 'CSV 가져오기' }).click()])
+    const [fc] = await Promise.all([page.waitForEvent('filechooser'), menu(page, 'CSV 가져오기')])
     await fc.setFiles(files)
     await page.getByLabel(fps).check()
     await page.getByRole('button', { name: '가져오기', exact: true }).click()
@@ -49,10 +55,12 @@ test('headed CSV import creates the G1 actor; export reproduces the input', asyn
   })
   const input = [head, ...data].join('\n') + '\n'
 
-  const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: 'CSV 가져오기' }).click()])
+  const [fc] = await Promise.all([page.waitForEvent('filechooser'), menu(page, 'CSV 가져오기')])
   await fc.setFiles([{ name: 'gen.csv', mimeType: 'text/csv', buffer: Buffer.from(input) }])
-  await page.getByRole('button', { name: '가져오기', exact: true }).click()
+  // headed: no fps dialog, imported straight away
   await expect(page.locator('.pp-msg')).toContainText('클립 1개를 가져왔습니다')
+  await expect(page.locator('dialog.pp-dlg[open]')).toHaveCount(0)
+  await expect(page.locator('.pp-tag')).toHaveText('G1')
 
   const placed = await page.evaluate(() => {
     const p = (window as any).__editor.getState().project
@@ -60,7 +68,7 @@ test('headed CSV import creates the G1 actor; export reproduces the input', asyn
   })
   expect(placed).toEqual({ actors: ['g1'], items: [{ actor: true, items: [['gen', 0, N]] }] })
 
-  await page.getByRole('button', { name: '내보내기' }).click()
+  await menu(page, '내보내기')
   await page.getByRole('radio', { name: '월드' }).check()
   await page.getByRole('button', { name: /CSV 내보내기|무시하고 내보내기/ }).click()
   await expect.poll(() => downloads.length).toBe(1)
@@ -80,4 +88,43 @@ test('headed CSV import creates the G1 actor; export reproduces the input', asyn
     })
   }
   expect(errors).toEqual([])
+})
+
+test('파일 menu: keyboard navigation and focus return', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
+  const trigger = page.getByRole('button', { name: '파일', exact: true })
+  const items = page.getByRole('menuitem')
+  const focused = () => page.evaluate(() => document.activeElement?.textContent?.replace(/Ctrl.*/, ''))
+  const playing = () => page.evaluate(() => (window as any).__editor.getState().playing)
+  await trigger.focus()
+  await page.keyboard.press('Enter')
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+  await expect(items).toHaveCount(7)
+  expect(await focused()).toBe('새 프로젝트')
+  await page.keyboard.press('ArrowUp') // wraps to the last
+  expect(await focused()).toBe('내보내기')
+  await page.keyboard.press('Home')
+  await page.keyboard.press('ArrowDown')
+  expect(await focused()).toBe('열기')
+  await page.keyboard.press('End')
+  expect(await focused()).toBe('내보내기')
+  await page.keyboard.press('Space') // activates the item, not a global play toggle
+  await expect(page.locator('dialog.exp[open]')).toHaveCount(1)
+  expect(await playing()).toBe(false)
+  await page.keyboard.press('Escape')
+  await expect(page.locator('dialog.exp[open]')).toHaveCount(0)
+  await trigger.focus()
+  await page.keyboard.press('ArrowDown')
+  await expect(items.first()).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(items).toHaveCount(0)
+  await expect(trigger).toBeFocused()
+  await trigger.focus()
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Tab')
+  await expect(items).toHaveCount(0)
+  await trigger.click()
+  await page.locator('#inspector').click({ position: { x: 5, y: 200 } })
+  await expect(items).toHaveCount(0)
 })

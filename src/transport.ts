@@ -65,7 +65,7 @@ export function startTransport(): () => void {
       if (!e.repeat) { if (e.key.toLowerCase() === 's') saveProject(e.shiftKey); else openProject() }
       return
     }
-    if (typing(e.target) || e.altKey) return
+    if (typing(e.target) || e.altKey || (e.target instanceof Element && e.target.closest('[role=menu]'))) return // menus own their keys
     if (onHandleArrow(e)) return // resize handles own their arrow keys
     // panel rows own Delete/Backspace and the plain editing keys; undo, Space and arrows still pass through
     if (e.target instanceof Element && e.target.closest('#project') && !e.ctrlKey && !e.metaKey && ['Delete', 'Backspace', 'Escape', 'c', 'i', 'o', 'm'].includes(e.key.length === 1 ? e.key.toLowerCase() : e.key)) return

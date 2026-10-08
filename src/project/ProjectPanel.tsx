@@ -1,13 +1,7 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
-import type { RobotKind } from '../robot/types'
-import { csvToClip } from '../export/importCsv'
-import { objectUrl, openMediaFiles, openTextFiles, revokeUrl } from '../fileio'
-import { mediaUrl, probeDuration, setMediaUrl, subscribeMedia } from '../media/registry'
-import { videoEnd } from '../model/video'
-import { getEditor, projectGeneration, useEditor } from '../store/store'
-
-type Files = { name: string; text: string }[]
-const ROBOTS: [RobotKind, string][] = [['g1', 'G1'], ['go2', 'GO2']]
+import { relinkMedia, setImportResult, useImportUi } from '../importActions'
+import { mediaUrl, subscribeMedia } from '../media/registry'
+import { getEditor, useEditor } from '../store/store'
 
 function RenameInput({ name, onDone }: { name: string; onDone: (v: string | null) => void }) {
   const cancelled = useRef(false)
@@ -25,130 +19,48 @@ function RenameInput({ name, onDone }: { name: string; onDone: (v: string | null
 
 export default function ProjectPanel() {
   const ed = getEditor()
-  const project = useEditor(s => s.project), sel = useEditor(s => s.sel.actorId)
+  const project = useEditor(s => s.project)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [msg, setMsg] = useState(0) // timestamp of the last rejection; a new value restarts the 3 s timer
   useEffect(() => { if (!msg) return; const t = setTimeout(() => setMsg(0), 3000); return () => clearTimeout(t) }, [msg])
 
-  const [pending, setPending] = useState<Files | null>(null) // picked files awaiting an fps choice
-  const [result, setResult] = useState<{ n: number; fails: string[] } | null>(null)
-  const dlg = useRef<HTMLDialogElement>(null)
-  const [fps, setFps] = useState<30 | 60>(30)
-  useEffect(() => { if (result) { const t = setTimeout(() => setResult(null), 10000); return () => clearTimeout(t) } }, [result])
-  useEffect(() => { if (pending && !dlg.current?.open) dlg.current?.showModal() }, [pending])
-  const pick = async () => {
-    setResult(null)
-    const files = await openTextFiles('.csv', true)
-    if (files.length) { setFps(30); setPending(files) }
-  }
-  const doImport = () => {
-    const files = pending!
-    setPending(null)
-    let n = 0
-    const fails: string[] = []
-    ed.getState().beginGesture() // one undo entry for the whole batch
-    for (const f of files) {
-      try {
-        const clip = csvToClip(f.text, ed.getState().defs, fps, f.name.replace(/\.csv$/i, ''))
-        if (!ed.getState().importClipToActor(clip)) throw new Error('잠긴 트랙입니다')
-        n++
-      }
-      catch (e) { fails.push(`${f.name}: ${e instanceof Error ? e.message : String(e)}`) }
-    }
-    ed.getState().endGesture()
-    setResult({ n, fails })
-  }
-
   const [, bump] = useReducer((n: number) => n + 1, 0)
   useEffect(() => subscribeMedia(bump), []) // re-render when a url is (un)set
-  const [mres, setMres] = useState<{ n?: number; lines: string[] } | null>(null)
+  const res = useImportUi(s => s.res)
+  useEffect(() => { if (res) { const t = setTimeout(() => setImportResult(null), 10000); return () => clearTimeout(t) } }, [res])
   const [mmsg, setMmsg] = useState(0)
   const [lmsg, setLmsg] = useState(0)
   useEffect(() => { if (!lmsg) return; const t = setTimeout(() => setLmsg(0), 3000); return () => clearTimeout(t) }, [lmsg])
-  useEffect(() => { if (mres) { const t = setTimeout(() => setMres(null), 10000); return () => clearTimeout(t) } }, [mres])
   useEffect(() => { if (!mmsg) return; const t = setTimeout(() => setMmsg(0), 3000); return () => clearTimeout(t) }, [mmsg])
-  const probe = async (f: File) => {
-    const url = objectUrl(f)
-    try { return { url, durationF: await probeDuration(url) } } catch (e) { revokeUrl(url); throw e }
-  }
-  const importMedia = async () => {
-    setMres(null)
-    const files = await openMediaFiles(true)
-    if (!files.length) return
-    const gen = projectGeneration()
-    const lines: string[] = []
-    const ok: { name: string; url: string; durationF: number }[] = []
-    for (const f of files) { // probe everything first so the gesture below has no awaits
-      try { ok.push({ name: f.name.replace(/\.[^.]*$/, ''), ...(await probe(f)) }) }
-      catch (e) { lines.push(`${f.name}: ${e instanceof Error ? e.message : String(e)}`) }
-    }
-    if (gen !== projectGeneration()) { ok.forEach(o => revokeUrl(o.url)); return } // another project was opened meanwhile
-    const s = ed.getState()
-    s.beginGesture() // one undo entry for the whole batch
-    let placed = 0
-    try {
-      for (const o of ok) {
-        const id = s.addMedia(o.name, o.durationF)
-        setMediaUrl(id, o.url)
-        // place it on V1 right away so the preview shows without a manual drag
-        if (s.addVideoItem(id, videoEnd(ed.getState().project))) placed++
-        else lines.push(`${o.name}: 잠긴 트랙입니다`)
-      }
-    } finally { s.endGesture() }
-    if (placed) s.setVideoMode('split')
-    setMres({ n: ok.length, lines })
-  }
-  const relink = async (m: { id: string; durationF: number }) => {
-    setMres(null)
-    const gen = projectGeneration()
-    const [f] = await openMediaFiles(false)
-    if (!f) return
-    try {
-      const { url, durationF } = await probe(f)
-      if (gen !== projectGeneration() || !ed.getState().project.media.some(x => x.id === m.id)) { revokeUrl(url); return } // project changed or media deleted meanwhile
-      setMediaUrl(m.id, url)
-      if (Math.abs(durationF - m.durationF) > 1)
-        setMres({ lines: [`길이가 다른 영상입니다(${(durationF / 60).toFixed(2)}초 ≠ ${(m.durationF / 60).toFixed(2)}초)`] })
-    } catch (e) { setMres({ lines: [`${f.name}: ${e instanceof Error ? e.message : String(e)}`] }) }
-  }
   const delMedia = (id: string) => { if (!ed.getState().deleteMedia(id)) setMmsg(performance.now()) }
 
   const uses = (id: string) => project.sequence.tracks.reduce((n, t) => n + t.items.filter(i => i.refId === id).length, 0)
   const del = (id: string) => { if (!ed.getState().deleteClip(id)) setMsg(performance.now()) }
+  const clips = Object.values(project.clips)
 
   return (
     <div className="pp">
-      <h3>액터</h3>
-      {project.actors.map(a => (
-        <div key={a.id} className="pp-row" tabIndex={0} onClick={() => ed.getState().select(a.id)}
-          role="option" aria-selected={sel === a.id} onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); ed.getState().select(a.id) } }}>
-          <span className="pp-dot" style={{ background: a.color }} />
-          <span className="pp-name">{a.name}</span>
+      <h2>에셋</h2>
+      {!clips.length && !project.media.length && <p className="pp-dim">파일 ▸ CSV 가져오기로 모션을 불러오세요</p>}
+      {clips.length > 0 && <h3>모션 (CSV)</h3>}
+      {clips.map(c => (
+        <div key={c.id} className="pp-row" tabIndex={0} draggable={renaming !== c.id}
+          onDragStart={e => { e.dataTransfer.setData('application/x-motion-clip', c.id); e.dataTransfer.effectAllowed = 'copy' }}
+          onDoubleClick={() => setRenaming(c.id)}
+          onKeyDown={e => {
+            if (e.target !== e.currentTarget) return
+            if (e.key === 'Enter') { e.stopPropagation(); setRenaming(c.id) }
+            else if (e.key === 'Delete') { e.stopPropagation(); del(c.id) }
+          }}>
+          <span className="pp-tag">{c.robot.toUpperCase()}</span>
+          {renaming === c.id
+            ? <RenameInput name={c.name} onDone={v => { if (v?.trim() && !ed.getState().setClip(c.id, { name: v })) setLmsg(performance.now()); setRenaming(null) }} />
+            : <span className="pp-name">{c.name}</span>}
+          <span className="pp-dim">{(c.length / 60).toFixed(2)}초 · {uses(c.id)}</span>
+          <button aria-label={`${c.name} 삭제`} onClick={() => del(c.id)}>삭제</button>
         </div>
       ))}
-      <h3>클립</h3>
-      {ROBOTS.map(([robot, label]) => (
-        <div key={robot}>
-          <h3>{label}</h3>
-          {Object.values(project.clips).filter(c => c.robot === robot).map(c => (
-            <div key={c.id} className="pp-row" tabIndex={0} draggable={renaming !== c.id}
-              onDragStart={e => { e.dataTransfer.setData('application/x-motion-clip', c.id); e.dataTransfer.effectAllowed = 'copy' }}
-              onDoubleClick={() => setRenaming(c.id)}
-              onKeyDown={e => {
-                if (e.target !== e.currentTarget) return
-                if (e.key === 'Enter') { e.stopPropagation(); setRenaming(c.id) }
-                else if (e.key === 'Delete') { e.stopPropagation(); del(c.id) }
-              }}>
-              {renaming === c.id
-                ? <RenameInput name={c.name} onDone={v => { if (v?.trim() && !ed.getState().setClip(c.id, { name: v })) setLmsg(performance.now()); setRenaming(null) }} />
-                : <span className="pp-name">{c.name}</span>}
-              <span className="pp-dim">{(c.length / 60).toFixed(2)}초 · {uses(c.id)}</span>
-              <button aria-label={`${c.name} 삭제`} onClick={() => del(c.id)}>삭제</button>
-            </div>
-          ))}
-        </div>
-      ))}
-      <h3>미디어</h3>
+      {project.media.length > 0 && <h3>영상</h3>}
       {project.media.map(m => {
         const off = mediaUrl(m.id) == null
         return (
@@ -159,38 +71,16 @@ export default function ProjectPanel() {
             <span className="pp-sub">
               <span className="pp-dim">{(m.durationF / 60).toFixed(2)}초</span>
               {off && <span className="pp-off">오프라인</span>}
-              {off && <button aria-label={`${m.name} 다시 연결`} onClick={() => relink(m)}>다시 연결</button>}
+              {off && <button aria-label={`${m.name} 다시 연결`} onClick={() => relinkMedia(m)}>다시 연결</button>}
               <button aria-label={`${m.name} 삭제`} onClick={() => delMedia(m.id)}>삭제</button>
             </span>
           </div>
         )
       })}
-      <div className="pp-btns">
-        <button onClick={importMedia}>영상 가져오기</button>
-      </div>
-      <div className="pp-btns">
-        {ROBOTS.map(([robot, label]) => <button key={robot} onClick={() => ed.getState().newClip(robot)}>새 {label} 클립</button>)}
-        <button onClick={pick}>CSV 가져오기</button>
-      </div>
-      <dialog ref={dlg} className="pp-dlg" onKeyDown={e => e.stopPropagation()} onClose={() => setPending(null)}>
-        <form method="dialog" onSubmit={e => { if ((e.nativeEvent as SubmitEvent).submitter?.id === 'pp-go') doImport() }}>
-          <p>헤더 없는 CSV의 fps</p>
-          {([30, 60] as const).map(v => (
-            <label key={v}><input type="radio" name="fps" checked={fps === v} onChange={() => setFps(v)} />{v}fps</label>
-          ))}
-          <div className="pp-btns"><button id="pp-go">가져오기</button><button value="cancel" type="submit" formNoValidate>취소</button></div>
-        </form>
-      </dialog>
-      {result && (
+      {res && (
         <div className="pp-msg" role="status">
-          <p>클립 {result.n}개를 가져왔습니다</p>
-          {result.fails.map(f => <p key={f}>{f}</p>)}
-        </div>
-      )}
-      {mres && (
-        <div className="pp-msg" role="status">
-          {mres.n !== undefined && <p>영상 {mres.n}개를 가져왔습니다</p>}
-          {mres.lines.map(f => <p key={f}>{f}</p>)}
+          {res.head && <p>{res.head}</p>}
+          {res.lines.map(f => <p key={f}>{f}</p>)}
         </div>
       )}
       {mmsg > 0 && <p className="pp-msg">시퀀스에서 쓰는 영상은 삭제할 수 없습니다</p>}

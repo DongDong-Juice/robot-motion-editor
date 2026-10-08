@@ -3,6 +3,12 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { test, expect, type Download, type Page } from '@playwright/test'
 
+const menu = async (page: Page, name: string) => {
+  await page.getByRole('button', { name: '파일', exact: true }).click()
+  await page.getByRole('menuitem', { name, exact: true }).click()
+}
+
+
 test.describe.configure({ mode: 'serial' })
 
 const dir = path.resolve('test-results')
@@ -30,7 +36,7 @@ const open = async (page: Page) => {
 }
 
 const importVideo = async (page: Page) => {
-  const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: '영상 가져오기' }).click()])
+  const [fc] = await Promise.all([page.waitForEvent('filechooser'), menu(page, '영상 가져오기')])
   await fc.setFiles(file)
   await expect(page.locator('.pp-media')).toHaveCount(1)
 }
@@ -67,14 +73,14 @@ test('save/reopen marks media offline, relink restores', async ({ page }) => {
   await open(page)
   await importVideo(page)
 
-  await page.getByRole('button', { name: '저장', exact: true }).click()
+  await menu(page, '저장')
   await expect.poll(() => downloads.length).toBe(1)
   const saved = fs.readFileSync((await downloads[0].path())!)
   const name = downloads[0].suggestedFilename()
 
-  await page.getByRole('button', { name: '새 프로젝트' }).click()
+  await menu(page, '새 프로젝트')
   await expect(page.locator('.pp-media')).toHaveCount(0)
-  const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: '열기' }).click()])
+  const [fc] = await Promise.all([page.waitForEvent('filechooser'), menu(page, '열기')])
   await fc.setFiles([{ name, mimeType: 'application/json', buffer: saved }])
   await expect(page.getByText('오프라인').first()).toBeVisible()
 
