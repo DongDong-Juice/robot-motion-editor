@@ -14,6 +14,7 @@ import { buildRobot, pivotAngle, type RobotRig } from './buildRobot'
 const css = (n: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim()
 const EXTENT = 5
 const TARGET = new THREE.Vector3(0.75, 0, 0.6)
+const EYE = new THREE.Vector3(3.2, -3.4, 2).sub(TARGET) // initial camera offset from the target
 // unit directions from target: front (+x), side (-y), top (tiny y offset avoids up-vector degeneracy)
 const VIEWS: Record<string, [number, number, number]> = { '1': [1, 0, 0.15], '3': [0, -1, 0.15], '7': [0, -0.001, 1] }
 
@@ -36,15 +37,20 @@ function makeGrid(): THREE.LineSegments {
 // trailKey/trailClips: what the cached trail was built from (items + placement serialized, clips by identity)
 interface Entry { rig: RobotRig; trail: THREE.Line; dot: THREE.Points; ghost: boolean; trailKey?: string; trailClips?: (Clip | undefined)[] }
 
-export default function Stage() {
+/** One 3D view. `pane` = actor id of a compare pane (shows only that actor); omitted = the main pane (every actor not in a compare pane). */
+export default function Stage({ pane }: { pane?: string }) {
   const host = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const el = host.current!
     const store = getEditor()
+    const shows = (id: string) => (pane ? id === pane : !store.getState().comparePanes.includes(id))
+    const pl = pane && store.getState().project.actors.find(a => a.id === pane)?.placement
+    const target = pl ? new THREE.Vector3(pl.x, pl.y, TARGET.z) : TARGET.clone()
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(css('--bg') || '#22262D')
     const grid = makeGrid()
+    if (pane) grid.position.set(Math.round(target.x), Math.round(target.y), 0) // follow the actor; integer shift keeps the lines on world coordinates
     scene.add(grid)
     const hemi = new THREE.HemisphereLight(0xffffff, 0x4a505c, 1.4)
     hemi.position.set(0, 0, 1)
@@ -54,18 +60,25 @@ export default function Stage() {
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 100)
     camera.up.set(0, 0, 1)
-    camera.position.set(3.2, -3.4, 2)
+    camera.position.copy(target).add(EYE)
     const renderer = new THREE.WebGLRenderer({ antialias: true })
     renderer.setPixelRatio(window.devicePixelRatio)
     el.appendChild(renderer.domElement)
     const orbit = new OrbitControls(camera, renderer.domElement)
-    orbit.target.copy(TARGET)
+    orbit.target.copy(target)
     orbit.update()
     const tc = new TransformControls(camera, renderer.domElement)
     tc.setSize(0.8)
     scene.add(tc.getHelper())
     // dev/e2e hook
-    if (import.meta.env.DEV) (window as any).__stage = { camera, tc, entries: () => entries }
+    // dev/e2e hook: __stage = main pane, __stages = every pane by key ('main' or the compare actor id)
+    const hook = { camera, tc, entries: () => entries, renderer }
+    const hookKey = pane ?? 'main'
+    if (import.meta.env.DEV) {
+      const w = window as any
+      ;(w.__stages ??= {})[hookKey] = hook
+      if (!pane) w.__stage = hook
+    }
 
     let dirty = true, raf = 0
     const entries = new Map<string, Entry>()
@@ -107,9 +120,10 @@ export default function Stage() {
     const syncActors = () => {
       const s = store.getState()
       const { project, defs } = s
-      const ids = new Set(project.actors.map(a => a.id))
+      const ids = new Set(project.actors.filter(a => shows(a.id)).map(a => a.id))
       for (const [id, e] of entries) if (!ids.has(id)) { disposeEntry(e); entries.delete(id) }
       for (const a of project.actors) {
+        if (!ids.has(a.id)) continue
         const color = new THREE.Color(a.color)
         let e = entries.get(a.id)
         if (!e) {
@@ -247,7 +261,7 @@ export default function Stage() {
       const v = VIEWS[ev.key]
       if (v) {
         const d = camera.position.distanceTo(orbit.target)
-        camera.position.copy(TARGET).add(new THREE.Vector3(...v).normalize().multiplyScalar(d))
+        camera.position.copy(target).add(new THREE.Vector3(...v).normalize().multiplyScalar(d))
         orbit.update()
       } else if (ev.key.toLowerCase() === 'r' && store.getState().sel.channel?.startsWith('root')) {
         rootMode = rootMode === 'translate' ? 'rotate' : 'translate'
@@ -269,11 +283,12 @@ export default function Stage() {
     let wasLocked = false
     syncActors(); applyAll(); syncSelection()
     const unsub = store.subscribe((s, prev) => {
-      if (s.project !== prev.project) syncActors()
+      const panes = s.comparePanes !== prev.comparePanes
+      if (s.project !== prev.project || panes) syncActors()
       applyAll()
       const key = (p: typeof s.project) => p.actors.map(a => a.id + a.robot).join()
       const lk = locked()
-      if (s.sel !== prev.sel || key(s.project) !== key(prev.project) || lk !== wasLocked) syncSelection()
+      if (s.sel !== prev.sel || panes || key(s.project) !== key(prev.project) || lk !== wasLocked) syncSelection()
       wasLocked = lk
     })
 
@@ -295,8 +310,13 @@ export default function Stage() {
       disposeObj(grid)
       tc.dispose(); orbit.dispose(); renderer.dispose()
       el.removeChild(dom)
+      if (import.meta.env.DEV) {
+        const w = window as any
+        if (w.__stages?.[hookKey] === hook) delete w.__stages[hookKey]
+        if (w.__stage === hook) delete w.__stage
+      }
     }
-  }, [])
+  }, [pane])
 
   return <div ref={host} tabIndex={0} style={{ width: '100%', height: '100%', outline: 'none' }} />
 }

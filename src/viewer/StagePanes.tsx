@@ -1,13 +1,31 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { useEditor } from '../store/store'
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { getEditor, useEditor } from '../store/store'
+import Stage from './Stage'
 import VideoOverlay from './VideoOverlay'
-import { clampRatio, dockSide, paneRects, type Side } from './paneLayout'
+import { clampRatio, dockSide, equalRatios, moveDivider, paneRects, ROW_MIN, rowWidths, type Side } from './paneLayout'
 
 interface Prefs { videoSide: Side; ratio: number }
 const KEY = 'motion-editor.preview'
 const SIDES: Side[] = ['left', 'right', 'top', 'bottom']
 const OPPOSITE: Record<Side, Side> = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' }
 const STEP = 0.02
+const SEP = 6 // .pane-sep width, px
+const TITLE = 24 // .pane-title height, px
+
+// "<actor name> / <clip name>" of a compare pane (first item on the actor's track)
+const useCompareLabel = (id: string) => useEditor(s => {
+  const a = s.project.actors.find(a => a.id === id)
+  const it = s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === id)?.items[0]
+  return `${a?.name ?? ''} / ${(it && s.project.clips[it.refId]?.name) ?? ''}`
+})
+function CompareTitle({ id }: { id: string }) {
+  return (
+    <div className="pane-title static">
+      <span>비교 프리뷰 · {useCompareLabel(id)}</span>
+      <button aria-label="비교 닫기" onClick={() => getEditor().getState().closeComparePane(id)}>✕</button>
+    </div>
+  )
+}
 
 function load(): Prefs {
   try {
@@ -18,7 +36,8 @@ function load(): Prefs {
 }
 function save(p: Prefs) { try { localStorage.setItem(KEY, JSON.stringify(p)) } catch { /* storage unavailable */ } }
 
-/** Video + robot panes: dock the video to any side by dragging a title bar; the divider resizes. `robot` is the 3D view. */
+/** Video + robot area: dock the video to any side by dragging a title bar; the divider resizes. `robot` is the main 3D view;
+ * compare panes sit to its right in the robot area, each with its own divider. */
 export default function StagePanes({ robot }: { robot: ReactNode }) {
   const mode = useEditor(s => s.videoMode), setMode = useEditor(s => s.setVideoMode)
   const [prefs, setPrefs] = useState(load)
@@ -95,11 +114,39 @@ export default function StagePanes({ robot }: { robot: ReactNode }) {
     save(pr.current)
   }
 
+  // robot row: [main | compare...]; equal widths whenever the pane set changes (not persisted)
+  const compare = useEditor(s => s.comparePanes)
+  const n = compare.length + 1, ids = compare.join()
+  const [row, setRow] = useState({ ids, r: [1] })
+  const ratios = row.ids === ids && row.r.length === n ? row.r : equalRatios(n)
+  const rowEl = useRef<HTMLDivElement>(null)
+  const [rowDrag, setRowDrag] = useState<number | null>(null)
+  const setRatios = (r: number[]) => setRow({ ids, r })
+  const rowMove = (e: React.PointerEvent, i: number) => {
+    if (rowDrag !== i) return
+    const b = rowEl.current!.getBoundingClientRect(), w = rowWidths(ratios, b.width, SEP)
+    const left = w.slice(0, i).reduce((a, x) => a + x, 0) + i * SEP
+    setRatios(moveDivider(ratios, i, (e.clientX - b.left - SEP / 2 - left) / (b.width - SEP * (n - 1)) - ratios[i]))
+  }
+  const rowEnd = (e: React.PointerEvent) => {
+    setRowDrag(null)
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+  }
+  const rowKey = (e: React.KeyboardEvent, i: number) => {
+    const k = ({ ArrowRight: 1, ArrowLeft: -1 } as Record<string, number>)[e.key]
+    if (k === undefined) return
+    e.preventDefault(); e.stopPropagation()
+    setRatios(moveDivider(ratios, i, k * STEP))
+  }
+
   const split = mode === 'split'
+  const titled = split || n > 1
+  // overlay covers only the main robot pane (below its title)
+  const overlay = mode === 'overlay' && n > 1 ? { right: 'auto', top: TITLE, width: `calc((100% - ${SEP * (n - 1)}px) * ${ratios[0]})` } : undefined
   const preview = drag && paneRects(drag.side, drag.pane === 'video' ? ratio : 1 - ratio, 1, 1).video
   return (
-    <div ref={ref} className={`panes ${mode} ${videoSide}${dragging || sepDrag ? ' dragging' : ''}`}>
-      <section className="pane pane-video" aria-label="영상 프리뷰" style={split ? { flexBasis: `${ratio * 100}%` } : undefined}>
+    <div ref={ref} className={`panes ${mode} ${videoSide}${dragging || sepDrag || rowDrag !== null ? ' dragging' : ''}`}>
+      <section className="pane pane-video" aria-label="영상 프리뷰" style={split ? { flexBasis: `${ratio * 100}%` } : overlay}>
         {split && (
           <div className="pane-title" {...titleProps('video')}>
             <span>영상 프리뷰</span>
@@ -116,10 +163,27 @@ export default function StagePanes({ robot }: { robot: ReactNode }) {
           onPointerMove={sepMove} onPointerUp={sepEnd} onPointerCancel={sepEnd}
           onDoubleClick={() => apply({ ...prefs, ratio: 0.5 }, true)} onKeyDown={sepKey} />
       )}
-      <section className="pane pane-robot" aria-label="로봇 프리뷰">
-        {split && <div className="pane-title" {...titleProps('robot')}><span>로봇 프리뷰</span></div>}
-        {robot}
-      </section>
+      <div ref={rowEl} className="pane-robots">
+        <section className="pane pane-robot" aria-label="로봇 프리뷰" style={{ flex: `${ratios[0]} 1 0` }}>
+          {titled && <div className={split ? 'pane-title' : 'pane-title static'} {...(split ? titleProps('robot') : {})}><span>로봇 프리뷰</span></div>}
+          {robot}
+        </section>
+        {compare.map((id, i) => { // divider i sits between pane i and i+1
+          return (
+            <Fragment key={id}>
+              <div className="pane-sep" role="separator" tabIndex={0} aria-label={`비교 프리뷰 분할 ${i + 1}`} aria-orientation="vertical"
+                aria-valuenow={Math.round(ratios[i] * 100)} aria-valuemin={ROW_MIN * 100} aria-valuemax={Math.round((ratios[i] + ratios[i + 1] - ROW_MIN) * 100)}
+                onPointerDown={e => { if (e.button !== 0) return; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); e.currentTarget.focus(); setRowDrag(i) }}
+                onPointerMove={e => rowMove(e, i)} onPointerUp={rowEnd} onPointerCancel={rowEnd}
+                onDoubleClick={() => setRatios(equalRatios(n))} onKeyDown={e => rowKey(e, i)} />
+              <section className="pane pane-robot" aria-label="비교 프리뷰" style={{ flex: `${ratios[i + 1]} 1 0` }}>
+                <CompareTitle id={id} />
+                <div className="stage-3d"><Stage pane={id} /></div>
+              </section>
+            </Fragment>
+          )
+        })}
+      </div>
       {preview && <div className="dock-preview" style={{ left: `${preview.x * 100}%`, top: `${preview.y * 100}%`, width: `${preview.w * 100}%`, height: `${preview.h * 100}%` }} />}
     </div>
   )

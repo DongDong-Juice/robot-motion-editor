@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampRatio, dockSide, paneRects } from './paneLayout'
+import { clampRatio, dockSide, equalRatios, moveDivider, paneRects, rowWidths } from './paneLayout'
 
 describe('dockSide', () => {
   it('picks the nearest edge', () => {
@@ -35,5 +35,18 @@ describe('paneRects', () => {
   })
   it('clamps the ratio', () => {
     expect(paneRects('left', 5, 1000, 600).video.w).toBe(800)
+  })
+})
+
+describe('pane row', () => {
+  it('equal ratios and pixel widths net of dividers', () => {
+    expect(equalRatios(3)).toEqual([1 / 3, 1 / 3, 1 / 3])
+    expect(rowWidths([0.5, 0.25, 0.25], 412, 6)).toEqual([200, 100, 100])
+  })
+  it('a divider moves only its two neighbours, each kept >= 15%', () => {
+    expect(moveDivider([0.5, 0.25, 0.25], 0, 0.1).map(r => +r.toFixed(3))).toEqual([0.6, 0.15, 0.25])
+    expect(moveDivider([0.5, 0.25, 0.25], 0, 0.3).map(r => +r.toFixed(3))).toEqual([0.6, 0.15, 0.25])
+    expect(moveDivider([0.5, 0.25, 0.25], 1, -0.5).map(r => +r.toFixed(3))).toEqual([0.5, 0.15, 0.35])
+    expect(moveDivider([0.5, 0.5], 0, -1).map(r => +r.toFixed(3))).toEqual([0.15, 0.85])
   })
 })

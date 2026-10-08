@@ -20,3 +20,14 @@ export function paneRects(side: Side, ratio: number, w: number, h: number): { vi
     case 'bottom': return { video: { x: 0, y: h - vh, w, h: vh }, robot: { x: 0, y: 0, w, h: h - vh } }
   }
 }
+
+// Horizontal row of robot panes: ratios sum to 1 and exclude the dividers.
+export const ROW_MIN = 0.15
+export const equalRatios = (n: number) => Array<number>(n).fill(1 / n)
+export const rowWidths = (ratios: number[], w: number, sep: number) => ratios.map(r => r * (w - sep * (ratios.length - 1)))
+/** Move divider i (between panes i and i+1) by `delta` of the row; both neighbours stay >= ROW_MIN. */
+export function moveDivider(ratios: number[], i: number, delta: number): number[] {
+  const a = ratios[i], b = ratios[i + 1]
+  const d = Math.min(Math.max(delta, ROW_MIN - a), b - ROW_MIN)
+  return ratios.map((r, j) => (j === i ? a + d : j === i + 1 ? b - d : r))
+}
