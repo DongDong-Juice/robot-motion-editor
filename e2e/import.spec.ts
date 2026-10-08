@@ -51,7 +51,6 @@ test('headed CSV import creates the G1 actor; export reproduces the input', asyn
 
   const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: 'CSV 가져오기' }).click()])
   await fc.setFiles([{ name: 'gen.csv', mimeType: 'text/csv', buffer: Buffer.from(input) }])
-  await page.getByLabel('가져올 때 키 줄이기').uncheck() // keep every frame so the export matches to 1e-5
   await page.getByRole('button', { name: '가져오기', exact: true }).click()
   await expect(page.locator('.pp-msg')).toContainText('클립 1개를 가져왔습니다')
 
