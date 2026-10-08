@@ -1,0 +1,2 @@
+# keep sample/RL CSVs byte-exact on every machine (no CRLF conversion)
+*.csv -text
