@@ -435,7 +435,7 @@ test('committed clips, curves and keys are frozen; declared channels are fresh c
 test('perf: setKey on a 5000x36 clip copies only the touched channel', () => {
   const names = Array.from({ length: 36 }, (_, i) => i < 6 ? ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw'][i] : `ch${i}`)
   const id = 'big'
-  s().importClip({ id, name: 'big', robot: 'g1', length: 5000, channels: Object.fromEntries(names.map(n => [n, { keys: Array.from({ length: 5000 }, (_, f) => makeKey(f, Math.sin(f), 'linear')) }])) })
+  s().importClipToActor({ id, name: 'big', robot: 'g1', length: 5000, channels: Object.fromEntries(names.map(n => [n, { keys: Array.from({ length: 5000 }, (_, f) => makeKey(f, Math.sin(f), 'linear')) }])) })
   s().setKey(id, 'root.x', 0, 0) // warm-up
   let ms = 0
   for (let i = 0; i < 10; i++) {

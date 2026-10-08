@@ -1,5 +1,5 @@
 import { loadDef } from '../test/defs'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { expect, test } from 'vitest'
 
 import { addActor, newProject } from '../model/defaults'
@@ -34,7 +34,8 @@ test('g1 csv: header, 41 fields per line incl. trailing comma, time ms, 6 decima
 
 test('go2 csv: 24 fields', () => {
   const csv = posesToCsv(samplePoses(proj, defs, go2.id, itemOf(proj, go2.id).id, 'world'), defs.go2)
-  expect(csv.endsWith(',\n')).toBe(true)
+  expect(csv.endsWith(',')).toBe(true) // last line ends with a comma and no newline
+  expect(csv.includes(',\n60,')).toBe(true)
   const lines = csv.split('\n')
   expect(lines[0].split(',')).toHaveLength(24)
   expect(lines[0].split(',')[11]).toBe('FL_hip_joint')
@@ -126,4 +127,10 @@ test.each(['g1', 'go2'] as const)('%s csv joint order equals model.json revolute
   const lines = posesToCsv([{ rootPos: [0, 0, 0], rootQuat: [0, 0, 0, 1], q }], defs[k]).split('\n')
   expect(lines[0].split(',').slice(11, -1)).toEqual(names)
   expect(lines[1].split(',')).toHaveLength(12 + names.length)
+})
+
+const SAMPLE = new URL('../../assets/data/Track1_원본_합본.csv', import.meta.url)
+test.skipIf(!existsSync(SAMPLE))('export header equals the first line of the real sample', () => {
+  const first = readFileSync(SAMPLE, 'utf8').split(/\r?\n/)[0]
+  expect(posesToCsv([], defs.g1)).toBe(first)
 })

@@ -129,6 +129,20 @@ test('headed: errors are Korean and name the row', () => {
   expect(() => csvToClip(headed(0), defs, 60, 'x')).toThrow('데이터가 없습니다')
 })
 
+test('headed: frequency(fps) column may be anywhere, not only first', () => {
+  const rot = (l: string) => { const c = l.split(','); return [...c.slice(1, -1), c[0], ''].join(',') }
+  const csv = headed(3).split('\n').map(rot).join('\n')
+  const clip = csvToClip(csv, defs, 30, 'x')
+  expect(clip.length).toBe(3)
+  expect(clip.channels['root.x'].keys.map(k => k.v)).toEqual([0, 0.01, 0.02])
+})
+
+test('headed: duplicate header name and per-row RobotType/DOF mismatch rejected', () => {
+  expect(() => csvToClip(edit(headed(3), r => { r[0][12] = r[0][11] }), defs, 60, 'x')).toThrow(`헤더에 같은 열 이름이 두 번 있습니다: ${defs.g1.joints[0].name}`)
+  expect(() => csvToClip(edit(headed(3), r => { r[3][1] = '1' }), defs, 60, 'x')).toThrow('RobotType/DOF 값이 행마다 다릅니다 (4행)')
+  expect(() => csvToClip(edit(headed(3), r => { r[3][2] = '12' }), defs, 60, 'x')).toThrow('RobotType/DOF 값이 행마다 다릅니다 (4행)')
+})
+
 test('headed: header detection is case-insensitive and CRLF safe', () => {
   const csv = headed(2).replace('frequency(fps)', ' Frequency(FPS) ').replace(/\n/g, '\r\n')
   expect(csvToClip(csv, defs, 60, 'x').length).toBe(2)

@@ -38,7 +38,6 @@ export interface EditorState {
   setIn(f: number | null): void; setOut(f: number | null): void
   addMarker(f: number): void; renameMarker(index: number, name: string): void; deleteMarker(index: number): void
   newClip(robot: RobotKind): string
-  importClip(clip: Clip): void
   // Put an imported clip on the first actor of its robot (created without a default clip if none), after its last item. Null if that track is locked.
   importClipToActor(clip: Clip): { actorId: string; itemId: string } | null
   simplifyClip(clipId: string, rot?: number, pos?: number): number
@@ -352,12 +351,6 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         edit(p => { p.clips[id] = { id, name: nextClipName(p, robot), robot, length: 120, channels: {} } }, [])
         return id
       },
-      importClip: clip => edit(p => {
-        const taken = new Set(Object.values(p.clips).filter(c => c.robot === clip.robot).map(c => c.name))
-        let name = clip.name
-        for (let n = 2; taken.has(name); n++) name = `${clip.name}_${n}`
-        p.clips[clip.id] = { ...clip, name }
-      }, []),
       importClipToActor: clip => {
         let out: { actorId: string; itemId: string } | null = null
         tryEdit(p => {

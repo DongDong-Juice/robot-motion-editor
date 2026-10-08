@@ -31,7 +31,11 @@ function parseHeadless(lines: Line[], srcFps: number): Parsed {
 // Headed (frequency(fps),RobotType,DOF Number,time(ms),...): columns found by name; time(ms) ignored.
 function parseHeaded(head: string[], lines: Line[], defs: RobotDefs): Parsed {
   const col = new Map<string, number>()
-  head.forEach((h, i) => { if (h && !col.has(h.toLowerCase())) col.set(h.toLowerCase(), i) })
+  head.forEach((h, i) => {
+    if (!h) return
+    if (col.has(h.toLowerCase())) throw new Error(`헤더에 같은 열 이름이 두 번 있습니다: ${h}`)
+    col.set(h.toLowerCase(), i)
+  })
   const idx = (name: string) => col.get(name.toLowerCase())
   const at = (name: string, row: string[], n: number) => {
     const v = num(row[idx(name)!] ?? '')
@@ -42,21 +46,21 @@ function parseHeaded(head: string[], lines: Line[], defs: RobotDefs): Parsed {
   const dof = at('DOF Number', lines[0].cells, lines[0].n)
   const robot = ROBOT_BY_DOF[dof]
   if (!robot) throw new Error(`DOF Number가 29(G1) 또는 12(GO2)가 아닙니다: ${dof}`)
-  if (idx('RobotType') !== undefined) {
-    const t = at('RobotType', lines[0].cells, lines[0].n)
-    if (t !== ROBOT_TYPE[robot]) throw new Error(`RobotType(${t})과 DOF Number(${dof})가 맞지 않습니다`)
-  }
+  const type = idx('RobotType') === undefined ? undefined : at('RobotType', lines[0].cells, lines[0].n)
+  if (type !== undefined && type !== ROBOT_TYPE[robot]) throw new Error(`RobotType(${type})과 DOF Number(${dof})가 맞지 않습니다`)
   const joints = defs[robot].joints.map(j => j.name)
   const missing = joints.filter(j => idx(j) === undefined)
   if (missing.length) throw new Error(`헤더에 관절 열이 없습니다: ${missing.join(', ')}`)
   const names = [...HEAD_FIXED.slice(4), ...joints]
   const need = Math.max(...names.map(n => idx(n)!), idx('frequency(fps)')!)
+  const typeCol = idx('RobotType')
   let fps = NaN
   const rows = lines.map(l => {
     if (l.cells.length <= need) throw new Error(`열 수가 헤더와 다릅니다 (${l.n}행)`)
     const f = at('frequency(fps)', l.cells, l.n)
     if (Number.isNaN(fps)) fps = f
     else if (f !== fps) throw new Error(`fps 값이 행마다 다릅니다 (${l.n}행)`)
+    if (at('DOF Number', l.cells, l.n) !== dof || (typeCol !== undefined && at('RobotType', l.cells, l.n) !== type)) throw new Error(`RobotType/DOF 값이 행마다 다릅니다 (${l.n}행)`)
     return names.map(n => at(n, l.cells, l.n))
   })
   if (fps !== 30 && fps !== 60) throw new Error(`지원하지 않는 fps입니다: ${fps}`)
@@ -69,7 +73,7 @@ export function csvToClip(text: string, defs: RobotDefs, srcFps: 30 | 60 | undef
   const lines: Line[] = []
   text.split(/\r?\n/).forEach((line, i) => { if (line.trim()) lines.push({ cells: line.split(',').map(s => s.trim()), n: i + 1 }) })
   if (!lines.length) throw new Error('데이터가 없습니다')
-  const headed = lines[0].cells[0].toLowerCase() === 'frequency(fps)'
+  const headed = lines[0].cells.some(c => c.toLowerCase() === 'frequency(fps)')
   if (headed && lines.length < 2) throw new Error('데이터가 없습니다')
   const { robot, rows, fps } = headed ? parseHeaded(lines[0].cells, lines.slice(1), defs) : parseHeadless(lines, srcFps ?? 60)
 

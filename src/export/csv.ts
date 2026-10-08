@@ -52,11 +52,11 @@ export const ROBOT_TYPE: Record<RobotKind, number> = { g1: 0, go2: 1 }
 export const HEAD_FIXED = ['frequency(fps)', 'RobotType', 'DOF Number', 'time(ms)', 'position X(m)', 'position Y(m)', 'position Z(m)',
   'quaternion X', 'quaternion Y', 'quaternion Z', 'quaternion W']
 
-// Unitree RL motion CSV: header + one row per frame, every line ends with a comma.
+// Unitree RL motion CSV: header + one row per frame, every line ends with a comma; lines joined by newlines.
 export const posesToCsv = (poses: Pose[], def: RobotDef): string =>
-  [[...HEAD_FIXED, ...def.joints.map(j => j.name)].join(',') + ',\n',
+  [[...HEAD_FIXED, ...def.joints.map(j => j.name)].join(',') + ',',
     ...poses.map((p, i) => [CSV_FPS, ROBOT_TYPE[def.kind], def.joints.length, Math.round(i * 1000 / CSV_FPS),
-      ...[...p.rootPos, ...p.rootQuat, ...p.q].map(fmt)].join(',') + ',\n')].join('')
+      ...[...p.rootPos, ...p.rootQuat, ...p.q].map(fmt)].join(',') + ',')].join('\n') // no newline after the last line, like the reference files
 
 export function csvFileName(p: Project, actorId: string, itemId: string, taken: Set<string>): string {
   const actor = p.actors.find(a => a.id === actorId)
