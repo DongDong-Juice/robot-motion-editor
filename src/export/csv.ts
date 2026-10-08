@@ -1,6 +1,7 @@
 import { evaluate, type Pose, type RobotDefs } from '../model/evaluate'
 import { quatMul, quatYaw, yawQuat, type Quat } from '../model/rootMath'
 import type { Item, Project } from '../model/types'
+import type { RobotDef, RobotKind } from '../robot/types'
 
 export type RootMode = 'local' | 'world'
 
@@ -46,8 +47,16 @@ const fmt = (v: number) => {
   return s === '-0.000000' ? '0.000000' : s
 }
 
-export const posesToCsv = (poses: Pose[]): string =>
-  poses.map(p => [...p.rootPos, ...p.rootQuat, ...p.q].map(fmt).join(',') + '\n').join('')
+export const CSV_FPS = 60
+export const ROBOT_TYPE: Record<RobotKind, number> = { g1: 0, go2: 1 }
+export const HEAD_FIXED = ['frequency(fps)', 'RobotType', 'DOF Number', 'time(ms)', 'position X(m)', 'position Y(m)', 'position Z(m)',
+  'quaternion X', 'quaternion Y', 'quaternion Z', 'quaternion W']
+
+// Unitree RL motion CSV: header + one row per frame, every line ends with a comma.
+export const posesToCsv = (poses: Pose[], def: RobotDef): string =>
+  [[...HEAD_FIXED, ...def.joints.map(j => j.name)].join(',') + ',\n',
+    ...poses.map((p, i) => [CSV_FPS, ROBOT_TYPE[def.kind], def.joints.length, Math.round(i * 1000 / CSV_FPS),
+      ...[...p.rootPos, ...p.rootQuat, ...p.q].map(fmt)].join(',') + ',\n')].join('')
 
 export function csvFileName(p: Project, actorId: string, itemId: string, taken: Set<string>): string {
   const actor = p.actors.find(a => a.id === actorId)

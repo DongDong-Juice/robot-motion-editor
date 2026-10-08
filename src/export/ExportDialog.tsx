@@ -41,7 +41,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
       const taken = new Set<string>()
       const files = checked.map(({ actor, item }) => ({
         name: csvFileName(project, actor.id, item.id, taken),
-        text: posesToCsv(samplePoses(project, defs, actor.id, item.id, mode)),
+        text: posesToCsv(samplePoses(project, defs, actor.id, item.id, mode), defs[actor.robot]),
       }))
       await writeTextFiles(dir, files)
       setMsg(`CSV ${files.length}개를 내보냈습니다.`)

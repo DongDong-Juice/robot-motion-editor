@@ -17,17 +17,29 @@ const [g1, go2] = proj.actors
 const itemOf = (p: Project, actorId: string) => p.sequence.tracks.find(t => t.actorId === actorId)!.items[0]
 const dot = (a: number[], b: number[]) => a.reduce((s, v, i) => s + v * b[i], 0)
 
-test('g1 csv: 36 cols, rows = item length, 6 decimals, no header', () => {
-  const rows = posesToCsv(samplePoses(proj, defs, g1.id, itemOf(proj, g1.id).id, 'world')).trimEnd().split('\n')
-  expect(rows).toHaveLength(120)
-  expect(rows[0].split(',')).toHaveLength(36)
-  expect(rows[0].split(',')[0]).toMatch(/^-?\d+\.\d{6}$/)
+const g1Csv = (p: Project, mode: 'local' | 'world' = 'world') => posesToCsv(samplePoses(p, defs, g1.id, itemOf(p, g1.id).id, mode), defs.g1)
+
+test('g1 csv: header, 41 fields per line incl. trailing comma, time ms, 6 decimals', () => {
+  const rows = g1Csv(proj).trimEnd().split('\n')
+  expect(rows).toHaveLength(121)
+  expect(rows[0]).toBe('frequency(fps),RobotType,DOF Number,time(ms),position X(m),position Y(m),position Z(m),quaternion X,quaternion Y,quaternion Z,quaternion W,'
+    + defs.g1.joints.map(j => j.name).join(',') + ',')
+  expect(rows[0].split(',')).toHaveLength(41)
+  expect(rows[1].split(',')).toHaveLength(41)
+  expect(rows[1].split(',').slice(0, 4)).toEqual(['60', '0', '29', '0'])
+  expect(rows.slice(1, 6).map(r => r.split(',')[3])).toEqual(['0', '17', '33', '50', '67'])
+  expect(rows[1].split(',')[4]).toMatch(/^-?\d+\.\d{6}$/)
+  expect(rows[1].endsWith(',')).toBe(true)
 })
 
-test('go2 csv: 19 cols', () => {
-  const csv = posesToCsv(samplePoses(proj, defs, go2.id, itemOf(proj, go2.id).id, 'world'))
-  expect(csv.endsWith('\n')).toBe(true)
-  expect(csv.split('\n')[0].split(',')).toHaveLength(19)
+test('go2 csv: 24 fields', () => {
+  const csv = posesToCsv(samplePoses(proj, defs, go2.id, itemOf(proj, go2.id).id, 'world'), defs.go2)
+  expect(csv.endsWith(',\n')).toBe(true)
+  const lines = csv.split('\n')
+  expect(lines[0].split(',')).toHaveLength(24)
+  expect(lines[0].split(',')[11]).toBe('FL_hip_joint')
+  expect(lines[1].split(',')).toHaveLength(24)
+  expect(lines[1].split(',').slice(0, 3)).toEqual(['60', '1', '12'])
 })
 
 test('itemFrameRange', () => {
@@ -35,8 +47,8 @@ test('itemFrameRange', () => {
 })
 
 test('negative zero written as 0.000000', () => {
-  expect(posesToCsv([{ rootPos: [-0, -1e-9, 0], rootQuat: [0, 0, 0, 1], q: [] }]))
-    .toBe('0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,1.000000\n')
+  const lines = posesToCsv([{ rootPos: [-0, -1e-9, 0], rootQuat: [0, 0, 0, 1], q: [] }], { ...defs.g1, joints: [] }).split('\n')
+  expect(lines[1]).toBe('60,0,0,0,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,1.000000,')
 })
 
 test('local mode: first row x=y=0, yaw=0', () => {
@@ -95,14 +107,14 @@ test('world csv rows equal evaluate() per frame (quat sign aside)', () => {
   clip.channels['root.yaw'] = { keys: [makeKey(10, 0.2, 'bezier'), makeKey(100, 3.5, 'bezier')] }
   clip.channels['root.pitch'] = { keys: [makeKey(0, 0.1, 'hold')] }
   clip.channels['left_elbow_joint'] = { keys: [makeKey(5, 0.3, 'linear'), makeKey(80, 1.1, 'linear')] }
-  const rows = posesToCsv(samplePoses(p, defs, g1.id, itemOf(p, g1.id).id, 'world')).trimEnd().split('\n')
+  const rows = g1Csv(p).trimEnd().split('\n').slice(1)
   const near = (a: number[], b: number[]) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], 6))
   rows.forEach((r, f) => {
     const n = r.split(',').map(Number), e = evaluate(p, defs, g1.id, f)
-    near(n.slice(0, 3), e.rootPos)
-    const sign = dot(n.slice(3, 7), e.rootQuat) < 0 ? -1 : 1
-    near(n.slice(3, 7), e.rootQuat.map(v => v * sign))
-    near(n.slice(7), e.q)
+    near(n.slice(4, 7), e.rootPos)
+    const sign = dot(n.slice(7, 11), e.rootQuat) < 0 ? -1 : 1
+    near(n.slice(7, 11), e.rootQuat.map(v => v * sign))
+    near(n.slice(11, 40), e.q)
   })
 })
 
@@ -111,5 +123,7 @@ test.each(['g1', 'go2'] as const)('%s csv joint order equals model.json revolute
   const names = m.joints.filter((j: { type: string }) => j.type === 'revolute').map((j: { name: string }) => j.name)
   expect(defs[k].joints.map(j => j.name)).toEqual(names)
   const q = new Array(names.length).fill(0)
-  expect(posesToCsv([{ rootPos: [0, 0, 0], rootQuat: [0, 0, 0, 1], q }]).trim().split(',')).toHaveLength(7 + names.length)
+  const lines = posesToCsv([{ rootPos: [0, 0, 0], rootQuat: [0, 0, 0, 1], q }], defs[k]).split('\n')
+  expect(lines[0].split(',').slice(11, -1)).toEqual(names)
+  expect(lines[1].split(',')).toHaveLength(12 + names.length)
 })

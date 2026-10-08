@@ -1,4 +1,5 @@
 import { loadDef } from '../test/defs'
+import { existsSync } from 'node:fs'
 import { expect, test } from 'vitest'
 
 import { newProject } from '../model/defaults'
@@ -19,7 +20,8 @@ const poseRows = (clip: Clip): Pose[] => {
 const expectCsvClose = (a: string, b: string, tol: number) => {
   const ra = a.trimEnd().split('\n'), rb = b.trimEnd().split('\n')
   expect(rb).toHaveLength(ra.length)
-  ra.forEach((r, i) => r.split(',').forEach((v, j) => expect(Math.abs(Number(v) - Number(rb[i].split(',')[j]))).toBeLessThan(tol)))
+  expect(rb[0]).toBe(ra[0])
+  ra.slice(1).forEach((r, i) => r.split(',').forEach((v, j) => expect(Math.abs(Number(v) - Number(rb[i + 1].split(',')[j]))).toBeLessThan(tol)))
 }
 const row = (n: number, over: Record<number, number> = {}) =>
   Array.from({ length: n }, (_, i) => (i === 6 ? 1 : over[i] ?? 0)).join(',')
@@ -33,11 +35,11 @@ test('roundtrip: export → import → export at 60fps equals', () => {
   clip.channels['root.yaw'] = { keys: [makeKey(0, 0.2, 'bezier'), makeKey(100, 3.5, 'bezier')] }
   clip.channels['root.pitch'] = { keys: [makeKey(0, 0.1, 'hold')] }
   clip.channels['left_elbow_joint'] = { keys: [makeKey(5, 0.3, 'linear'), makeKey(80, 1.1, 'linear')] }
-  const csv1 = posesToCsv(samplePoses(proj, defs, g1.id, item.id, 'world'))
-  const imp = csvToClip(csv1, defs, 60, 'rt')
+  const csv1 = posesToCsv(samplePoses(proj, defs, g1.id, item.id, 'world'), defs.g1)
+  const imp = csvToClip(csv1, defs, undefined, 'rt')
   expect(imp.robot).toBe('g1')
   expect(imp.length).toBe(120)
-  expectCsvClose(csv1, posesToCsv(poseRows(imp)), 1e-5)
+  expectCsvClose(csv1, posesToCsv(poseRows(imp), defs.g1), 1e-5)
 })
 
 test('30fps resampled to 60fps (2N-1 frames, midpoints interpolated)', () => {
@@ -76,4 +78,78 @@ test('rejects hex/Infinity/overflow; column error names the row', () => {
 
 ${row(19)}
 `, defs, 60, 'x')).toThrow('19 (3행)')
+})
+
+// ---- headed (new) format ----
+const neutral = (n: number, def = defs.g1): Pose[] =>
+  Array.from({ length: n }, (_, i) => ({ rootPos: [i * 0.01, 0, 0.8], rootQuat: [0, 0, 0, 1], q: def.joints.map((_, j) => 0.001 * (i + j)) }))
+const headed = (n: number, def = defs.g1) => posesToCsv(neutral(n, def), def)
+const edit = (csv: string, fn: (rows: string[][]) => void) => {
+  const rows = csv.trimEnd().split('\n').map(l => l.split(','))
+  fn(rows)
+  return rows.map(r => r.join(',')).join('\n') + '\n'
+}
+
+test('headed: g1/go2 detected from DOF, time ignored, fps from the file', () => {
+  const g = csvToClip(headed(5), defs, 30, 'x') // caller fps ignored for headed files
+  expect(g.robot).toBe('g1')
+  expect(g.length).toBe(5)
+  expect(g.channels['root.x'].keys.map(k => k.v)).toEqual([0, 0.01, 0.02, 0.03, 0.04])
+  const o = csvToClip(headed(4, defs.go2), defs, undefined, 'x')
+  expect(o.robot).toBe('go2')
+  expect(o.channels.FL_hip_joint.keys).toHaveLength(4)
+  const t = csvToClip(edit(headed(3), r => { r[2][3] = '99999' }), defs, 60, 'x') // time(ms) ignored
+  expect(t.length).toBe(3)
+})
+
+test('headed: columns mapped by name, any order', () => {
+  const csv = headed(3)
+  const order = [0, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 40, ...Array.from({ length: 29 }, (_, i) => 39 - i)]
+  const shuffled = csv.trimEnd().split('\n').map(l => { const c = l.split(','); return order.map(i => c[i]).join(',') }).join('\n')
+  const a = csvToClip(csv, defs, 60, 'x'), b = csvToClip(shuffled, defs, 60, 'x')
+  expect(Object.keys(b.channels).sort()).toEqual(Object.keys(a.channels).sort())
+  for (const k of Object.keys(a.channels)) expect(b.channels[k].keys.map(v => v.v)).toEqual(a.channels[k].keys.map(v => v.v))
+})
+
+test('headed 30fps resampled to 60fps (2N-1 frames)', () => {
+  const csv = edit(headed(3), r => r.slice(1).forEach(x => { x[0] = '30' }))
+  const clip = csvToClip(csv, defs, 60, 'x')
+  expect(clip.length).toBe(5)
+  expect(clip.channels['root.x'].keys.map(k => k.v)).toEqual([0, 0.005, 0.01, 0.015, 0.02])
+})
+
+test('headed: errors are Korean and name the row', () => {
+  expect(() => csvToClip(edit(headed(3), r => { r[3][0] = '30' }), defs, 60, 'x')).toThrow('fps 값이 행마다 다릅니다')
+  expect(() => csvToClip(edit(headed(3), r => r.slice(1).forEach(x => { x[0] = '24' })), defs, 60, 'x')).toThrow('지원하지 않는 fps입니다: 24')
+  expect(() => csvToClip(edit(headed(3), r => r.slice(1).forEach(x => { x[1] = '1' })), defs, 60, 'x')).toThrow('RobotType')
+  expect(() => csvToClip(edit(headed(3), r => r.slice(1).forEach(x => { x[2] = '7' })), defs, 60, 'x')).toThrow('DOF Number')
+  expect(() => csvToClip(edit(headed(3), r => { r[0][12] = 'bogus' }), defs, 60, 'x')).toThrow(`헤더에 관절 열이 없습니다: ${defs.g1.joints[1].name}`)
+  expect(() => csvToClip(edit(headed(3), r => { r[2][5] = 'abc' }), defs, 60, 'x')).toThrow('3행에 숫자가 아닌')
+  expect(() => csvToClip(edit(headed(3), r => { r[2].length = 20 }), defs, 60, 'x')).toThrow('3행')
+  expect(() => csvToClip(headed(0), defs, 60, 'x')).toThrow('데이터가 없습니다')
+})
+
+test('headed: header detection is case-insensitive and CRLF safe', () => {
+  const csv = headed(2).replace('frequency(fps)', ' Frequency(FPS) ').replace(/\n/g, '\r\n')
+  expect(csvToClip(csv, defs, 60, 'x').length).toBe(2)
+})
+
+test('roundtrip headed: export → import → export is identical, 30fps path untouched by headed 60', () => {
+  const csv1 = headed(30)
+  const clip = csvToClip(csv1, defs, undefined, 'rt')
+  expect(posesToCsv(poseRows(clip), defs.g1)).toBe(csv1)
+  const csv2 = headed(12, defs.go2)
+  expect(posesToCsv(poseRows(csvToClip(csv2, defs, undefined, 'rt')), defs.go2)).toBe(csv2)
+})
+
+const SAMPLE = new URL('../../assets/data/Track1_원본_합본.csv', import.meta.url)
+test.skipIf(!existsSync(SAMPLE))('real sample: header and first 300 rows import as G1 60fps', async () => {
+  const { openSync, readSync, closeSync } = await import('node:fs')
+  const fd = openSync(SAMPLE, 'r'), buf = Buffer.alloc(300 * 800)
+  const n = readSync(fd, buf, 0, buf.length, 0); closeSync(fd)
+  const text = buf.subarray(0, n).toString('utf8').split('\n').slice(0, 301).join('\n') + '\n'
+  const clip = csvToClip(text, defs, undefined, 'sample')
+  expect(clip.robot).toBe('g1')
+  expect(clip.length).toBe(300)
+  expect(clip.channels.left_knee_joint.keys).toHaveLength(300)
 })
