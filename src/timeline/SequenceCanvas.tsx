@@ -33,8 +33,8 @@ function drawLock(ctx: CanvasRenderingContext2D, cx: number, cy: number, on: boo
   ctx.restore()
 }
 const isVideo = (t: Track) => t.kind === 'video'
-// "<clip name> · <start>–<end>" of a child row (sequence frames)
-const childLabel = (it: Item, name: string) => `${name} · ${formatTimecode(it.start)}–${formatTimecode(it.start + itemLen(it))}`
+// "<start>–<end> · <clip name>" of a child row (sequence frames); time first since split pieces share a clip name
+const childLabel = (it: Item, name: string) => `${formatTimecode(it.start)}–${formatTimecode(it.start + itemLen(it))} · ${name}`
 // text cut to `w` px with an ellipsis
 function fit(ctx: CanvasRenderingContext2D, text: string, w: number) {
   if (ctx.measureText(text).width <= w) return text
