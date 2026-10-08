@@ -7,14 +7,15 @@ import { followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { sequenceEnd } from '../transport'
 import { drawRuler, hitMarker, LABEL_W, RULER_H } from './ruler'
 import { mediaUrl, subscribeMedia } from '../media/registry'
-import { frameToX, hoverFrame, hoverScrub, xToFrame, type TimeScale } from './timeScale'
+import { formatTimecode, frameToX, hoverFrame, hoverScrub, xToFrame, type TimeScale } from './timeScale'
 
-const ROW_H = 28, EDGE = 6
+const ROW_H = 28, CHILD_H = 22, EDGE = 6
 const ROBOT = { g1: 'G1', go2: 'GO2' } as const
 const DENY = '이 위치에 놓을 수 없습니다'
 const LOCKED = '잠긴 트랙입니다'
 const ICON_HIT = 18 // hit area; icons are drawn 14px, eye then padlock at the label column's right edge
 const EYE_X = LABEL_W - 36, LOCK_X = LABEL_W - 16
+const TRI_W = 18, NAME_X = 20, CHILD_X = NAME_X + 16 // disclosure triangle hit width; track / child label x
 
 // Eye (slashed when the track is hidden) and padlock (shackle open when unlocked); `on` = accent, off = line.
 function drawEye(ctx: CanvasRenderingContext2D, cx: number, cy: number, on: boolean, col: string) {
@@ -32,6 +33,17 @@ function drawLock(ctx: CanvasRenderingContext2D, cx: number, cy: number, on: boo
   ctx.restore()
 }
 const isVideo = (t: Track) => t.kind === 'video'
+// "<clip name> · <start>–<end>" of a child row (sequence frames)
+const childLabel = (it: Item, name: string) => `${name} · ${formatTimecode(it.start)}–${formatTimecode(it.start + itemLen(it))}`
+// text cut to `w` px with an ellipsis
+function fit(ctx: CanvasRenderingContext2D, text: string, w: number) {
+  if (ctx.measureText(text).width <= w) return text
+  let n = text.length
+  while (n > 0 && ctx.measureText(text.slice(0, n) + '…').width > w) n--
+  return text.slice(0, n) + '…'
+}
+// Label column rows: one per track, plus (expanded motion tracks) one child per item in time order; y is canvas px.
+interface Row { t: Track; it?: Item; y: number; h: number }
 
 // In-progress drag preview; the store is untouched until mouseup.
 interface Drag { itemId: string; mode: 'move' | 'in' | 'out'; df: number }
@@ -45,13 +57,19 @@ export default function SequenceCanvas() {
   const cancel = useRef(false)
   const renaming = useRef(false)
   renaming.current = !!rename
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set()) // track ids with their item list open (UI only, not saved)
+  const exp = useRef(expanded)
+  exp.current = expanded
+  const redraw = useRef<() => void>(() => {})
+  useEffect(() => redraw.current(), [expanded])
+  const toggle = (id: string) => setExpanded(e => { const n = new Set(e); if (!n.delete(id)) n.add(id); return n })
 
   useEffect(() => {
     const canvas = cv.current!, ed = getEditor()
     const css = getComputedStyle(document.documentElement)
     const col = (n: string) => css.getPropertyValue(n).trim()
     const C = { bg: col('--bg'), panel: col('--panel'), line: col('--line'), text: col('--text'), accent: col('--accent') }
-    let W = 0, H = 0, raf = 0, drag: Drag | null = null, timer = 0
+    let W = 0, H = 0, raf = 0, drag: Drag | null = null, timer = 0, scrollY = 0
 
     const scale = (): TimeScale => ({ x0: LABEL_W - tv.scrollF * tv.ppf, pxPerFrame: tv.ppf })
     // V1 (always first) only shows once the project has media
@@ -66,12 +84,23 @@ export default function SequenceCanvas() {
       if (drag.mode === 'in') { const k = Math.min(Math.max(d, -it.trimIn), itemLen(it) - 1); return { ...it, start: it.start + k, trimIn: it.trimIn + k } }
       return { ...it, trimOut: it.trimOut + Math.min(Math.max(d, 1 - itemLen(it)), clipLen - it.trimOut) }
     })
+    const layout = (): Row[] => {
+      const out: Row[] = []
+      let y = RULER_H - scrollY
+      for (const t of tracks()) {
+        out.push({ t, y, h: ROW_H }); y += ROW_H
+        if (!isVideo(t) && exp.current.has(t.id)) for (const it of sortedItems(t)) { out.push({ t, it, y, h: CHILD_H }); y += CHILD_H }
+      }
+      return out
+    }
     const flash = (text: string, row: number) => {
-      setMsg({ text, left: LABEL_W + 4, top: RULER_H + (row + 1) * ROW_H + 2 })
+      const r = layout()[row]
+      if (!r) return
+      setMsg({ text, left: LABEL_W + 4, top: r.y + r.h + 2 })
       clearTimeout(timer); timer = window.setTimeout(() => setMsg(null), 2000)
     }
 
-    seqFlash.fn = (text, itemId) => flash(text, tracks().findIndex(t => t.items.some(i => i.id === itemId)))
+    seqFlash.fn = (text, itemId) => flash(text, layout().findIndex(r => !r.it && r.t.items.some(i => i.id === itemId)))
 
     const draw = () => {
       raf = 0
@@ -91,9 +120,27 @@ export default function SequenceCanvas() {
         }
         ctx.stroke(); ctx.restore()
       }
-      tracks().forEach((t, i) => {
-        const y = RULER_H + i * ROW_H, actor = s.project.actors.find(a => a.id === t.actorId), video = isVideo(t)
+      const rows = layout(), total = rows.reduce((a, r) => a + r.h, 0)
+      const maxY = Math.max(0, total - (H - RULER_H))
+      if (scrollY > maxY) { scrollY = maxY; schedule() } // rows collapsed or the panel grew
+      rows.forEach(r => {
+        const { t, y } = r, actor = s.project.actors.find(a => a.id === t.actorId), video = isVideo(t)
         const color = actor?.color ?? C.text
+        if (r.it) { // child row: faint span bar, indented "<clip> · start–end"
+          const it = shown(t).find(i => i.id === r.it!.id) ?? r.it, h = r.h
+          ctx.fillStyle = C.line; ctx.fillRect(0, y + h - 1, W, 1)
+          ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, y, W - LABEL_W, h); ctx.clip()
+          const x = frameToX(sc, it.start), w = itemLen(it) * tv.ppf
+          ctx.globalAlpha = 0.25; ctx.fillStyle = color; ctx.fillRect(x, y + 3, w, h - 7); ctx.globalAlpha = 1
+          if (it.id === s.selItem) { ctx.strokeStyle = C.accent; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 3.5, w - 1, h - 8) }
+          ctx.restore()
+          ctx.fillStyle = C.bg; ctx.fillRect(0, y, LABEL_W - 1, h - 1)
+          ctx.font = '10px "IBM Plex Sans KR", sans-serif'
+          ctx.fillStyle = it.id === s.selItem ? C.accent : C.text
+          ctx.fillText(fit(ctx, childLabel(it, refName(it)), LABEL_W - CHILD_X - 6), CHILD_X, y + h / 2)
+          ctx.font = '11px "IBM Plex Sans KR", sans-serif'
+          return
+        }
         ctx.fillStyle = C.line; ctx.fillRect(0, y + ROW_H - 1, W, 1)
         ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, y, W - LABEL_W, ROW_H); ctx.clip()
         const ga = t.locked ? 0.5 : 1 // locked bars: half transparent, no hatch
@@ -121,7 +168,8 @@ export default function SequenceCanvas() {
         ctx.restore()
         ctx.fillStyle = C.bg; ctx.fillRect(0, y, LABEL_W, ROW_H - 1)
         ctx.globalAlpha = t.hidden ? 0.4 : 1
-        ctx.fillStyle = color; ctx.fillText(video ? 'V1 참조영상' : actor?.name ?? '', 8, y + ROW_H / 2, EYE_X - 9 - 12)
+        if (!video) { ctx.fillStyle = C.text; ctx.fillText(exp.current.has(t.id) ? '▾' : '▸', 6, y + ROW_H / 2) }
+        ctx.fillStyle = color; ctx.fillText(video ? 'V1 참조영상' : actor?.name ?? '', video ? 8 : NAME_X, y + ROW_H / 2, EYE_X - 9 - (video ? 8 : NAME_X))
         ctx.globalAlpha = 1
         drawEye(ctx, EYE_X, y + ROW_H / 2, t.hidden, t.hidden ? C.accent : C.line)
         drawLock(ctx, LOCK_X, y + ROW_H / 2, t.locked, t.locked ? C.accent : C.line)
@@ -132,6 +180,7 @@ export default function SequenceCanvas() {
       ctx.fillStyle = C.line; ctx.fillRect(LABEL_W - 1, 0, 1, H)
     }
     const schedule = () => { if (!raf) raf = requestAnimationFrame(draw) }
+    redraw.current = schedule
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1, r = canvas.getBoundingClientRect()
@@ -150,11 +199,11 @@ export default function SequenceCanvas() {
       const end = (e: MouseEvent) => { removeEventListener('mousemove', mv); removeEventListener('mouseup', end); up(e) }
       addEventListener('mousemove', mv); addEventListener('mouseup', end)
     }
-    const rowAt = (y: number) => Math.floor((y - RULER_H) / ROW_H)
-    // topmost item under (x, y) with the zone of the hit
+    const rowAt = (y: number) => y < RULER_H ? -1 : layout().findIndex(r => y >= r.y && y < r.y + r.h)
+    // topmost item under (x, y) with the zone of the hit (track rows only; child rows are not draggable)
     const itemAt = (x: number, y: number) => {
-      const t = tracks()[rowAt(y)]
-      if (!t || y < RULER_H || x < LABEL_W) return null
+      const r = layout()[rowAt(y)], t = r?.t
+      if (!t || r.it || y < RULER_H || x < LABEL_W) return null
       const sc = scale()
       const items = sortedItems(t).reverse() // later item wins
       const span = (i: Item) => { const x0 = frameToX(sc, i.start), x1 = frameToX(sc, i.start + itemLen(i)); return { x0, x1, edge: Math.min(EDGE, (x1 - x0) / 3) } }
@@ -177,10 +226,18 @@ export default function SequenceCanvas() {
         s.setFrame(frameAt(x)); track(m => s.setFrame(frameAt(pos(m).x)), () => {})
         return
       }
+      const r = layout()[row]
+      if (r?.it) { // child row (label or time area): select the item and preview it
+        s.selectItem(r.it.id)
+        if (r.t.actorId) s.select(r.t.actorId)
+        s.openItemPreview(r.it.id)
+        return
+      }
       if (x < LABEL_W) {
-        const t = tracks()[row]
+        const t = r?.t
         if (!t) return
-        if (Math.abs(x - EYE_X) <= ICON_HIT / 2) s.setTrackFlag(t.id, 'hidden', !t.hidden)
+        if (!isVideo(t) && x < TRI_W) setExpanded(e => { const n = new Set(e); if (!n.delete(t.id)) n.add(t.id); return n })
+        else if (Math.abs(x - EYE_X) <= ICON_HIT / 2) s.setTrackFlag(t.id, 'hidden', !t.hidden)
         else if (Math.abs(x - LOCK_X) <= ICON_HIT / 2) s.setTrackFlag(t.id, 'locked', !t.locked)
         else if (t.actorId) s.select(t.actorId)
         return
@@ -242,6 +299,8 @@ export default function SequenceCanvas() {
         const { x } = pos(e), fAt = tv.scrollF + (x - LABEL_W) / tv.ppf
         tv.ppf = Math.min(Math.max(tv.ppf * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 0.5), 40)
         tv.scrollF = Math.max(0, fAt - (x - LABEL_W) / tv.ppf)
+      } else if (e.shiftKey) { // vertical scroll; clamped in draw
+        scrollY = Math.max(0, scrollY + (e.deltaY || e.deltaX))
       } else tv.scrollF = Math.max(0, tv.scrollF + (e.deltaY + e.deltaX) / tv.ppf)
       schedule()
     }
@@ -251,7 +310,7 @@ export default function SequenceCanvas() {
       const clipId = e.dataTransfer?.getData('application/x-motion-clip'), mediaId = e.dataTransfer?.getData('application/x-motion-media')
       if (!clipId && !mediaId) return
       e.preventDefault()
-      const { x, y } = pos(e), row = rowAt(y), t = tracks()[row], s = ed.getState()
+      const { x, y } = pos(e), row = rowAt(y), t = layout()[row]?.t, s = ed.getState() // a child row drops onto its track
       if (!t || y < RULER_H || x < LABEL_W) return
       if (t.locked) { flash(LOCKED, row); return }
       if (mediaId) {
@@ -303,7 +362,20 @@ export default function SequenceCanvas() {
           const name = isVideo(t) ? 'V1 참조영상' : project.actors.find(a => a.id === t.actorId)?.name ?? ''
           const flag = (f: 'hidden' | 'locked', label: string) =>
             <button aria-pressed={t[f]} onClick={() => getEditor().getState().setTrackFlag(t.id, f, !t[f])}>{name} {label}</button>
-          return <span key={t.id}>{flag('hidden', '숨기기')}{flag('locked', '잠그기')}</span>
+          const open = !isVideo(t) && expanded.has(t.id)
+          return (
+            <span key={t.id}>
+              {!isVideo(t) && <button aria-expanded={open} onClick={() => toggle(t.id)}
+                onKeyDown={e => { if (e.key === ' ') e.stopPropagation() }}>{name} 클립 목록</button>}
+              {flag('hidden', '숨기기')}{flag('locked', '잠그기')}
+              {open && sortedItems(t).map(it => (
+                <button key={it.id} onClick={() => { const s = getEditor().getState(); s.selectItem(it.id); s.openItemPreview(it.id) }}
+                  onKeyDown={e => { if (e.key === ' ') e.stopPropagation() }}>
+                  {childLabel(it, project.clips[it.refId]?.name ?? '')} 클립 프리뷰
+                </button>
+              ))}
+            </span>
+          )
         })}
       </div>
       {!rows.length && <div className="seq-empty">CSV 가져오기로 모션을 불러오세요</div>}
