@@ -13,6 +13,7 @@ import { onMessage } from './projectActions'
 import FileMenu from './FileMenu'
 import CsvFpsDialog from './project/CsvFpsDialog'
 import { MENUBAR_H, layoutBounds, useLayout, type Layout } from './layout/useLayout'
+import { tv } from './timeline/viewState'
 
 function AutoKeyHint() {
   const off = useEditor(s => !s.autoKey && !!s.sel.channel && !s.sel.channel.startsWith('group:'))
@@ -107,7 +108,7 @@ export default function App() {
 
   useEffect(() => {
     Promise.all([fetchRobotDef('g1'), fetchRobotDef('go2')])
-      .then(([g1, go2]) => { initEditor({ g1, go2 }); if (import.meta.env.DEV) (window as any).__editor = getEditor(); setStatus('ready') })
+      .then(([g1, go2]) => { initEditor({ g1, go2 }); if (import.meta.env.DEV) (window as any).__editor = getEditor(), (window as any).__tv = tv; setStatus('ready') })
       .catch(e => setStatus(`로봇 불러오기 실패: ${e instanceof Error ? e.message : e}`))
   }, [])
 

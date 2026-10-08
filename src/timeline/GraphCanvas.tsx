@@ -5,6 +5,7 @@ import type { Curve, Key, Sequence } from '../model/types'
 import { evalCurve } from '../model/curve'
 import { fitView, handlePoints, valueToY, velocityViolations, yToValue, type ValueScale } from './graph'
 import { frameToX, hoverFrame, hoverScrub, ROOT_CHANNELS, type TimeScale } from './timeScale'
+import { followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { drawRuler, LABEL_W, RULER_H } from './ruler'
 import { tv } from './viewState'
 
@@ -84,6 +85,8 @@ export default function GraphCanvas() {
 
     const draw = () => {
       raf = 0
+      const st = ed.getState(), e0 = editingItem(st)
+      if (e0 && followStep({ frame: st.frame, playF: st.frame - (e0.item.start - e0.item.trimIn), playing: st.playing, visibleF: (W - LABEL_W) / tv.ppf, contentEnd: e0.clip.length })) schedule()
       const dpr = window.devicePixelRatio || 1, ctx = canvas.getContext('2d')!
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H)
@@ -185,6 +188,7 @@ export default function GraphCanvas() {
       canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr)
       schedule()
     }
+    resetFollow()
     const ro = new ResizeObserver(resize); ro.observe(canvas); resize()
     const unsub = ed.subscribe(schedule)
 
@@ -253,7 +257,7 @@ export default function GraphCanvas() {
       })
     }
 
-    const hover = hoverScrub(() => ed.getState().frame, f => ed.getState().setFrame(f))
+    const hover = hoverScrub(() => ed.getState().frame, f => { markHover(); ed.getState().setFrame(f) })
     const onMove = (e: MouseEvent) => {
       const x = pos(e).x
       const f = hoverFrame(x, LABEL_W, scale(), e.buttons !== 0 || ed.getState().playing || !editingItem(ed.getState()))
@@ -262,6 +266,7 @@ export default function GraphCanvas() {
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
+      markUserScroll()
       if (e.ctrlKey) {
         const { x } = pos(e), fAt = tv.scrollF + (x - LABEL_W) / tv.ppf
         tv.ppf = Math.min(Math.max(tv.ppf * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 0.5), 40)

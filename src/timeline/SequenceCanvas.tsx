@@ -3,6 +3,8 @@ import { getEditor, useEditor } from '../store/store'
 import { itemLen, sortedItems } from '../model/sequence'
 import type { Item, Track } from '../model/types'
 import { seqFlash, tv } from './viewState'
+import { followStep, markHover, markUserScroll, resetFollow } from './follow'
+import { sequenceEnd } from '../transport'
 import { drawRuler, hitMarker, LABEL_W, RULER_H } from './ruler'
 import { mediaUrl, subscribeMedia } from '../media/registry'
 import { frameToX, hoverFrame, hoverScrub, xToFrame, type TimeScale } from './timeScale'
@@ -73,7 +75,9 @@ export default function SequenceCanvas() {
 
     const draw = () => {
       raf = 0
-      const s = ed.getState(), dpr = window.devicePixelRatio || 1, sc = scale()
+      const s = ed.getState(), dpr = window.devicePixelRatio || 1
+      if (followStep({ frame: s.frame, playF: s.frame, playing: s.playing, visibleF: (W - LABEL_W) / tv.ppf, contentEnd: sequenceEnd(s.project) })) schedule()
+      const sc = scale()
       const ctx = canvas.getContext('2d')!
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H)
@@ -135,6 +139,7 @@ export default function SequenceCanvas() {
       canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr)
       schedule()
     }
+    resetFollow()
     const ro = new ResizeObserver(resize); ro.observe(canvas); resize()
     const unsub = ed.subscribe(schedule), unsubMedia = subscribeMedia(schedule)
 
@@ -222,7 +227,7 @@ export default function SequenceCanvas() {
       if (mi !== null) s.deleteMarker(mi)
     }
 
-    const hover = hoverScrub(() => ed.getState().frame, f => ed.getState().setFrame(f))
+    const hover = hoverScrub(() => ed.getState().frame, f => { markHover(); ed.getState().setFrame(f) })
     const onMove = (e: MouseEvent) => {
       const { x, y } = pos(e), h = itemAt(x, y)
       canvas.style.cursor = h && h.mode !== 'move' ? 'ew-resize' : ''
@@ -232,6 +237,7 @@ export default function SequenceCanvas() {
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
+      markUserScroll()
       if (e.ctrlKey) {
         const { x } = pos(e), fAt = tv.scrollF + (x - LABEL_W) / tv.ppf
         tv.ppf = Math.min(Math.max(tv.ppf * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 0.5), 40)

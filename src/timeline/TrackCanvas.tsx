@@ -4,6 +4,7 @@ import { clampDf, clipLocked, editingItem, editTarget, getEditor, type KeyRef } 
 import type { Interp, Sequence } from '../model/types'
 import { tv } from './viewState'
 import { buildRows, frameToX, hitKey, hoverFrame, hoverScrub, keysIn, rowKey, xToFrame, type TimeScale } from './timeScale'
+import { followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { drawRuler, LABEL_W, RULER_H } from './ruler'
 
 const ROW_H = 20, KEY = 7
@@ -52,6 +53,8 @@ export default function TrackCanvas() {
     const draw = () => {
       raf = 0
       const s = ed.getState(), dpr = window.devicePixelRatio || 1
+      const e0 = editingItem(s)
+      if (e0 && followStep({ frame: s.frame, playF: s.frame - (e0.item.start - e0.item.trimIn), playing: s.playing, visibleF: (W - LABEL_W) / tv.ppf, contentEnd: e0.clip.length })) schedule()
       const ctx = canvas.getContext('2d')!
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H)
@@ -120,6 +123,7 @@ export default function TrackCanvas() {
       canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr)
       schedule()
     }
+    resetFollow()
     const ro = new ResizeObserver(resize); ro.observe(canvas); resize()
     const unsub = ed.subscribe(schedule)
 
@@ -211,7 +215,7 @@ export default function TrackCanvas() {
       })
     }
 
-    const hover = hoverScrub(() => ed.getState().frame, f => ed.getState().setFrame(f))
+    const hover = hoverScrub(() => ed.getState().frame, f => { markHover(); ed.getState().setFrame(f) })
     const onMove = (e: MouseEvent) => {
       const f = hoverFrame(pos(e).x, LABEL_W, scale(), e.buttons !== 0 || ed.getState().playing || menuOpen.current || !editingItem(ed.getState()))
       if (f !== null) hover.push(toSeq(f))
@@ -219,6 +223,7 @@ export default function TrackCanvas() {
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
+      markUserScroll()
       if (e.ctrlKey) {
         const { x } = pos(e), fAt = tv.scrollF + (x - LABEL_W) / tv.ppf
         tv.ppf = Math.min(Math.max(tv.ppf * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 0.5), 40)
