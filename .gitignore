@@ -1,9 +1,7 @@
 node_modules
 dist
-.serena
 test-results
-.superpowers
-assets
 *.tsbuildinfo
 .playwright-mcp
 playwright-report
+assets/video/
