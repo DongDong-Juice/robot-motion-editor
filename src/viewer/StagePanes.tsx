@@ -12,11 +12,10 @@ const STEP = 0.02
 const SEP = 6 // .pane-sep width, px
 const TITLE = 24 // .pane-title height, px
 
-// "<actor name> / <clip name>" of a compare pane (first item on the actor's track)
+// "<clip name> (<G1|GO2>)" of a compare pane
 const useCompareLabel = (id: string) => useEditor(s => {
-  const a = s.project.actors.find(a => a.id === id)
-  const it = s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === id)?.items[0]
-  return `${a?.name ?? ''} / ${(it && s.project.clips[it.refId]?.name) ?? ''}`
+  const c = s.project.clips[id]
+  return c ? `${c.name} (${c.robot.toUpperCase()})` : ''
 })
 function CompareTitle({ id }: { id: string }) {
   return (
@@ -178,7 +177,7 @@ export default function StagePanes({ robot }: { robot: ReactNode }) {
                 onDoubleClick={() => setRatios(equalRatios(n))} onKeyDown={e => rowKey(e, i)} />
               <section className="pane pane-robot" aria-label="비교 프리뷰" style={{ flex: `${ratios[i + 1]} 1 0` }}>
                 <CompareTitle id={id} />
-                <div className="stage-3d"><Stage pane={id} /></div>
+                <div className="stage-3d"><Stage compareClipId={id} /></div>
               </section>
             </Fragment>
           )

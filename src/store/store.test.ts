@@ -627,46 +627,43 @@ test('importClipToActor: creates the actor (no default clip) and places the clip
   expect(p.sequence.tracks[0].items).toEqual([{ id: r.itemId, refId: clip.id, start: 0, trimIn: 0, trimOut: 50 }])
 })
 
-test('importClipToActor: appends to the first actor of that robot after its last item', () => {
+test('importClipToActor: an existing actor of that robot gets the clip as an asset only', () => {
   const e = createEditorStore(defs, emptyProject())
   const a = e.getState().importClipToActor(impClip('g1', 'a', 50))!
-  e.getState().addActor('g1') // a second G1 must be ignored
-  const b = e.getState().importClipToActor(impClip('g1', 'b', 30))!
+  expect(e.getState().importClipToActor(impClip('g1', 'b', 30))).toBeNull() // nothing placed
   const o = e.getState().importClipToActor(impClip('go2', 'o', 20))!
-  expect(b.actorId).toBe(a.actorId)
   expect(o.actorId).not.toBe(a.actorId)
   const p = e.getState().project
-  const items = p.sequence.tracks.find(t => t.actorId === a.actorId)!.items
-  expect(items.map(i => [i.start, i.trimOut])).toEqual([[0, 50], [50, 30]])
-  expect(p.sequence.tracks.find(t => t.actorId === o.actorId)!.items[0].start).toBe(0)
+  expect(p.actors.map(x => x.robot)).toEqual(['g1', 'go2'])
+  expect(Object.values(p.clips).map(c => c.name)).toEqual(['a', 'b', 'o'])
+  expect(p.sequence.tracks.find(t => t.actorId === a.actorId)!.items).toHaveLength(1)
+  expect(p.sequence.tracks.find(t => t.actorId === o.actorId)!.items).toHaveLength(1)
 })
 
-test('importClipToActor: appends at 0 when the actor track is empty; locked track rejects', () => {
-  const e = createEditorStore(defs, emptyProject())
-  e.getState().addActor('g1')
-  const id = e.getState().project.actors[0].id
-  e.getState().deleteItem(e.getState().project.sequence.tracks[0].items[0].id)
-  expect(e.getState().importClipToActor(impClip('g1', 'a'))!.actorId).toBe(id)
-  expect(e.getState().project.sequence.tracks[0].items[0].start).toBe(0)
-  e.getState().setTrackFlag(e.getState().project.sequence.tracks[0].id, 'locked', true)
-  const n = Object.keys(e.getState().project.clips).length
-  expect(e.getState().importClipToActor(impClip('g1', 'b'))).toBeNull()
-  expect(Object.keys(e.getState().project.clips)).toHaveLength(n)
-})
-
-test('importClipToActor: a gesture batch is one undo entry', () => {
+test('importClipToActor: a gesture batch is one undo entry; first file per robot is placed, the rest are assets', () => {
   const e = createEditorStore(defs, emptyProject())
   e.getState().beginGesture()
   e.getState().importClipToActor(impClip('g1', 'a'))
   e.getState().importClipToActor(impClip('g1', 'b'))
   e.getState().importClipToActor(impClip('go2', 'c'))
   e.getState().endGesture()
-  expect(e.getState().project.actors).toHaveLength(2)
+  const p = e.getState().project
+  expect(p.actors).toHaveLength(2)
+  expect(p.sequence.tracks.map(t => t.items.length)).toEqual([1, 1])
+  expect(Object.keys(p.clips)).toHaveLength(3)
   e.getState().undo()
   expect(e.getState().project.actors).toHaveLength(0)
   expect(Object.keys(e.getState().project.clips)).toHaveLength(0)
   e.getState().undo() // nothing further
   expect(e.getState().project.actors).toHaveLength(0)
+})
+
+test('importClipToActor: a later batch adds a clip only', () => {
+  const e = createEditorStore(defs, emptyProject())
+  e.getState().importClipToActor(impClip('g1', 'a'))
+  e.getState().importClipToActor(impClip('g1', 'b'))
+  const p = e.getState().project
+  expect([p.actors.length, p.sequence.tracks[0].items.length, Object.keys(p.clips).length]).toEqual([1, 1, 2])
 })
 
 test('newProjectFile starts empty; omitted initial project keeps the demo actors', () => {
@@ -677,57 +674,52 @@ test('newProjectFile starts empty; omitted initial project keeps the demo actors
   expect(e.getState().project.sequence.tracks).toHaveLength(0)
 })
 
-// --- compareClip / comparePanes ---
-
-test('compareClip: new actor (no default clip) with the clip at 0; one undo restores', () => {
+// --- openComparePane / comparePanes (clip ids, preview only) ---
+const withClips = () => {
   const e = createEditorStore(defs, emptyProject())
-  const a = e.getState().importClipToActor(impClip('g1', 'a', 50))!
-  const clipId = e.getState().project.sequence.tracks[0].items[0].refId
+  e.getState().beginGesture()
+  for (const n of ['a', 'b', 'c']) e.getState().importClipToActor(impClip('g1', n))
+  e.getState().endGesture()
+  return { e, ids: Object.keys(e.getState().project.clips) }
+}
+
+test('openComparePane: preview only, project untouched, no undo entry', () => {
+  const { e, ids } = withClips()
   const before = e.getState().project
-  const id = e.getState().compareClip(clipId)!
-  const p = e.getState().project
-  expect(p.actors.map(x => x.id)).toEqual([a.actorId, id])
-  expect(p.actors[1]).toMatchObject({ robot: 'g1', placement: { x: 1.5, y: 0, yaw: 0 } })
-  expect(Object.keys(p.clips)).toEqual([clipId])
-  const t = p.sequence.tracks.find(t => t.actorId === id)!
-  expect(t.items).toEqual([{ id: expect.any(String), refId: clipId, start: 0, trimIn: 0, trimOut: 50 }])
-  expect(e.getState().comparePanes).toEqual([id])
-  e.getState().undo()
+  e.getState().markSaved('x.json')
+  e.getState().openComparePane(ids[1])
   expect(e.getState().project).toBe(before)
+  expect(e.getState().dirty).toBe(false)
+  expect(e.getState().comparePanes).toEqual([ids[1]])
+  e.getState().undo() // would pop the import entry if one was pushed; here the import itself is undone
+  expect(e.getState().project.actors).toHaveLength(0)
 })
 
-test('compareClip: at most two compare panes, oldest replaced', () => {
-  const e = createEditorStore(defs, emptyProject())
-  e.getState().importClipToActor(impClip('g1', 'a'))
-  const clipId = Object.keys(e.getState().project.clips)[0]
-  const ids = [1, 2, 3].map(() => e.getState().compareClip(clipId)!)
+test('comparePanes: max two, oldest replaced, re-open is a no-op, unknown clip ignored', () => {
+  const { e, ids } = withClips()
+  e.getState().openComparePane(ids[0]); e.getState().openComparePane(ids[1])
+  const list = e.getState().comparePanes
+  e.getState().openComparePane(ids[0])
+  expect(e.getState().comparePanes).toBe(list)
+  e.getState().openComparePane(ids[2])
   expect(e.getState().comparePanes).toEqual([ids[1], ids[2]])
-  expect(e.getState().project.actors).toHaveLength(4)
+  e.getState().openComparePane('nope')
+  expect(e.getState().comparePanes).toEqual([ids[1], ids[2]])
+  e.getState().closeComparePane(ids[1])
+  expect(e.getState().comparePanes).toEqual([ids[2]])
 })
 
-test('comparePanes: pruned on undo, cleared on load; close/open', () => {
-  const e = createEditorStore(defs, emptyProject())
-  e.getState().importClipToActor(impClip('g1', 'a'))
-  const clipId = Object.keys(e.getState().project.clips)[0]
-  const x = e.getState().compareClip(clipId)!, y = e.getState().compareClip(clipId)!
-  e.getState().undo()
-  expect(e.getState().comparePanes).toEqual([x])
-  e.getState().closeComparePane(x)
+test('comparePanes: pruned when the clip is deleted or the import is undone; cleared on load', () => {
+  const { e, ids } = withClips()
+  e.getState().openComparePane(ids[1])
+  expect(e.getState().deleteClip(ids[1])).toBe(true)
   expect(e.getState().comparePanes).toEqual([])
-  expect(e.getState().project.actors.some(a => a.id === x)).toBe(true)
-  e.getState().openComparePane(x)
-  e.getState().openComparePane(x)
-  e.getState().openComparePane(y) // undone: not an actor
-  expect(e.getState().comparePanes).toEqual([x])
+  e.getState().undo()
+  e.getState().openComparePane(ids[1])
+  e.getState().undo() // the import is undone: clips gone
+  expect(e.getState().comparePanes).toEqual([])
+  e.getState().redo()
+  e.getState().openComparePane(ids[2])
   e.getState().newProjectFile()
   expect(e.getState().comparePanes).toEqual([])
-})
-
-test('compareClip: missing clip returns null, no change', () => {
-  const e = createEditorStore(defs, emptyProject())
-  const before = e.getState().project
-  expect(e.getState().compareClip('nope')).toBeNull()
-  expect(e.getState().project).toBe(before)
-  e.getState().undo()
-  expect(e.getState().project).toBe(before)
 })

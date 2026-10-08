@@ -3,7 +3,8 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { evalCurve } from '../model/curve'
-import { evaluate, evaluateItem, evaluateRoot } from '../model/evaluate'
+import { COLOR } from '../model/defaults'
+import { evaluate, evaluateClip, evaluateItem, evaluateRoot } from '../model/evaluate'
 import { nearestAngle } from '../model/rootMath'
 import { stitchTransforms, worldToClipRoot } from '../model/sequence'
 import type { Clip, Project } from '../model/types'
@@ -37,20 +38,17 @@ function makeGrid(): THREE.LineSegments {
 // trailKey/trailClips: what the cached trail was built from (items + placement serialized, clips by identity)
 interface Entry { rig: RobotRig; trail: THREE.Line; dot: THREE.Points; ghost: boolean; trailKey?: string; trailClips?: (Clip | undefined)[] }
 
-/** One 3D view. `pane` = actor id of a compare pane (shows only that actor); omitted = the main pane (every actor not in a compare pane). */
-export default function Stage({ pane }: { pane?: string }) {
+/** One 3D view. `compareClipId` = a view-only compare pane: one robot at the origin driven by that clip from sequence frame 0 (no gizmo, picking or actors). Omitted = the main pane (every actor). */
+export default function Stage({ compareClipId: cid }: { compareClipId?: string }) {
   const host = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const el = host.current!
     const store = getEditor()
-    const shows = (id: string) => (pane ? id === pane : !store.getState().comparePanes.includes(id))
-    const pl = pane && store.getState().project.actors.find(a => a.id === pane)?.placement
-    const target = pl ? new THREE.Vector3(pl.x, pl.y, TARGET.z) : TARGET.clone()
+    const target = TARGET.clone()
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(css('--bg') || '#22262D')
     const grid = makeGrid()
-    if (pane) grid.position.set(Math.round(target.x), Math.round(target.y), 0) // follow the actor; integer shift keeps the lines on world coordinates
     scene.add(grid)
     const hemi = new THREE.HemisphereLight(0xffffff, 0x4a505c, 1.4)
     hemi.position.set(0, 0, 1)
@@ -69,15 +67,15 @@ export default function Stage({ pane }: { pane?: string }) {
     orbit.update()
     const tc = new TransformControls(camera, renderer.domElement)
     tc.setSize(0.8)
-    scene.add(tc.getHelper())
+    if (!cid) scene.add(tc.getHelper())
     // dev/e2e hook
-    // dev/e2e hook: __stage = main pane, __stages = every pane by key ('main' or the compare actor id)
+    // dev/e2e hook: __stage = main pane, __stages = every pane by key ('main' or the compare clip id)
     const hook = { camera, tc, entries: () => entries, renderer }
-    const hookKey = pane ?? 'main'
+    const hookKey = cid ?? 'main'
     if (import.meta.env.DEV) {
       const w = window as any
       ;(w.__stages ??= {})[hookKey] = hook
-      if (!pane) w.__stage = hook
+      if (!cid) w.__stage = hook
     }
 
     let dirty = true, raf = 0
@@ -117,10 +115,43 @@ export default function Stage({ pane }: { pane?: string }) {
       for (const o of [e.rig.root, e.trail, e.dot]) disposeObj(o)
     }
 
+    // compare pane: one rig for the clip at the origin; trail rebuilt only when the clip object changes
+    const syncClip = () => {
+      const { project, defs } = store.getState()
+      const clip = cid ? project.clips[cid] : undefined
+      if (!clip) return
+      let e = entries.get(cid!)
+      if (!e) {
+        const color = new THREE.Color(COLOR[clip.robot])
+        const rig = buildRobot(defs[clip.robot], COLOR[clip.robot])
+        const trail = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color }))
+        const dot = new THREE.Points(
+          new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3)),
+          new THREE.PointsMaterial({ color, size: 8, sizeAttenuation: false }))
+        scene.add(rig.root, trail, dot)
+        e = { rig, trail, dot, ghost: false }
+        entries.set(cid!, e)
+      }
+      if (e.trailClips?.[0] === clip) return
+      e.trailClips = [clip]
+      const noJoints = { ...defs[clip.robot], joints: [] }, pts: number[] = []
+      for (let f = 0; f < clip.length; f++) { const p = evaluateClip(clip, noJoints, f).rootPos; pts.push(p[0], p[1], 0.002) }
+      e.trail.geometry.dispose()
+      e.trail.geometry = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pts, 3))
+    }
+    const applyClip = () => {
+      const s = store.getState(), clip = s.project.clips[cid!], e = entries.get(cid!)
+      if (!clip || !e) return
+      const pose = evaluateClip(clip, s.defs[clip.robot], Math.min(Math.max(s.frame, 0), clip.length - 1))
+      e.rig.applyPose(pose)
+      e.dot.position.set(pose.rootPos[0], pose.rootPos[1], 0.002)
+      dirty = true
+    }
+
     const syncActors = () => {
       const s = store.getState()
       const { project, defs } = s
-      const ids = new Set(project.actors.filter(a => shows(a.id)).map(a => a.id))
+      const ids = new Set(project.actors.map(a => a.id))
       for (const [id, e] of entries) if (!ids.has(id)) { disposeEntry(e); entries.delete(id) }
       for (const a of project.actors) {
         if (!ids.has(a.id)) continue
@@ -254,8 +285,7 @@ export default function Stage({ pane }: { pane?: string }) {
       if (best) store.getState().select(best.id, best.via)
       else store.getState().select(null)
     }
-    dom.addEventListener('pointerdown', onDown)
-    dom.addEventListener('pointerup', onUp)
+    if (!cid) { dom.addEventListener('pointerdown', onDown); dom.addEventListener('pointerup', onUp) }
 
     const onKey = (ev: KeyboardEvent) => {
       const v = VIEWS[ev.key]
@@ -263,7 +293,7 @@ export default function Stage({ pane }: { pane?: string }) {
         const d = camera.position.distanceTo(orbit.target)
         camera.position.copy(target).add(new THREE.Vector3(...v).normalize().multiplyScalar(d))
         orbit.update()
-      } else if (ev.key.toLowerCase() === 'r' && store.getState().sel.channel?.startsWith('root')) {
+      } else if (!cid && ev.key.toLowerCase() === 'r' && store.getState().sel.channel?.startsWith('root')) {
         rootMode = rootMode === 'translate' ? 'rotate' : 'translate'
         syncSelection()
       }
@@ -281,14 +311,14 @@ export default function Stage({ pane }: { pane?: string }) {
     ro.observe(el)
 
     let wasLocked = false
-    syncActors(); applyAll(); syncSelection()
+    if (cid) { syncClip(); applyClip() } else { syncActors(); applyAll(); syncSelection() }
     const unsub = store.subscribe((s, prev) => {
-      const panes = s.comparePanes !== prev.comparePanes
-      if (s.project !== prev.project || panes) syncActors()
+      if (cid) { if (s.project !== prev.project) syncClip(); applyClip(); return }
+      if (s.project !== prev.project) syncActors()
       applyAll()
       const key = (p: typeof s.project) => p.actors.map(a => a.id + a.robot).join()
       const lk = locked()
-      if (s.sel !== prev.sel || panes || key(s.project) !== key(prev.project) || lk !== wasLocked) syncSelection()
+      if (s.sel !== prev.sel || key(s.project) !== key(prev.project) || lk !== wasLocked) syncSelection()
       wasLocked = lk
     })
 
@@ -316,7 +346,7 @@ export default function Stage({ pane }: { pane?: string }) {
         if (w.__stage === hook) delete w.__stage
       }
     }
-  }, [pane])
+  }, [cid])
 
   return <div ref={host} tabIndex={0} style={{ width: '100%', height: '100%', outline: 'none' }} />
 }

@@ -96,7 +96,7 @@ export default function ProjectPanel() {
           </div>
           <div className="pp-box">
             <div className="pp-meta">{sec(c.length)} · {c.length} 프레임 · 사용 {uses(c.id)}</div>
-            <button title="이 모션을 비교 프리뷰에 나란히 띄우고 시퀀스에 새 트랙으로 추가" onClick={() => ed.getState().compareClip(c.id)}>⇄ 비교</button>
+            <button title="이 모션을 비교 프리뷰에 나란히 재생 (타임라인에는 추가하지 않음)" onClick={() => ed.getState().openComparePane(c.id)}>⇄ 비교</button>
           </div>
         </div>
       ))}

@@ -8,7 +8,7 @@ const menu = async (page: Page, name: string) => {
 const motionTracks = (page: Page) => page.evaluate(() =>
   (window as any).__editor.getState().project.sequence.tracks.filter((t: any) => t.kind === 'motion').length as number)
 
-test('compare: 비교 opens a side-by-side pane with a new actor track; close keeps it, undo removes it', async ({ page }) => {
+test('compare: second CSV is an asset only; 비교 opens a preview pane without touching the project; close removes it', async ({ page }) => {
   await page.addInitScript(() => { delete (window as any).showOpenFilePicker; delete (window as any).showDirectoryPicker })
   const errors: string[] = []
   page.on('pageerror', e => errors.push(String(e)))
@@ -24,17 +24,20 @@ test('compare: 비교 opens a side-by-side pane with a new actor track; close ke
   const [fc] = await Promise.all([page.waitForEvent('filechooser'), menu(page, 'CSV 가져오기')])
   await fc.setFiles([{ name: 'a.csv', mimeType: 'text/csv', buffer: csv(1) }, { name: 'b.csv', mimeType: 'text/csv', buffer: csv(2) }])
   await expect(page.locator('.pp-card')).toHaveCount(2)
-  await expect(page.locator('.pp-card').nth(1)).toContainText('1.00초 · 60 프레임 · 사용 1')
+  await expect(page.locator('.pp-msg')).toContainText('클립 2개를 가져왔습니다')
   expect(await motionTracks(page)).toBe(1)
+  expect(await page.evaluate(() => (window as any).__editor.getState().project.sequence.tracks.find((t: any) => t.kind === 'motion').items.length)).toBe(1)
+  await expect(page.locator('.pp-card').nth(1)).toContainText('사용 0')
 
+  await page.evaluate(() => { const s = (window as any).__editor.getState(); (window as any).__p0 = s.project; (window as any).__d0 = s.dirty })
   await page.locator('.pp-card').nth(1).getByRole('button', { name: '⇄ 비교' }).click()
-  expect(await motionTracks(page)).toBe(2)
   const pane = page.getByRole('region', { name: '비교 프리뷰' })
-  await expect(pane).toContainText('비교 프리뷰 · G1 #2 / b')
+  await expect(pane).toContainText('비교 프리뷰 · b (G1)')
   await expect.poll(() => pane.locator('canvas').evaluate(c => c.getBoundingClientRect().width)).toBeGreaterThan(0)
+  expect(await motionTracks(page)).toBe(1)
+  expect(await page.evaluate(() => { const s = (window as any).__editor.getState(); return s.project === (window as any).__p0 && s.dirty === (window as any).__d0 })).toBe(true)
   const main = page.getByRole('region', { name: '로봇 프리뷰' }).locator('canvas')
   expect(await main.evaluate(c => c.getBoundingClientRect().width)).toBeGreaterThan(0)
-  expect(await page.locator('.pp-card').nth(1).textContent()).toContain('사용 2')
 
   // the row divider moves with the arrow keys, clamped at 15%
   const sep = page.getByRole('separator', { name: '비교 프리뷰 분할 1' })
@@ -44,12 +47,6 @@ test('compare: 비교 opens a side-by-side pane with a new actor track; close ke
 
   await pane.getByRole('button', { name: '비교 닫기' }).click()
   await expect(pane).toHaveCount(0)
-  expect(await motionTracks(page)).toBe(2)
-  const actors = () => page.evaluate(() => (window as any).__editor.getState().project.actors.length)
-  expect(await actors()).toBe(2)
-
-  await page.evaluate(() => (window as any).__editor.getState().undo())
-  expect(await actors()).toBe(1)
 
   // right-click menu: 삭제 of a clip in use is rejected with the usual message; Esc closes
   await page.locator('.pp-card').first().click({ button: 'right' })

@@ -1,7 +1,7 @@
 import type { RobotKind } from '../robot/types'
 import type { Actor, Clip, Project, Track } from './types'
 
-const COLOR: Record<RobotKind, string> = { g1: '#58B4D1', go2: '#C9D65A' }
+export const COLOR: Record<RobotKind, string> = { g1: '#58B4D1', go2: '#C9D65A' }
 const LABEL: Record<RobotKind, string> = { g1: 'G1', go2: 'GO2' }
 const LENGTH = 120
 

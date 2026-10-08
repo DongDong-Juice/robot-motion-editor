@@ -31,7 +31,7 @@ export async function importCsvFiles() {
   for (const f of files) {
     try {
       const clip = csvToClip(f.text, ed.getState().defs, fps, f.name.replace(/\.csv$/i, ''))
-      if (!ed.getState().importClipToActor(clip)) throw new Error('잠긴 트랙입니다')
+      ed.getState().importClipToActor(clip)
       n++
     } catch (e) { fails.push(`${f.name}: ${why(e)}`) }
   }

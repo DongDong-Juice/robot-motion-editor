@@ -19,8 +19,8 @@ export interface EditorState {
   view: 'tracks' | 'graph'; sel: Selection
   videoMode: 'off' | 'overlay' | 'split'; videoOpacity: number // viewer preference: not undoable, not saved, survives loadProject
   setVideoMode(m: 'off' | 'overlay' | 'split'): void; setVideoOpacity(v: number): void
-  comparePanes: string[] // actor ids shown in compare panes (max 2): not undoable, not saved, pruned when actors go away
-  compareClip(clipId: string): string | null; openComparePane(actorId: string): void; closeComparePane(actorId: string): void
+  comparePanes: string[] // clip ids shown in preview-only compare panes (max 2): not undoable, not saved, pruned when clips go away
+  openComparePane(clipId: string): void; closeComparePane(clipId: string): void
   setFrame(f: number): void; setPlaying(b: boolean): void; toggleAutoKey(): void; setView(v: 'tracks' | 'graph'): void
   select(actorId: string | null, channel?: string | null): void; selectKeys(keys: KeyRef[], additive: boolean): void
   setValue(actorId: string, channel: string, v: number): void
@@ -40,7 +40,7 @@ export interface EditorState {
   setIn(f: number | null): void; setOut(f: number | null): void
   addMarker(f: number): void; renameMarker(index: number, name: string): void; deleteMarker(index: number): void
   newClip(robot: RobotKind): string
-  // Put an imported clip on the first actor of its robot (created without a default clip if none), after its last item. Null if that track is locked.
+  // Add an imported clip to the assets. If no actor of its robot exists, create one (no default clip) and place the clip at 0; otherwise assets only (null).
   importClipToActor(clip: Clip): { actorId: string; itemId: string } | null
   simplifyClip(clipId: string, rot?: number, pos?: number): number
   deleteClip(clipId: string): boolean
@@ -151,7 +151,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       set({ project: freezeClips(next), editing: keepEditing(next), dirty: true, comparePanes: keepPanes(next) })
     }
     const keepPanes = (p: Project) => {
-      const c = get().comparePanes, k = c.filter(id => p.actors.some(a => a.id === id))
+      const c = get().comparePanes, k = c.filter(id => id in p.clips)
       return k.length === c.length ? c : k
     }
     const keepEditing = (p: Project) => {
@@ -233,22 +233,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       setVideoMode: videoMode => set({ videoMode }),
       setVideoOpacity: v => set({ videoOpacity: Math.min(Math.max(v, 0), 1) }),
       comparePanes: [],
-      openComparePane: id => set(s => s.comparePanes.includes(id) || !s.project.actors.some(a => a.id === id) ? s : { comparePanes: [...s.comparePanes, id].slice(-2) }),
+      openComparePane: id => set(s => s.comparePanes.includes(id) || !s.project.clips[id] ? s : { comparePanes: [...s.comparePanes, id].slice(-2) }),
       closeComparePane: id => set(s => ({ comparePanes: s.comparePanes.filter(x => x !== id) })),
-      // A new actor of the clip's robot (no default clip) playing the clip from 0, shown in a compare pane.
-      compareClip: clipId => {
-        let id: string | null = null
-        tryEdit(p => {
-          const clip = p.clips[clipId]
-          if (!clip) return false
-          Object.assign(p, addActorTo(p, clip.robot, false))
-          id = p.actors.at(-1)!.id
-          p.sequence.tracks.at(-1)!.items.push({ id: crypto.randomUUID(), refId: clipId, start: 0, trimIn: 0, trimOut: clip.length })
-          return true
-        })
-        if (id) get().openComparePane(id)
-        return id
-      },
       select: (actorId, channel = null) => {
         const e = editingItem(get())
         if (e && actorId && actorId !== e.actorId) return // other actors are ghosts in clip view
@@ -377,15 +363,15 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       importClipToActor: clip => {
         let out: { actorId: string; itemId: string } | null = null
         tryEdit(p => {
-          let actor = p.actors.find(a => a.robot === clip.robot)
-          if (!actor) { Object.assign(p, addActorTo(p, clip.robot, false)); actor = p.actors.at(-1)! }
-          const track = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actor.id)
-          if (!track || track.locked) return false
+          const exists = p.actors.some(a => a.robot === clip.robot)
+          if (!exists) Object.assign(p, addActorTo(p, clip.robot, false))
           const taken = new Set(Object.values(p.clips).filter(c => c.robot === clip.robot).map(c => c.name))
           let name = clip.name
           for (let n = 2; taken.has(name); n++) name = `${clip.name}_${n}`
           p.clips[clip.id] = { ...clip, name }
-          const item = { id: crypto.randomUUID(), refId: clip.id, start: Math.max(0, ...track.items.map(i => i.start + i.trimOut - i.trimIn)), trimIn: 0, trimOut: clip.length }
+          if (exists) return true
+          const actor = p.actors.at(-1)!, track = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actor.id)!
+          const item = { id: crypto.randomUUID(), refId: clip.id, start: 0, trimIn: 0, trimOut: clip.length }
           track.items.push(item)
           out = { actorId: actor.id, itemId: item.id }
           return true
