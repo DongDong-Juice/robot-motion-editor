@@ -1,5 +1,6 @@
 import { evaluate, type Pose, type RobotDefs } from '../model/evaluate'
-import { quatMul, quatYaw, yawQuat, type Quat } from '../model/rootMath'
+import { rebasePose } from '../model/pose'
+import type { Quat } from '../model/rootMath'
 import type { Item, Project } from '../model/types'
 import type { RobotDef, RobotKind } from '../robot/types'
 
@@ -28,17 +29,8 @@ export function samplePoses(p: Project, defs: RobotDefs, actorId: string, itemId
   for (let f = from; f < to; f++) {
     out.push(normalizedPose(evaluate(p, defs, actorId, f), out[out.length - 1]))
   }
-  if (mode === 'local' && out.length) {
-    const [x0, y0] = out[0].rootPos
-    const yaw0 = quatYaw(out[0].rootQuat)
-    const c = Math.cos(-yaw0), s = Math.sin(-yaw0), yq = yawQuat(-yaw0)
-    // Pre-multiplying by a constant quat keeps the sign continuity established above.
-    for (const o of out) {
-      const dx = o.rootPos[0] - x0, dy = o.rootPos[1] - y0
-      o.rootPos = [c * dx - s * dy, s * dx + c * dy, o.rootPos[2]]
-      o.rootQuat = quatMul(yq, o.rootQuat)
-    }
-  }
+  // Pre-multiplying by a constant quat keeps the sign continuity established above.
+  if (mode === 'local' && out.length) return out.map(o => rebasePose(o, out[0]))
   return out
 }
 

@@ -4,6 +4,7 @@ import { simplifyCurve, simplifyTolerance } from '../model/simplify'
 import { addActor as addActorTo, emptyProject, newProject, nextClipName } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
 import { inCrossfade, resolve, sortedItems, validTrack } from '../model/sequence'
+import { REST_LEN, restPoseClip } from '../model/restPose'
 import type { Actor, Item, Clip, Curve, Interp, Project, Tan, Track } from '../model/types'
 import { validVideoTrack, videoTrack } from '../model/video'
 import type { RobotKind } from '../robot/types'
@@ -21,6 +22,8 @@ export interface EditorState {
   setVideoMode(m: 'off' | 'overlay' | 'split'): void; setVideoOpacity(v: number): void
   comparePanes: string[] // clip ids shown in preview-only compare panes (max 2): not undoable, not saved, pruned when clips go away
   openComparePane(clipId: string): void; closeComparePane(clipId: string): void
+  itemPreview: string | null // item id looping in the clip preview pane: not undoable, not saved, pruned when the item goes away
+  openItemPreview(itemId: string): void; closeItemPreview(): void
   setFrame(f: number): void; setPlaying(b: boolean): void; toggleAutoKey(): void; setView(v: 'tracks' | 'graph'): void
   select(actorId: string | null, channel?: string | null): void; selectKeys(keys: KeyRef[], additive: boolean): void
   setValue(actorId: string, channel: string, v: number): void
@@ -52,6 +55,8 @@ export interface EditorState {
   trimItem(itemId: string, side: 'in' | 'out', df: number): boolean
   splitItem(itemId: string, frame: number): boolean
   deleteItem(itemId: string): boolean
+  // Ripple-insert a rest-pose lead-in clip before the item (same track); false = rejected, nothing changed.
+  prependRestPose(itemId: string): boolean
   beginGesture(): void; endGesture(): void
   fileName: string | null; dirty: boolean
   loadProject(p: Project, fileName: string | null): void; markSaved(fileName: string): void; newProjectFile(): void
@@ -148,11 +153,15 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
     const commit = (next: Project) => {
       if (!gesture || !gestureMoved) { undoS = [...undoS, get().project].slice(-MAX_UNDO); redoS = [] }
       if (gesture) gestureMoved = true
-      set({ project: freezeClips(next), editing: keepEditing(next), dirty: true, comparePanes: keepPanes(next) })
+      set({ project: freezeClips(next), editing: keepEditing(next), dirty: true, comparePanes: keepPanes(next), itemPreview: keepPreview(next) })
     }
     const keepPanes = (p: Project) => {
       const c = get().comparePanes, k = c.filter(id => id in p.clips)
       return k.length === c.length ? c : k
+    }
+    const keepPreview = (p: Project) => {
+      const id = get().itemPreview
+      return id && p.sequence.tracks.some(t => t.items.some(i => i.id === id)) ? id : null
     }
     const keepEditing = (p: Project) => {
       const e = get().editing
@@ -235,6 +244,9 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       comparePanes: [],
       openComparePane: id => set(s => s.comparePanes.includes(id) || !s.project.clips[id] ? s : { comparePanes: [...s.comparePanes, id].slice(-2) }),
       closeComparePane: id => set(s => ({ comparePanes: s.comparePanes.filter(x => x !== id) })),
+      itemPreview: null,
+      openItemPreview: id => { if (findItem(get().project, id)) set({ itemPreview: id }) },
+      closeItemPreview: () => set({ itemPreview: null }),
       select: (actorId, channel = null) => {
         const e = editingItem(get())
         if (e && actorId && actorId !== e.actorId) return // other actors are ghosts in clip view
@@ -461,11 +473,24 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         if (ok && get().selItem === itemId) set({ selItem: null })
         return ok
       },
+      prependRestPose: itemId => tryEdit(p => {
+        const f = findItem(p, itemId), src = f && p.clips[f.it.refId]
+        if (!f || !src || f.t.locked || f.t.kind !== 'motion') return false
+        const taken = new Set(Object.values(p.clips).filter(c => c.robot === src.robot).map(c => c.name))
+        let name = `${src.name}_기본자세`
+        for (let n = 2; taken.has(name); n++) name = `${src.name}_기본자세_${n}`
+        const def = defs[src.robot], clip = restPoseClip(def, evaluateClip(src, def, f.it.trimIn), name)
+        p.clips[clip.id] = clip // new clip: nothing existing is mutated, so no touched entry
+        const start = f.it.start
+        for (const it of f.t.items) if (it.start >= start) it.start += REST_LEN
+        f.t.items.push({ id: crypto.randomUUID(), refId: clip.id, start, trimIn: 0, trimOut: REST_LEN })
+        return validTrack(f.t.items)
+      }),
       fileName: null, dirty: false,
       loadProject: (project, fileName) => {
         generation++
         undoS = []; redoS = []; gesture = false; gestureMoved = false
-        set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] }, comparePanes: [] })
+        set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] }, comparePanes: [], itemPreview: null })
       },
       markSaved: fileName => set({ fileName, dirty: false }),
       newProjectFile: () => get().loadProject(emptyProject(), null),
@@ -479,14 +504,14 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         const prev = undoS.at(-1)
         if (!prev) return
         undoS = undoS.slice(0, -1); redoS = [...redoS, get().project]
-        set(s => ({ project: prev, editing: keepEditing(prev), dirty: true, sel: { ...s.sel, keys: [] }, comparePanes: keepPanes(prev) }))
+        set(s => ({ project: prev, editing: keepEditing(prev), dirty: true, sel: { ...s.sel, keys: [] }, comparePanes: keepPanes(prev), itemPreview: keepPreview(prev) }))
       },
       redo: () => {
         get().endGesture()
         const next = redoS.at(-1)
         if (!next) return
         redoS = redoS.slice(0, -1); undoS = [...undoS, get().project]
-        set(s => ({ project: next, editing: keepEditing(next), dirty: true, sel: { ...s.sel, keys: [] }, comparePanes: keepPanes(next) }))
+        set(s => ({ project: next, editing: keepEditing(next), dirty: true, sel: { ...s.sel, keys: [] }, comparePanes: keepPanes(next), itemPreview: keepPreview(next) }))
       },
     }
   })
