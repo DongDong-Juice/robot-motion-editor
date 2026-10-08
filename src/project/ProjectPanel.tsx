@@ -17,6 +17,31 @@ function RenameInput({ name, onDone }: { name: string; onDone: (v: string | null
   )
 }
 
+type Menu = { kind: 'clip' | 'media'; id: string; x: number; y: number; card: HTMLElement }
+
+// Right-click menu of a card: focus moves in on open, back to the card on Esc; an outside click closes it.
+function CardMenu({ menu, items, close }: { menu: Menu; items: [string, () => void][]; close: (refocus: boolean) => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    ref.current?.querySelector<HTMLElement>('[role=menuitem]')?.focus()
+    const away = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) close(false) }
+    document.addEventListener('pointerdown', away)
+    return () => document.removeEventListener('pointerdown', away)
+  }, [menu])
+  const onKey = (e: React.KeyboardEvent) => {
+    const list = [...ref.current!.querySelectorAll<HTMLElement>('[role=menuitem]')], i = list.indexOf(document.activeElement as HTMLElement)
+    const d = ({ ArrowDown: 1, ArrowUp: -1 } as Record<string, number>)[e.key]
+    if (d) { e.preventDefault(); list[(i + d + list.length) % list.length]?.focus() }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true) }
+    else if (e.key === 'Tab') close(true)
+  }
+  return (
+    <div ref={ref} role="menu" aria-label="에셋" className="tl-menu" style={{ left: menu.x, top: menu.y }} onKeyDown={onKey}>
+      {items.map(([label, run]) => <button key={label} role="menuitem" tabIndex={-1} onClick={() => { close(false); run() }}>{label}</button>)}
+    </div>
+  )
+}
+
 export default function ProjectPanel() {
   const ed = getEditor()
   const project = useEditor(s => s.project)
@@ -38,45 +63,61 @@ export default function ProjectPanel() {
   const del = (id: string) => { if (!ed.getState().deleteClip(id)) setMsg(performance.now()) }
   const clips = Object.values(project.clips)
 
+  const [menu, setMenu] = useState<Menu | null>(null)
+  const closeMenu = (refocus: boolean) => { if (refocus) menu?.card.focus(); setMenu(null) }
+  const menuProps = (kind: Menu['kind'], id: string) => ({
+    onContextMenu: (e: React.MouseEvent<HTMLElement>) => { e.preventDefault(); setMenu({ kind, id, x: e.clientX, y: e.clientY, card: e.currentTarget }) },
+    onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
+      if (e.target !== e.currentTarget) return
+      if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+        e.preventDefault(); e.stopPropagation()
+        const r = e.currentTarget.getBoundingClientRect()
+        setMenu({ kind, id, x: r.left + 8, y: r.top + 24, card: e.currentTarget })
+      } else if (e.key === 'Delete') { e.stopPropagation(); if (kind === 'clip') del(id); else delMedia(id) }
+      else if (e.key === 'Enter' && kind === 'clip') { e.stopPropagation(); setRenaming(id) }
+    },
+  })
+  const sec = (f: number) => `${(f / 60).toFixed(2)}초`
+
   return (
     <div className="pp">
       <h2>에셋</h2>
       {!clips.length && !project.media.length && <p className="pp-dim">파일 ▸ CSV 가져오기로 모션을 불러오세요</p>}
       {clips.length > 0 && <h3>모션 (CSV)</h3>}
       {clips.map(c => (
-        <div key={c.id} className="pp-row" tabIndex={0} draggable={renaming !== c.id}
+        <div key={c.id} className="pp-card" tabIndex={0} draggable={renaming !== c.id}
           onDragStart={e => { e.dataTransfer.setData('application/x-motion-clip', c.id); e.dataTransfer.effectAllowed = 'copy' }}
-          onDoubleClick={() => setRenaming(c.id)}
-          onKeyDown={e => {
-            if (e.target !== e.currentTarget) return
-            if (e.key === 'Enter') { e.stopPropagation(); setRenaming(c.id) }
-            else if (e.key === 'Delete') { e.stopPropagation(); del(c.id) }
-          }}>
-          <span className="pp-tag">{c.robot.toUpperCase()}</span>
-          {renaming === c.id
-            ? <RenameInput name={c.name} onDone={v => { if (v?.trim() && !ed.getState().setClip(c.id, { name: v })) setLmsg(performance.now()); setRenaming(null) }} />
-            : <span className="pp-name">{c.name}</span>}
-          <span className="pp-dim">{(c.length / 60).toFixed(2)}초 · {uses(c.id)}</span>
-          <button aria-label={`${c.name} 삭제`} onClick={() => del(c.id)}>삭제</button>
+          onDoubleClick={() => setRenaming(c.id)} {...menuProps('clip', c.id)}>
+          <div className="pp-head">
+            {renaming === c.id
+              ? <RenameInput name={c.name} onDone={v => { if (v?.trim() && !ed.getState().setClip(c.id, { name: v })) setLmsg(performance.now()); setRenaming(null) }} />
+              : <span className="pp-name" title={c.name}>{c.name}</span>}
+            <span className="pp-tag">{c.robot.toUpperCase()}</span>
+          </div>
+          <div className="pp-box">
+            <div className="pp-meta">{sec(c.length)} · {c.length} 프레임 · 사용 {uses(c.id)}</div>
+            <button title="이 모션을 비교 프리뷰에 나란히 띄우고 시퀀스에 새 트랙으로 추가" onClick={() => ed.getState().compareClip(c.id)}>⇄ 비교</button>
+          </div>
         </div>
       ))}
       {project.media.length > 0 && <h3>영상</h3>}
       {project.media.map(m => {
         const off = mediaUrl(m.id) == null
         return (
-          <div key={m.id} className="pp-row pp-media" tabIndex={0} draggable
+          <div key={m.id} className="pp-card pp-media" tabIndex={0} draggable
             onDragStart={e => { e.dataTransfer.setData('application/x-motion-media', m.id); e.dataTransfer.effectAllowed = 'copy' }}
-            onKeyDown={e => { if (e.target === e.currentTarget && e.key === 'Delete') { e.stopPropagation(); delMedia(m.id) } }}>
-            <span className="pp-name" title={m.name}>{m.name}</span>
-            <span className="pp-sub">
-              <span className="pp-dim">{(m.durationF / 60).toFixed(2)}초</span>
-              {off && <span className="pp-off">오프라인</span>}
+            {...menuProps('media', m.id)}>
+            <div className="pp-head"><span className="pp-name" title={m.name}>{m.name}</span></div>
+            <div className="pp-box">
+              <div className="pp-meta">{sec(m.durationF)}{off && <> · <span className="pp-off">오프라인</span></>}</div>
               {off && <button aria-label={`${m.name} 다시 연결`} onClick={() => relinkMedia(m)}>다시 연결</button>}
-              <button aria-label={`${m.name} 삭제`} onClick={() => delMedia(m.id)}>삭제</button>
-            </span>
+            </div>
           </div>
         )
       })}
+      {menu && <CardMenu menu={menu} close={closeMenu} items={menu.kind === 'clip'
+        ? [['이름 변경', () => setRenaming(menu.id)], ['삭제', () => del(menu.id)]]
+        : [['삭제', () => delMedia(menu.id)]]} />}
       {res && (
         <div className="pp-msg" role="status">
           {res.head && <p>{res.head}</p>}
