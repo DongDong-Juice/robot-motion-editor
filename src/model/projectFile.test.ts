@@ -3,7 +3,7 @@ import { expect, test } from 'vitest'
 
 import type { Project } from './types'
 import type { RobotDefs } from './evaluate'
-import { newProject } from './defaults'
+import { emptyProject, newProject } from './defaults'
 import { makeKey } from './curve'
 import { samplePoses } from '../export/csv'
 import { validatePoses } from '../export/validate'
@@ -146,4 +146,9 @@ test('video: old file opens; media/V1 problems rejected', () => {
   bad(p => { p.media = [m]; p.sequence.tracks.unshift(v([i('a', 0, 100), i('b', 50, 100)])) }, '겹침')
   bad(p => { p.media = [m]; p.sequence.tracks.unshift(v(), { ...v(), id: 'v2' }) }, '영상 트랙')
   bad(p => { p.media = [m]; p.sequence.tracks.unshift({ ...v(), actorId: 'x' }) }, 'actorId')
+})
+
+test('empty project saves and reopens', () => {
+  const p = emptyProject()
+  expect(parseProject(serializeProject(p), defs)).toEqual(p)
 })
