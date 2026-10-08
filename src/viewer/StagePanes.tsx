@@ -36,33 +36,40 @@ export default function StagePanes({ robot }: { robot: ReactNode }) {
     return { x: e.clientX - r.left, y: e.clientY - r.top, w: r.width, h: r.height }
   }
   const dragging = !!drag
+  const pending = useRef<{ x: number; y: number } | null>(null) // pointerdown point; a drag starts after 4px of movement
   useEffect(() => {
     if (!dragging) return
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); dragRef.current = null; setDrag(null) } }
     window.addEventListener('keydown', esc, true)
     return () => window.removeEventListener('keydown', esc, true)
   }, [dragging])
+  useEffect(() => { pending.current = null; dragRef.current = null; setDrag(null); setSepDrag(false) }, [mode])
   const titleProps = (pane: 'video' | 'robot') => ({
     onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.button !== 0 || (e.target as Element).closest('button')) return
       e.preventDefault()
       e.currentTarget.setPointerCapture(e.pointerId)
-      const p = local(e)
-      const d = { pane, side: dockSide(p.x, p.y, p.w, p.h) }
-      dragRef.current = d; setDrag(d)
+      pending.current = { x: e.clientX, y: e.clientY }
     },
     onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!dragRef.current) return
+      if (!dragRef.current) {
+        const q = pending.current
+        if (!q || Math.hypot(e.clientX - q.x, e.clientY - q.y) < 4) return
+        pending.current = null
+        const p = local(e), d = { pane, side: dockSide(p.x, p.y, p.w, p.h) }
+        dragRef.current = d; setDrag(d)
+        return
+      }
       const p = local(e), side = dockSide(p.x, p.y, p.w, p.h)
       if (side !== dragRef.current.side) { const d = { pane, side }; dragRef.current = d; setDrag(d) }
     },
     onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => {
       const d = dragRef.current
-      dragRef.current = null; setDrag(null)
+      pending.current = null; dragRef.current = null; setDrag(null)
       if (d) apply({ ...pr.current, videoSide: pane === 'video' ? d.side : OPPOSITE[d.side] }, true)
       if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
     },
-    onPointerCancel: () => { dragRef.current = null; setDrag(null) },
+    onPointerCancel: () => { pending.current = null; dragRef.current = null; setDrag(null) },
   })
 
   // divider
@@ -89,7 +96,7 @@ export default function StagePanes({ robot }: { robot: ReactNode }) {
   }
 
   const split = mode === 'split'
-  const preview = drag && paneRects(drag.side, 0.5, 1, 1).video
+  const preview = drag && paneRects(drag.side, drag.pane === 'video' ? ratio : 1 - ratio, 1, 1).video
   return (
     <div ref={ref} className={`panes ${mode} ${videoSide}${dragging || sepDrag ? ' dragging' : ''}`}>
       <section className="pane pane-video" aria-label="영상 프리뷰" style={split ? { flexBasis: `${ratio * 100}%` } : undefined}>
@@ -105,7 +112,7 @@ export default function StagePanes({ robot }: { robot: ReactNode }) {
       {split && (
         <div className="pane-sep" role="separator" tabIndex={0} aria-label="영상/로봇 프리뷰 분할"
           aria-orientation={horiz ? 'vertical' : 'horizontal'} aria-valuenow={Math.round(ratio * 100)} aria-valuemin={20} aria-valuemax={80}
-          onPointerDown={e => { if (e.button !== 0) return; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); setSepDrag(true) }}
+          onPointerDown={e => { if (e.button !== 0) return; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); e.currentTarget.focus(); setSepDrag(true) }}
           onPointerMove={sepMove} onPointerUp={sepEnd} onPointerCancel={sepEnd}
           onDoubleClick={() => apply({ ...prefs, ratio: 0.5 }, true)} onKeyDown={sepKey} />
       )}

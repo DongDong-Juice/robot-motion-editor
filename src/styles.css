@@ -34,7 +34,6 @@ body {
 #menubar { grid-area: menubar; }
 #project { grid-area: project; }
 #stage { grid-area: stage; background: var(--bg); position: relative; display: flex; }
-.stage-3d { flex: 1; min-width: 0; position: relative; }
 #stage video { display: none; }
 .panes { flex: 1; min-width: 0; display: flex; position: relative; }
 .panes.left { flex-direction: row; } .panes.right { flex-direction: row-reverse; }
