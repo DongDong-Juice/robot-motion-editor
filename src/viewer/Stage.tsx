@@ -352,7 +352,10 @@ export default function Stage({ compareClipId: cid, range }: { compareClipId?: s
       el.removeEventListener('keydown', onKey)
       for (const e of entries.values()) disposeEntry(e)
       disposeObj(grid)
-      tc.dispose(); orbit.dispose(); renderer.dispose()
+      tc.dispose(); orbit.dispose()
+      // dispose() alone keeps the WebGL context alive until GC; release it now so opening/closing
+      // preview panes never hits the browser's context limit (which kills the oldest pane's context)
+      renderer.forceContextLoss(); renderer.dispose()
       el.removeChild(dom)
       if (import.meta.env.DEV) {
         const w = window as any
