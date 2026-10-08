@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { getEditor, useEditor } from '../store/store'
 import type { Project } from '../model/types'
 import Stage from './Stage'
+import { videoTrack } from '../model/video'
 import VideoOverlay from './VideoOverlay'
 import { clampRatio, dockSide, equalRatios, moveDivider, paneRects, ROW_MIN, rowWidths, type Side } from './paneLayout'
 
@@ -75,6 +76,7 @@ function save(p: Prefs) { try { localStorage.setItem(KEY, JSON.stringify(p)) } c
  * compare panes sit to its right in the robot area, each with its own divider. */
 export default function StagePanes({ robot }: { robot: ReactNode }) {
   const mode = useEditor(s => s.videoMode), setMode = useEditor(s => s.setVideoMode)
+  const hasVideo = useEditor(s => !!videoTrack(s.project)?.items.length)
   const [prefs, setPrefs] = useState(load)
   const ref = useRef<HTMLDivElement>(null)
   const pr = useRef(prefs)
@@ -189,7 +191,7 @@ export default function StagePanes({ robot }: { robot: ReactNode }) {
             <button aria-label="영상 닫기" onClick={() => setMode('off')}>✕</button>
           </div>
         )}
-        {mode === 'overlay' && <button className="ov-close" aria-label="영상 닫기" onClick={() => setMode('off')}>✕</button>}
+        {mode === 'overlay' && hasVideo && <button className="ov-close" aria-label="영상 닫기" onClick={() => setMode('off')}>✕</button>}
         <div className="pane-body"><VideoOverlay /></div>
       </section>
       {split && (

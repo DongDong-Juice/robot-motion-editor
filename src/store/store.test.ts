@@ -307,12 +307,25 @@ test('each sequence edit is one undo entry; reject leaves stacks', () => {
   expect(s().project).toBe(p)
 })
 
-test('deleteItem clears selItem and can empty a track', () => {
-  const id = item0().id
-  s().selectItem(id)
+test('deleting the last item of a motion track removes its actor and track (one undo)', () => {
+  const id = item0().id, before = s().project
+  s().select(actor); s().selectItem(id)
   expect(s().deleteItem(id)).toBe(true)
   expect(s().selItem).toBeNull()
-  expect(trackItems(actor)).toHaveLength(0)
+  expect(s().sel.actorId).toBeNull()
+  expect(s().project.actors.some(a => a.id === actor)).toBe(false)
+  expect(s().project.sequence.tracks.some(t => t.actorId === actor)).toBe(false)
+  expect(s().project.clips[c]).toBeDefined() // the clip stays in the asset list
+  s().undo()
+  expect(s().project).toBe(before)
+})
+
+test('deleting one of several items keeps the actor', () => {
+  const k = s().newClip('g1')
+  s().addItem(actor, k, 200)
+  s().deleteItem(item0().id)
+  expect(s().project.actors.some(a => a.id === actor)).toBe(true)
+  expect(trackItems(actor)).toHaveLength(1)
 })
 
 test('editTarget in clip view ignores trims', () => {

@@ -312,7 +312,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         if (linked && t.df !== 0) other.dv = (t.dv / t.df) * other.df
       }, [{ clipId, channels: [channel] }]),
       keyGroup: (actorId, group) => {
-        const actor = get().project.actors.find(a => a.id === actorId)!
+        const actor = get().project.actors.find(a => a.id === actorId)
+        if (!actor) return // stale id: the actor may have been removed with its last clip
         const def = defs[actor.robot]
         const t = editTarget(get(), actorId)
         if (!t || trackLocked(get().project, actorId) || clipLocked(get().project, t.clipId)) return
@@ -484,9 +485,17 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
           const f = findItem(p, itemId)
           if (!f || f.t.locked) return false
           f.t.items = f.t.items.filter(i => i.id !== itemId)
+          // last clip of a motion track gone -> the robot goes with it (the clip stays in the assets)
+          if (f.t.kind === 'motion' && !f.t.items.length) {
+            p.actors = p.actors.filter(a => a.id !== f.t.actorId)
+            p.sequence.tracks = p.sequence.tracks.filter(t => t !== f.t)
+          }
           return true
         })
-        if (ok && get().selItem === itemId) set({ selItem: null })
+        if (ok) set(s => ({
+          selItem: s.selItem === itemId ? null : s.selItem,
+          sel: s.sel.actorId && !s.project.actors.some(a => a.id === s.sel.actorId) ? { actorId: null, channel: null, keys: [] } : s.sel,
+        }))
         return ok
       },
       prependRestPose: itemId => tryEdit(p => {
