@@ -36,8 +36,32 @@ body {
 #stage { grid-area: stage; background: var(--bg); position: relative; display: flex; }
 .stage-3d { flex: 1; min-width: 0; position: relative; }
 #stage video { display: none; }
-#stage video.overlay { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; z-index: 1; }
-#stage video.split { display: block; flex: 0 0 50%; min-width: 0; height: 100%; object-fit: contain; background: #000; }
+.panes { flex: 1; min-width: 0; display: flex; position: relative; }
+.panes.left { flex-direction: row; } .panes.right { flex-direction: row-reverse; }
+.panes.top { flex-direction: column; } .panes.bottom { flex-direction: column-reverse; }
+.pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.pane-robot { flex: 1; }
+.pane-video { flex: 0 0 50%; }
+.pane-body { flex: 1; min-height: 0; position: relative; }
+.pane-title { flex: 0 0 24px; height: 24px; display: flex; align-items: center; justify-content: space-between; padding: 0 6px; box-sizing: border-box;
+  background: var(--panel); border-bottom: 1px solid var(--line); color: var(--text); font-size: 12px; user-select: none; -webkit-user-select: none; cursor: grab; touch-action: none; }
+.pane-title button, .ov-close { background: transparent; color: var(--text); border: 0; cursor: pointer; font-size: 12px; line-height: 1; padding: 2px 4px; }
+.pane-title button:hover, .ov-close:hover { color: var(--accent); }
+.pane-sep { flex: 0 0 6px; background: var(--line); touch-action: none; }
+.panes.left .pane-sep, .panes.right .pane-sep { cursor: col-resize; }
+.panes.top .pane-sep, .panes.bottom .pane-sep { cursor: row-resize; }
+.pane-sep:hover { background: var(--accent); }
+.pane-sep:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.panes.dragging { user-select: none; }
+.dock-preview { position: absolute; z-index: 10; pointer-events: none; box-sizing: border-box; border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.panes.off .pane-video { display: none; }
+.panes.overlay .pane-video { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.panes.overlay .ov-close { position: absolute; top: 4px; right: 4px; z-index: 2; pointer-events: auto; }
+.stage-3d { flex: 1; min-height: 0; min-width: 0; position: relative; }
+#stage video.overlay, #stage video.split { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+#stage video.overlay { pointer-events: none; }
+#stage video.split { background: #000; }
 .stage-hint { position: absolute; left: 8px; bottom: 6px; z-index: 1; font-size: 11px; color: #8d96a3; pointer-events: none; }
 #inspector { grid-area: inspector; }
 #timeline { grid-area: timeline; }

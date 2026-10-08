@@ -3,7 +3,7 @@ import { fetchRobotDef } from './robot/loadRobot'
 import { getEditor, gizmoLock, initEditor, useEditor } from './store/store'
 import Inspector from './inspector/Inspector'
 import Stage from './viewer/Stage'
-import VideoOverlay from './viewer/VideoOverlay'
+import StagePanes from './viewer/StagePanes'
 import { videoTrack } from './model/video'
 import ProjectPanel from './project/ProjectPanel'
 import Timeline from './timeline/Timeline'
@@ -69,7 +69,7 @@ function Menubar() {
       {hasVideo && (
         <span role="group" aria-label="영상" className="mb-group">
           <span>영상:</span>
-          {([['off', '끄기'], ['overlay', '오버레이'], ['split', '분할']] as const).map(([m, label]) =>
+          {([['overlay', '오버레이'], ['split', '분할']] as const).map(([m, label]) =>
             <button key={m} aria-pressed={videoMode === m} onClick={() => st.setVideoMode(m)}>{label}</button>)}
           {videoMode === 'overlay' && <input type="range" aria-label="영상 투명도" min={0} max={1} step={0.05} value={videoOpacity} onChange={e => st.setVideoOpacity(+e.target.value)} />}
         </span>
@@ -136,12 +136,9 @@ export default function App() {
       <header id="menubar">{status === 'ready' ? <Menubar /> : 'Motion Editor'}</header>
       <aside id="project">{status === 'ready' && <ProjectPanel />}</aside>
       <main id="stage">
-        {status === 'ready' && <VideoOverlay />}
-        <div className="stage-3d">
-          {status === 'ready' && <AutoKeyHint />}
-          {status === 'ready' && <CrossfadeHint />}
-          {status === 'ready' ? <Stage /> : status === 'loading' ? '로봇 불러오는 중…' : status}
-        </div>
+        {status === 'ready'
+          ? <StagePanes robot={<div className="stage-3d"><AutoKeyHint /><CrossfadeHint /><Stage /></div>} />
+          : <div className="stage-3d">{status === 'loading' ? '로봇 불러오는 중…' : status}</div>}
       </main>
       <aside id="inspector">{status === "ready" && <Inspector />}</aside>
       <section id="timeline">{status === 'ready' && <Timeline />}</section>
