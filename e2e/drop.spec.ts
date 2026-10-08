@@ -27,7 +27,7 @@ test('drop: card onto a track appends after the overlapped item; empty area make
   const seq = page.locator('.seq-canvas')
   const card = page.locator('.pp-card', { hasText: 'b' }).first()
   const box = (await seq.boundingBox())!
-  await card.dragTo(seq, { targetPosition: { x: 400, y: 24 + 14 } }) // over item a
+  await card.dragTo(seq, { targetPosition: { x: 250, y: 24 + 14 } }) // over item a, never overlapping it
   expect(await tracks(page)).toEqual([[[0, 120], [120, 60]]])
 
   await card.dragTo(seq, { targetPosition: { x: 500, y: box.height - 20 } }) // empty area below the tracks

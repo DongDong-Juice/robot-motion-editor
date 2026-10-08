@@ -12,11 +12,12 @@ export type Placement =
 
 const end = (it: Item) => it.start + itemLen(it)
 
-// First valid start among: the drop frame, the end of the item under it, the end of the track.
+// First valid start among: the drop frame, the end of the items it would overlap, the end of the track. Never overlaps an item (no crossfade).
 function snap(items: Item[], refId: string, len: number, frame: number, ok: (items: Item[]) => boolean): number | null {
-  const under = items.filter(i => i.start <= frame && frame < end(i)).sort((a, b) => end(a) - end(b)).at(-1)
-  const cands = [frame, under ? end(under) : frame, Math.max(0, ...items.map(end))]
-  return cands.find(start => ok([...items, { id: '', refId, start, trimIn: 0, trimOut: len }])) ?? null
+  const hit = items.filter(i => i.start < frame + len && frame < end(i))
+  const cands = [frame, hit.length ? Math.max(...hit.map(end)) : frame, Math.max(0, ...items.map(end))]
+  const free = (s: number) => items.every(i => s + len <= i.start || end(i) <= s)
+  return cands.find(start => free(start) && ok([...items, { id: '', refId, start, trimIn: 0, trimOut: len }])) ?? null
 }
 
 /** Where a dragged asset lands for a drop at `frame` over the track `rowTrackId` (null = not over a track row). Pure; used by the ghost and the drop. */

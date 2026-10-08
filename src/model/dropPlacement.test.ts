@@ -20,13 +20,15 @@ test('rule 1: free frame is used as is', () => {
   const p = proj(); p.sequence.tracks[0].items = [item('a', 0, 50)]
   expect(dropPlacement(p, b, row(p), 300)).toEqual({ kind: 'existing', trackId: row(p), start: 300 })
 })
-test('rule 1: snaps right after the overlapped item', () => {
+test('rule 1: a drop inside a long item appends right after it, no overlap', () => {
   const p = proj()
+  expect(dropPlacement(p, b, row(p), 40)).toEqual({ kind: 'existing', trackId: row(p), start: 100 })
   expect(dropPlacement(p, b, row(p), 0)).toEqual({ kind: 'existing', trackId: row(p), start: 100 })
 })
-test('rule 1: falls back to the end of the track', () => {
-  const p = proj(); p.sequence.tracks[0].items = [item('a', 0), item('a', 100)] // a drop at 40 snaps to 100 which is taken
-  expect(dropPlacement(p, b, row(p), 0)).toEqual({ kind: 'existing', trackId: row(p), start: 200 })
+test('rule 1: a drop whose clip would run into the next item goes after it; a too-short gap goes to the end', () => {
+  const p = proj(); p.sequence.tracks[0].items = [item('a', 0, 50), item('a', 100, 50)] // gap 50..100 is 50 long, clip b is 100
+  expect(dropPlacement(p, b, row(p), 50)).toEqual({ kind: 'existing', trackId: row(p), start: 150 })
+  expect(dropPlacement(p, b, row(p), 10)).toEqual({ kind: 'existing', trackId: row(p), start: 150 })
 })
 test('rule 1: negative frame clamps to 0; locked track rejects', () => {
   const p = proj(); p.sequence.tracks[0].items = []
