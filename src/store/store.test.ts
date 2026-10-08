@@ -676,3 +676,58 @@ test('newProjectFile starts empty; omitted initial project keeps the demo actors
   expect(e.getState().project.actors).toHaveLength(0)
   expect(e.getState().project.sequence.tracks).toHaveLength(0)
 })
+
+// --- compareClip / comparePanes ---
+
+test('compareClip: new actor (no default clip) with the clip at 0; one undo restores', () => {
+  const e = createEditorStore(defs, emptyProject())
+  const a = e.getState().importClipToActor(impClip('g1', 'a', 50))!
+  const clipId = e.getState().project.sequence.tracks[0].items[0].refId
+  const before = e.getState().project
+  const id = e.getState().compareClip(clipId)!
+  const p = e.getState().project
+  expect(p.actors.map(x => x.id)).toEqual([a.actorId, id])
+  expect(p.actors[1]).toMatchObject({ robot: 'g1', placement: { x: 1.5, y: 0, yaw: 0 } })
+  expect(Object.keys(p.clips)).toEqual([clipId])
+  const t = p.sequence.tracks.find(t => t.actorId === id)!
+  expect(t.items).toEqual([{ id: expect.any(String), refId: clipId, start: 0, trimIn: 0, trimOut: 50 }])
+  expect(e.getState().comparePanes).toEqual([id])
+  e.getState().undo()
+  expect(e.getState().project).toBe(before)
+})
+
+test('compareClip: at most two compare panes, oldest replaced', () => {
+  const e = createEditorStore(defs, emptyProject())
+  e.getState().importClipToActor(impClip('g1', 'a'))
+  const clipId = Object.keys(e.getState().project.clips)[0]
+  const ids = [1, 2, 3].map(() => e.getState().compareClip(clipId)!)
+  expect(e.getState().comparePanes).toEqual([ids[1], ids[2]])
+  expect(e.getState().project.actors).toHaveLength(4)
+})
+
+test('comparePanes: pruned on undo, cleared on load; close/open', () => {
+  const e = createEditorStore(defs, emptyProject())
+  e.getState().importClipToActor(impClip('g1', 'a'))
+  const clipId = Object.keys(e.getState().project.clips)[0]
+  const x = e.getState().compareClip(clipId)!, y = e.getState().compareClip(clipId)!
+  e.getState().undo()
+  expect(e.getState().comparePanes).toEqual([x])
+  e.getState().closeComparePane(x)
+  expect(e.getState().comparePanes).toEqual([])
+  expect(e.getState().project.actors.some(a => a.id === x)).toBe(true)
+  e.getState().openComparePane(x)
+  e.getState().openComparePane(x)
+  e.getState().openComparePane(y) // undone: not an actor
+  expect(e.getState().comparePanes).toEqual([x])
+  e.getState().newProjectFile()
+  expect(e.getState().comparePanes).toEqual([])
+})
+
+test('compareClip: missing clip returns null, no change', () => {
+  const e = createEditorStore(defs, emptyProject())
+  const before = e.getState().project
+  expect(e.getState().compareClip('nope')).toBeNull()
+  expect(e.getState().project).toBe(before)
+  e.getState().undo()
+  expect(e.getState().project).toBe(before)
+})

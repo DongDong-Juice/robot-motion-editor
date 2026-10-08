@@ -19,6 +19,8 @@ export interface EditorState {
   view: 'tracks' | 'graph'; sel: Selection
   videoMode: 'off' | 'overlay' | 'split'; videoOpacity: number // viewer preference: not undoable, not saved, survives loadProject
   setVideoMode(m: 'off' | 'overlay' | 'split'): void; setVideoOpacity(v: number): void
+  comparePanes: string[] // actor ids shown in compare panes (max 2): not undoable, not saved, pruned when actors go away
+  compareClip(clipId: string): string | null; openComparePane(actorId: string): void; closeComparePane(actorId: string): void
   setFrame(f: number): void; setPlaying(b: boolean): void; toggleAutoKey(): void; setView(v: 'tracks' | 'graph'): void
   select(actorId: string | null, channel?: string | null): void; selectKeys(keys: KeyRef[], additive: boolean): void
   setValue(actorId: string, channel: string, v: number): void
@@ -146,7 +148,11 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
     const commit = (next: Project) => {
       if (!gesture || !gestureMoved) { undoS = [...undoS, get().project].slice(-MAX_UNDO); redoS = [] }
       if (gesture) gestureMoved = true
-      set({ project: freezeClips(next), editing: keepEditing(next), dirty: true })
+      set({ project: freezeClips(next), editing: keepEditing(next), dirty: true, comparePanes: keepPanes(next) })
+    }
+    const keepPanes = (p: Project) => {
+      const c = get().comparePanes, k = c.filter(id => p.actors.some(a => a.id === id))
+      return k.length === c.length ? c : k
     }
     const keepEditing = (p: Project) => {
       const e = get().editing
@@ -226,6 +232,23 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       videoMode: 'overlay', videoOpacity: 0.5,
       setVideoMode: videoMode => set({ videoMode }),
       setVideoOpacity: v => set({ videoOpacity: Math.min(Math.max(v, 0), 1) }),
+      comparePanes: [],
+      openComparePane: id => set(s => s.comparePanes.includes(id) || !s.project.actors.some(a => a.id === id) ? s : { comparePanes: [...s.comparePanes, id].slice(-2) }),
+      closeComparePane: id => set(s => ({ comparePanes: s.comparePanes.filter(x => x !== id) })),
+      // A new actor of the clip's robot (no default clip) playing the clip from 0, shown in a compare pane.
+      compareClip: clipId => {
+        let id: string | null = null
+        tryEdit(p => {
+          const clip = p.clips[clipId]
+          if (!clip) return false
+          Object.assign(p, addActorTo(p, clip.robot, false))
+          id = p.actors.at(-1)!.id
+          p.sequence.tracks.at(-1)!.items.push({ id: crypto.randomUUID(), refId: clipId, start: 0, trimIn: 0, trimOut: clip.length })
+          return true
+        })
+        if (id) get().openComparePane(id)
+        return id
+      },
       select: (actorId, channel = null) => {
         const e = editingItem(get())
         if (e && actorId && actorId !== e.actorId) return // other actors are ghosts in clip view
@@ -456,7 +479,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       loadProject: (project, fileName) => {
         generation++
         undoS = []; redoS = []; gesture = false; gestureMoved = false
-        set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] } })
+        set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] }, comparePanes: [] })
       },
       markSaved: fileName => set({ fileName, dirty: false }),
       newProjectFile: () => get().loadProject(emptyProject(), null),
@@ -470,14 +493,14 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         const prev = undoS.at(-1)
         if (!prev) return
         undoS = undoS.slice(0, -1); redoS = [...redoS, get().project]
-        set(s => ({ project: prev, editing: keepEditing(prev), dirty: true, sel: { ...s.sel, keys: [] } }))
+        set(s => ({ project: prev, editing: keepEditing(prev), dirty: true, sel: { ...s.sel, keys: [] }, comparePanes: keepPanes(prev) }))
       },
       redo: () => {
         get().endGesture()
         const next = redoS.at(-1)
         if (!next) return
         redoS = redoS.slice(0, -1); undoS = [...undoS, get().project]
-        set(s => ({ project: next, editing: keepEditing(next), dirty: true, sel: { ...s.sel, keys: [] } }))
+        set(s => ({ project: next, editing: keepEditing(next), dirty: true, sel: { ...s.sel, keys: [] }, comparePanes: keepPanes(next) }))
       },
     }
   })
