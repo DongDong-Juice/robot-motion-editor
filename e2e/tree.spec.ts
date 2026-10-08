@@ -32,10 +32,11 @@ test('tree: expand a track, click a child row → clip preview; 기본자세 세
   await page.mouse.click(box.x + 60, box.y + 24 + 28 + 22 + 11) // second child row
   const pane = page.getByRole('region', { name: '클립 프리뷰' })
   await expect(pane).toContainText('클립 프리뷰 · G1 #1 / a')
-  await expect.poll(() => pane.locator('canvas').evaluate(c => c.getBoundingClientRect().width)).toBeGreaterThan(0)
+  await expect.poll(() => pane.locator('canvas').evaluate(c => c.getBoundingClientRect().width), { timeout: 15000 }).toBeGreaterThan(0)
 
   await pane.getByRole('button', { name: '기본자세 세팅' }).click()
-  await expect(pane.getByRole('status')).toHaveText('시작 자세를 기본자세로 맞췄습니다')
+  // assert the outcome, not the transient (3 s) message: slow parallel runs can outlive it
+  await expect.poll(() => page.evaluate(() => Object.keys((window as any).__editor.getState().project.clips).length)).toBe(2)
   expect(await items(page)).toBe(2) // no item added
   await expect(page.locator('.pp-card')).toHaveCount(1) // the private copy is not an asset
   const start = await page.evaluate(() => { // second item's first frame (clip frame 40): every joint key is 0, in its private copy

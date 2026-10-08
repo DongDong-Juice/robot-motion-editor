@@ -45,7 +45,7 @@ function ItemPreview({ id }: { id: string }) {
   const rest = () => {
     const s = getEditor().getState(), ok = s.setRestPose(id)
     setMsg(ok ? '시작 자세를 기본자세로 맞췄습니다' : findItem(s.project, id)?.t.locked ? '잠긴 트랙입니다' : '기본자세 구간을 넣을 수 없습니다')
-    clearTimeout(timer.current); timer.current = window.setTimeout(() => setMsg(null), 2000)
+    clearTimeout(timer.current); timer.current = window.setTimeout(() => setMsg(null), 3000)
   }
   if (!item) return null
   return (
