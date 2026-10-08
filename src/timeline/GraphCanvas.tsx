@@ -4,7 +4,7 @@ import { clampDf, clipLocked, editingItem, editTarget, getEditor, type KeyRef } 
 import type { Curve, Key, Sequence } from '../model/types'
 import { evalCurve } from '../model/curve'
 import { fitView, handlePoints, valueToY, velocityViolations, yToValue, type ValueScale } from './graph'
-import { frameToX, ROOT_CHANNELS, type TimeScale } from './timeScale'
+import { frameToX, hoverFrame, hoverScrub, ROOT_CHANNELS, type TimeScale } from './timeScale'
 import { drawRuler, LABEL_W, RULER_H } from './ruler'
 import { tv } from './viewState'
 
@@ -253,6 +253,13 @@ export default function GraphCanvas() {
       })
     }
 
+    const hover = hoverScrub(() => ed.getState().frame, f => ed.getState().setFrame(f))
+    const onMove = (e: MouseEvent) => {
+      const x = pos(e).x
+      const f = hoverFrame(x, LABEL_W, scale(), e.buttons !== 0 || ed.getState().playing || !editingItem(ed.getState()))
+      if (f !== null) hover.push(seqFrame(x))
+    }
+
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       if (e.ctrlKey) {
@@ -273,11 +280,13 @@ export default function GraphCanvas() {
     }
 
     canvas.addEventListener('mousedown', onDown)
+    canvas.addEventListener('mousemove', onMove)
     canvas.addEventListener('wheel', onWheel, { passive: false })
     window.addEventListener('keydown', onKey)
     return () => {
-      ro.disconnect(); unsub(); cancelAnimationFrame(raf)
+      ro.disconnect(); unsub(); cancelAnimationFrame(raf); hover.stop()
       canvas.removeEventListener('mousedown', onDown)
+      canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('wheel', onWheel)
       window.removeEventListener('keydown', onKey)
     }

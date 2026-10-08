@@ -19,13 +19,27 @@ export function playRange(s: Pick<EditorState, 'project' | 'editing'>): [number,
   return inF !== null && outF !== null ? [inF, outF] : [0, sequenceEnd(s.project)]
 }
 
-// Item the C key splits: the selected item if it still exists, else the selected actor's item under the playhead. None in clip view.
+// Item the C key splits: an item under the playhead (strictly inside), preferring the track of the selected item, then the selected actor's, then the top-most. None in clip view.
 export function splitTarget(s: Pick<EditorState, 'project' | 'editing' | 'selItem' | 'sel' | 'frame'>): string | null {
   if (s.editing) return null
   const tracks = s.project.sequence.tracks
-  if (s.selItem && tracks.some(t => t.items.some(i => i.id === s.selItem))) return s.selItem
-  const track = tracks.find(t => t.kind === 'motion' && t.actorId === s.sel.actorId)
-  return (track && sortedItems(track).filter(i => s.frame > i.start && s.frame < i.start + i.trimOut - i.trimIn).at(-1)?.id) ?? null
+  const hits = tracks.flatMap(t => {
+    const it = sortedItems(t).filter(i => s.frame > i.start && s.frame < i.start + i.trimOut - i.trimIn).at(-1)
+    return it ? [{ t, it }] : []
+  })
+  const pick = hits.find(h => h.t.items.some(i => i.id === s.selItem))
+    ?? hits.find(h => h.t.kind === 'motion' && s.sel.actorId && h.t.actorId === s.sel.actorId) ?? hits[0]
+  return pick?.it.id ?? null
+}
+
+// Split at the playhead and select the new right-hand piece (same track, starts at the playhead).
+export function splitAtPlayhead(ed: Pick<ReturnType<typeof getEditor>, 'getState'>, id: string): boolean {
+  const { frame } = ed.getState()
+  if (!ed.getState().splitItem(id, frame)) return false
+  const s = ed.getState()
+  const right = s.project.sequence.tracks.find(t => t.items.some(i => i.id === id))?.items.find(i => i.id !== id && i.start === frame)
+  if (right) s.selectItem(right.id)
+  return true
 }
 
 // Delete/C on an item of a locked track: the store rejects it; say why.
@@ -94,7 +108,7 @@ export function startTransport(): () => void {
     else if (e.key.toLowerCase() === 'm') s.addMarker(Math.max(s.frame, 0))
     else if (e.key.toLowerCase() === 'c') {
       const id = splitTarget(s)
-      if (id && !lockedItem(s, id)) s.splitItem(id, s.frame)
+      if (id && !lockedItem(s, id)) splitAtPlayhead(ed, id)
     }
     else if (s.editing && e.key === 'Tab' && e.target instanceof Element && e.target.closest('#timeline')) {
       e.preventDefault(); s.setView(s.view === 'tracks' ? 'graph' : 'tracks')

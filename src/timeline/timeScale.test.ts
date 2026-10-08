@@ -4,7 +4,7 @@ import { expect, test } from 'vitest'
 import type { RobotDefs } from '../model/evaluate'
 import { newProject } from '../model/defaults'
 import { makeKey } from '../model/curve'
-import { buildRows, formatTimecode, frameToX, hitKey, keysIn, rowKey, xToFrame } from './timeScale'
+import { buildRows, formatTimecode, frameToX, hitKey, hoverFrame, keysIn, rowKey, xToFrame } from './timeScale'
 
 const load = loadDef
 const defs: RobotDefs = { g1: load('g1'), go2: load('go2') }
@@ -53,4 +53,12 @@ test('keysIn returns sorted keys with lo <= f <= hi', () => {
   expect(keysIn(ks, -5, 0).map(k => k.f)).toEqual([0])
   expect(keysIn(ks, 13, 20)).toEqual([])
   expect(keysIn([], 0, 9)).toEqual([])
+})
+
+test('hoverFrame: null in the label column or when busy, else the frame under x', () => {
+  const sc = { x0: 100, pxPerFrame: 2 }
+  expect(hoverFrame(100, 100, sc, false)).toBe(null)
+  expect(hoverFrame(50, 100, sc, false)).toBe(null)
+  expect(hoverFrame(200, 100, sc, true)).toBe(null)
+  expect(hoverFrame(200, 100, sc, false)).toBe(50)
 })

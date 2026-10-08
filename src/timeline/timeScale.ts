@@ -58,3 +58,16 @@ export function hitKey(rows: Row[], clip: Clip, s: TimeScale, rowH: number, x: n
   const same = hits.filter(h => h.f === f)
   return same.length ? same : null
 }
+
+// Hover scrub: the frame under the pointer, or null when hovering the label column or while something else owns the mouse.
+export const hoverFrame = (x: number, labelW: number, s: TimeScale, busy: boolean): number | null =>
+  busy || x <= labelW ? null : xToFrame(s, x)
+
+// Coalesces hover frames to one store update per animation frame, skipping no-ops.
+export function hoverScrub(getFrame: () => number, setFrame: (f: number) => void) {
+  let raf = 0, next = 0
+  return {
+    push(f: number) { next = f; if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (next !== getFrame()) setFrame(next) }) },
+    stop() { cancelAnimationFrame(raf); raf = 0 },
+  }
+}

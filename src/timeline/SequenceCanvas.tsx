@@ -5,7 +5,7 @@ import type { Item, Track } from '../model/types'
 import { seqFlash, tv } from './viewState'
 import { drawRuler, hitMarker, LABEL_W, RULER_H } from './ruler'
 import { mediaUrl, subscribeMedia } from '../media/registry'
-import { frameToX, xToFrame, type TimeScale } from './timeScale'
+import { frameToX, hoverFrame, hoverScrub, xToFrame, type TimeScale } from './timeScale'
 
 const ROW_H = 28, EDGE = 6
 const ROBOT = { g1: 'G1', go2: 'GO2' } as const
@@ -41,6 +41,8 @@ export default function SequenceCanvas() {
   const [msg, setMsg] = useState<Msg | null>(null)
   const [rename, setRename] = useState<Rename | null>(null)
   const cancel = useRef(false)
+  const renaming = useRef(false)
+  renaming.current = !!rename
 
   useEffect(() => {
     const canvas = cv.current!, ed = getEditor()
@@ -220,9 +222,12 @@ export default function SequenceCanvas() {
       if (mi !== null) s.deleteMarker(mi)
     }
 
+    const hover = hoverScrub(() => ed.getState().frame, f => ed.getState().setFrame(f))
     const onMove = (e: MouseEvent) => {
       const { x, y } = pos(e), h = itemAt(x, y)
       canvas.style.cursor = h && h.mode !== 'move' ? 'ew-resize' : ''
+      const f = hoverFrame(x, LABEL_W, scale(), e.buttons !== 0 || ed.getState().playing || renaming.current)
+      if (f !== null) hover.push(Math.max(0, f))
     }
 
     const onWheel = (e: WheelEvent) => {
@@ -264,7 +269,7 @@ export default function SequenceCanvas() {
     canvas.addEventListener('drop', onDrop)
     return () => {
       seqFlash.fn = null
-      ro.disconnect(); unsub(); unsubMedia(); cancelAnimationFrame(raf); clearTimeout(timer)
+      ro.disconnect(); unsub(); unsubMedia(); hover.stop(); cancelAnimationFrame(raf); clearTimeout(timer)
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('dblclick', onDbl)

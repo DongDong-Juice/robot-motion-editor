@@ -3,7 +3,7 @@ import { onHandleArrow } from '../layout/useLayout'
 import { clampDf, clipLocked, editingItem, editTarget, getEditor, type KeyRef } from '../store/store'
 import type { Interp, Sequence } from '../model/types'
 import { tv } from './viewState'
-import { buildRows, frameToX, hitKey, keysIn, rowKey, xToFrame, type TimeScale } from './timeScale'
+import { buildRows, frameToX, hitKey, hoverFrame, hoverScrub, keysIn, rowKey, xToFrame, type TimeScale } from './timeScale'
 import { drawRuler, LABEL_W, RULER_H } from './ruler'
 
 const ROW_H = 20, KEY = 7
@@ -23,6 +23,8 @@ export default function TrackCanvas() {
   const cv = useRef<HTMLCanvasElement>(null)
   const ui = useRef<Ui>({ scrollY: 0, expanded: new Set(), dragDf: 0, box: null })
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const menuOpen = useRef(false)
+  menuOpen.current = !!menu
 
   useEffect(() => {
     const canvas = cv.current!, ed = getEditor(), u = ui.current
@@ -209,6 +211,12 @@ export default function TrackCanvas() {
       })
     }
 
+    const hover = hoverScrub(() => ed.getState().frame, f => ed.getState().setFrame(f))
+    const onMove = (e: MouseEvent) => {
+      const f = hoverFrame(pos(e).x, LABEL_W, scale(), e.buttons !== 0 || ed.getState().playing || menuOpen.current || !editingItem(ed.getState()))
+      if (f !== null) hover.push(toSeq(f))
+    }
+
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       if (e.ctrlKey) {
@@ -270,12 +278,14 @@ export default function TrackCanvas() {
     }
 
     canvas.addEventListener('mousedown', onDown)
+    canvas.addEventListener('mousemove', onMove)
     canvas.addEventListener('wheel', onWheel, { passive: false })
     canvas.addEventListener('contextmenu', onContext)
     window.addEventListener('keydown', onKey)
     return () => {
-      ro.disconnect(); unsub(); cancelAnimationFrame(raf)
+      ro.disconnect(); unsub(); cancelAnimationFrame(raf); hover.stop()
       canvas.removeEventListener('mousedown', onDown)
+      canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('wheel', onWheel)
       canvas.removeEventListener('contextmenu', onContext)
       window.removeEventListener('keydown', onKey)
