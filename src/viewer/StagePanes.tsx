@@ -32,7 +32,7 @@ const findItem = (p: Project, id: string) => {
   for (const t of p.sequence.tracks) { const it = t.items.find(i => i.id === id); if (it) return { t, it } }
   return null
 }
-// Clip preview: loops one item's [trimIn, trimOut) on its own clock; 기본자세 세팅 ripple-inserts a rest-pose lead-in before it.
+// Clip preview: loops one item's [trimIn, trimOut) on its own clock; 기본자세 세팅 bakes a standing-pose start into the item's own clip.
 function ItemPreview({ id }: { id: string }) {
   const item = useEditor(s => findItem(s.project, id)?.it ?? null)
   const label = useEditor(s => {
@@ -43,8 +43,8 @@ function ItemPreview({ id }: { id: string }) {
   const timer = useRef(0)
   useEffect(() => () => clearTimeout(timer.current), [])
   const rest = () => {
-    const s = getEditor().getState(), ok = s.prependRestPose(id)
-    setMsg(ok ? '기본자세 구간을 추가했습니다' : findItem(s.project, id)?.t.locked ? '잠긴 트랙입니다' : '기본자세 구간을 넣을 수 없습니다')
+    const s = getEditor().getState(), ok = s.setRestPose(id)
+    setMsg(ok ? '시작 자세를 기본자세로 맞췄습니다' : findItem(s.project, id)?.t.locked ? '잠긴 트랙입니다' : '기본자세 구간을 넣을 수 없습니다')
     clearTimeout(timer.current); timer.current = window.setTimeout(() => setMsg(null), 2000)
   }
   if (!item) return null

@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 const items = (page: import('@playwright/test').Page) => page.evaluate(() =>
   (window as any).__editor.getState().project.sequence.tracks.find((t: any) => t.kind === 'motion').items.length as number)
 
-test('tree: expand a track, click a child row → clip preview; 기본자세 세팅 inserts one item', async ({ page }) => {
+test('tree: expand a track, click a child row → clip preview; 기본자세 세팅 bakes the rest pose in place', async ({ page }) => {
   await page.addInitScript(() => { delete (window as any).showOpenFilePicker; delete (window as any).showDirectoryPicker })
   const errors: string[] = []
   page.on('pageerror', e => errors.push(String(e)))
@@ -35,8 +35,14 @@ test('tree: expand a track, click a child row → clip preview; 기본자세 세
   await expect.poll(() => pane.locator('canvas').evaluate(c => c.getBoundingClientRect().width)).toBeGreaterThan(0)
 
   await pane.getByRole('button', { name: '기본자세 세팅' }).click()
-  await expect(pane.getByRole('status')).toHaveText('기본자세 구간을 추가했습니다')
-  expect(await items(page)).toBe(3)
+  await expect(pane.getByRole('status')).toHaveText('시작 자세를 기본자세로 맞췄습니다')
+  expect(await items(page)).toBe(2) // no clip/item added
+  const start = await page.evaluate(() => { // second item's first frame (clip frame 40): every joint key is 0
+    const p = (window as any).__editor.getState().project, c = p.clips[Object.keys(p.clips)[0]]
+    return Object.entries(c.channels).filter(([n]) => !n.startsWith('root.')).map(([, cv]: any) => cv.keys.find((k: any) => k.f === 40)?.v)
+  })
+  expect(start.length).toBeGreaterThan(0)
+  for (const v of start) expect(Math.abs(v)).toBeLessThan(1e-9)
   await pane.getByRole('button', { name: '클립 프리뷰 닫기' }).click()
   await expect(pane).toHaveCount(0)
   expect(errors).toEqual([])

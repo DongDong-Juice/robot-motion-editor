@@ -4,7 +4,7 @@ import { simplifyCurve, simplifyTolerance } from '../model/simplify'
 import { addActor as addActorTo, emptyProject, newProject, nextClipName } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
 import { inCrossfade, resolve, sortedItems, validTrack } from '../model/sequence'
-import { REST_LEN, restPoseClip } from '../model/restPose'
+import { applyRestPose } from '../model/restPose'
 import type { Actor, Item, Clip, Curve, Interp, Project, Tan, Track } from '../model/types'
 import { validVideoTrack, videoTrack } from '../model/video'
 import type { RobotKind } from '../robot/types'
@@ -58,7 +58,7 @@ export interface EditorState {
   splitItem(itemId: string, frame: number): boolean
   deleteItem(itemId: string): boolean
   // Ripple-insert a rest-pose lead-in clip before the item (same track); false = rejected, nothing changed.
-  prependRestPose(itemId: string): boolean
+  setRestPose(itemId: string): boolean
   beginGesture(): void; endGesture(): void
   fileName: string | null; dirty: boolean
   loadProject(p: Project, fileName: string | null): void; markSaved(fileName: string): void; newProjectFile(): void
@@ -498,19 +498,12 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         }))
         return ok
       },
-      prependRestPose: itemId => tryEdit(p => {
-        const f = findItem(p, itemId), src = f && p.clips[f.it.refId]
-        if (!f || !src || f.t.locked || f.t.kind !== 'motion') return false
-        const taken = new Set(Object.values(p.clips).filter(c => c.robot === src.robot).map(c => c.name))
-        let name = `${src.name}_기본자세`
-        for (let n = 2; taken.has(name); n++) name = `${src.name}_기본자세_${n}`
-        const def = defs[src.robot], clip = restPoseClip(def, evaluateClip(src, def, f.it.trimIn), name)
-        p.clips[clip.id] = clip // new clip: nothing existing is mutated, so no touched entry
-        const start = f.it.start
-        for (const it of f.t.items) if (it.start >= start) it.start += REST_LEN
-        f.t.items.push({ id: crypto.randomUUID(), refId: clip.id, start, trimIn: 0, trimOut: REST_LEN })
-        return validTrack(f.t.items)
-      }),
+      setRestPose: itemId => {
+        const f = findItem(get().project, itemId), clip = f && get().project.clips[f.it.refId]
+        if (!f || !clip || f.t.locked || f.t.kind !== 'motion' || clipLocked(get().project, clip.id) || f.it.trimOut - f.it.trimIn < 3) return false
+        edit(p => { p.clips[clip.id] = applyRestPose(p.clips[clip.id], defs[clip.robot], f.it.trimIn, f.it.trimOut) }, [{ clipId: clip.id, channels: 'all' }])
+        return true
+      },
       fileName: null, dirty: false,
       loadProject: (project, fileName) => {
         generation++
