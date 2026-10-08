@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 const items = (page: import('@playwright/test').Page) => page.evaluate(() =>
-  (window as any).__editor.getState().project.sequence.tracks.find((t: any) => t.kind === 'motion').items.length as number)
+  ((window as any).__editor.getState().project.sequence.tracks.find((t: any) => t.kind === 'motion')?.items.length ?? 0) as number) // 0 until the import lands
 
 test('tree: expand a track, click a child row → clip preview; 기본자세 세팅 only flags the item', async ({ page }) => {
   await page.addInitScript(() => { delete (window as any).showOpenFilePicker; delete (window as any).showDirectoryPicker })

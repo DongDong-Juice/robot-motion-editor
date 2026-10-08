@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test'
 // Regression: each preview pane used to keep its WebGL context after closing, so opening/switching
 // clip previews ~16 times made the browser drop the oldest context (the main robot preview went white).
 test('opening and switching clip previews never loses the main robot preview context', async ({ page }) => {
+  test.setTimeout(180000) // each preview builds a WebGL scene; slow under software GL
   const warnings: string[] = []
   page.on('console', m => { if (/Too many active WebGL contexts|Context Lost/i.test(m.text())) warnings.push(m.text()) })
   await page.goto('/')
@@ -14,7 +15,7 @@ test('opening and switching clip previews never loses the main robot preview con
     e.getState().splitItem(t().items[0].id, 40)
     e.getState().splitItem(t().items.find((i: any) => i.start === 40).id, 80)
   })
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 24; i++) { // well past the browser's ~16 live-context limit
     await page.evaluate(i => {
       const s = (window as any).__editor.getState()
       const items = s.project.sequence.tracks.find((t: any) => t.kind === 'motion').items
