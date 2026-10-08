@@ -4,6 +4,8 @@ import { beforeEach, expect, test } from 'vitest'
 import type { RobotDefs } from '../model/evaluate'
 import { createEditorStore, editLock, editTarget, gizmoLock } from './store'
 import { makeKey } from '../model/curve'
+import { emptyProject } from '../model/defaults'
+import type { Clip } from '../model/types'
 
 const load = loadDef
 const defs: RobotDefs = { g1: load('g1'), go2: load('go2') }
@@ -404,7 +406,7 @@ test('loadProject resets history, view state and dirty; edits and undo set dirty
   s().markSaved('b.motion.json'); expect(s().dirty).toBe(false); expect(s().fileName).toBe('b.motion.json')
   s().undo(); expect(s().dirty).toBe(true)
   s().markSaved('b.motion.json'); s().setFrame(5); expect(s().dirty).toBe(false)
-  s().newProjectFile(); expect(s().fileName).toBe(null); expect(s().project.actors).toHaveLength(2)
+  s().newProjectFile(); expect(s().fileName).toBe(null); expect(s().project.actors).toHaveLength(0)
 })
 
 test('setClip: growing a clip into its neighbour is rejected without an edit', () => {
@@ -603,4 +605,74 @@ test('simplifyClip: mixed clip changes only the dense channel', () => {
   expect(s().simplifyClip(c)).toBe(98)
   expect(curve(ch)).toBe(sparse)
   expect(curve('root.x').keys).toHaveLength(2)
+})
+
+// --- importClipToActor / empty project ---
+const impClip = (robot: 'g1' | 'go2', name: string, length = 10): Clip => ({ id: crypto.randomUUID(), name, robot, length, channels: {} })
+
+test('emptyProject has no actors, clips or tracks', () => {
+  const p = emptyProject()
+  expect([p.actors.length, Object.keys(p.clips).length, p.sequence.tracks.length]).toEqual([0, 0, 0])
+})
+
+test('importClipToActor: creates the actor (no default clip) and places the clip at 0', () => {
+  const e = createEditorStore(defs, emptyProject())
+  const clip = impClip('g1', 'walk', 50)
+  const r = e.getState().importClipToActor(clip)!
+  const p = e.getState().project
+  expect(p.actors).toHaveLength(1)
+  expect(p.actors[0]).toMatchObject({ id: r.actorId, robot: 'g1' })
+  expect(Object.keys(p.clips)).toEqual([clip.id])
+  expect(p.sequence.tracks).toHaveLength(1)
+  expect(p.sequence.tracks[0].items).toEqual([{ id: r.itemId, refId: clip.id, start: 0, trimIn: 0, trimOut: 50 }])
+})
+
+test('importClipToActor: appends to the first actor of that robot after its last item', () => {
+  const e = createEditorStore(defs, emptyProject())
+  const a = e.getState().importClipToActor(impClip('g1', 'a', 50))!
+  e.getState().addActor('g1') // a second G1 must be ignored
+  const b = e.getState().importClipToActor(impClip('g1', 'b', 30))!
+  const o = e.getState().importClipToActor(impClip('go2', 'o', 20))!
+  expect(b.actorId).toBe(a.actorId)
+  expect(o.actorId).not.toBe(a.actorId)
+  const p = e.getState().project
+  const items = p.sequence.tracks.find(t => t.actorId === a.actorId)!.items
+  expect(items.map(i => [i.start, i.trimOut])).toEqual([[0, 50], [50, 30]])
+  expect(p.sequence.tracks.find(t => t.actorId === o.actorId)!.items[0].start).toBe(0)
+})
+
+test('importClipToActor: appends at 0 when the actor track is empty; locked track rejects', () => {
+  const e = createEditorStore(defs, emptyProject())
+  e.getState().addActor('g1')
+  const id = e.getState().project.actors[0].id
+  e.getState().deleteItem(e.getState().project.sequence.tracks[0].items[0].id)
+  expect(e.getState().importClipToActor(impClip('g1', 'a'))!.actorId).toBe(id)
+  expect(e.getState().project.sequence.tracks[0].items[0].start).toBe(0)
+  e.getState().setTrackFlag(e.getState().project.sequence.tracks[0].id, 'locked', true)
+  const n = Object.keys(e.getState().project.clips).length
+  expect(e.getState().importClipToActor(impClip('g1', 'b'))).toBeNull()
+  expect(Object.keys(e.getState().project.clips)).toHaveLength(n)
+})
+
+test('importClipToActor: a gesture batch is one undo entry', () => {
+  const e = createEditorStore(defs, emptyProject())
+  e.getState().beginGesture()
+  e.getState().importClipToActor(impClip('g1', 'a'))
+  e.getState().importClipToActor(impClip('g1', 'b'))
+  e.getState().importClipToActor(impClip('go2', 'c'))
+  e.getState().endGesture()
+  expect(e.getState().project.actors).toHaveLength(2)
+  e.getState().undo()
+  expect(e.getState().project.actors).toHaveLength(0)
+  expect(Object.keys(e.getState().project.clips)).toHaveLength(0)
+  e.getState().undo() // nothing further
+  expect(e.getState().project.actors).toHaveLength(0)
+})
+
+test('newProjectFile starts empty; omitted initial project keeps the demo actors', () => {
+  expect(createEditorStore(defs).getState().project.actors).toHaveLength(2)
+  const e = createEditorStore(defs)
+  e.getState().newProjectFile()
+  expect(e.getState().project.actors).toHaveLength(0)
+  expect(e.getState().project.sequence.tracks).toHaveLength(0)
 })

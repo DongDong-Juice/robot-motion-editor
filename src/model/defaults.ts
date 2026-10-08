@@ -14,7 +14,7 @@ export function nextClipName(p: Project | null, robot: RobotKind): string {
   return `clip_${String(max + 1).padStart(2, '0')}`
 }
 
-function makeActor(p: Project | null, robot: RobotKind, x: number): { actor: Actor; clip: Clip; track: Track } {
+function makeActor(p: Project | null, robot: RobotKind, x: number, withClip = true): { actor: Actor; clip: Clip; track: Track } {
   const n = (p?.actors.filter(a => a.robot === robot).length ?? 0) + 1
   const actor: Actor = {
     id: crypto.randomUUID(), name: `${LABEL[robot]} #${n}`, robot, color: COLOR[robot],
@@ -23,17 +23,18 @@ function makeActor(p: Project | null, robot: RobotKind, x: number): { actor: Act
   const clip: Clip = { id: crypto.randomUUID(), name: nextClipName(p, robot), robot, length: LENGTH, channels: {} }
   const track: Track = {
     id: crypto.randomUUID(), kind: 'motion', actorId: actor.id, hidden: false, locked: false,
-    items: [{ id: crypto.randomUUID(), refId: clip.id, start: 0, trimIn: 0, trimOut: LENGTH }],
+    items: withClip ? [{ id: crypto.randomUUID(), refId: clip.id, start: 0, trimIn: 0, trimOut: LENGTH }] : [],
   }
   return { actor, clip, track }
 }
 
-export function addActor(p: Project, robot: RobotKind): Project {
-  const { actor, clip, track } = makeActor(p, robot, 1.5 * p.actors.length)
+// withClip=false: an actor with an empty motion track and no clip (the importer fills it).
+export function addActor(p: Project, robot: RobotKind, withClip = true): Project {
+  const { actor, clip, track } = makeActor(p, robot, 1.5 * p.actors.length, withClip)
   return {
     ...p,
     actors: [...p.actors, actor],
-    clips: { ...p.clips, [clip.id]: clip },
+    clips: withClip ? { ...p.clips, [clip.id]: clip } : p.clips,
     sequence: { ...p.sequence, tracks: [...p.sequence.tracks, track] },
   }
 }
@@ -48,3 +49,8 @@ export function newProject(): Project {
     sequence: { tracks: [g.track, d.track], markers: [], inF: null, outF: null },
   }
 }
+
+export const emptyProject = (): Project => ({
+  version: 2, fps: 60, actors: [], clips: {}, media: [],
+  sequence: { tracks: [], markers: [], inF: null, outF: null },
+})

@@ -1,7 +1,7 @@
 import { createStore, useStore, type StoreApi } from 'zustand'
 import { evalCurve, makeKey } from '../model/curve'
 import { simplifyCurve, simplifyTolerance } from '../model/simplify'
-import { addActor as addActorTo, newProject, nextClipName } from '../model/defaults'
+import { addActor as addActorTo, emptyProject, newProject, nextClipName } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
 import { inCrossfade, resolve, sortedItems, validTrack } from '../model/sequence'
 import type { Actor, Item, Clip, Curve, Interp, Project, Tan, Track } from '../model/types'
@@ -39,6 +39,8 @@ export interface EditorState {
   addMarker(f: number): void; renameMarker(index: number, name: string): void; deleteMarker(index: number): void
   newClip(robot: RobotKind): string
   importClip(clip: Clip): void
+  // Put an imported clip on the first actor of its robot (created without a default clip if none), after its last item. Null if that track is locked.
+  importClipToActor(clip: Clip): { actorId: string; itemId: string } | null
   simplifyClip(clipId: string, rot?: number, pos?: number): number
   deleteClip(clipId: string): boolean
   addMedia(name: string, durationF: number): string
@@ -135,7 +137,7 @@ function freezeClips(p: Project): Project {
   return p
 }
 
-export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
+export function createEditorStore(defs: RobotDefs, initial: Project = newProject()): StoreApi<EditorState> {
   return createStore<EditorState>((set, get) => {
     let undoS: Project[] = [], redoS: Project[] = []
     let gesture = false // edits inside a gesture share one undo entry
@@ -216,7 +218,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
       }, []),
       renameMarker: (i, name) => edit(p => { if (p.sequence.markers[i]) p.sequence.markers[i].name = name }, []),
       deleteMarker: i => edit(p => { p.sequence.markers.splice(i, 1) }, []),
-      defs, project: freezeClips(newProject()), frame: 0, playing: false, autoKey: false, view: 'tracks',
+      defs, project: freezeClips(initial), frame: 0, playing: false, autoKey: false, view: 'tracks',
       sel: { actorId: null, channel: null, keys: [] },
       setFrame: frame => set({ frame }),
       setPlaying: playing => set({ playing }),
@@ -356,6 +358,24 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         for (let n = 2; taken.has(name); n++) name = `${clip.name}_${n}`
         p.clips[clip.id] = { ...clip, name }
       }, []),
+      importClipToActor: clip => {
+        let out: { actorId: string; itemId: string } | null = null
+        tryEdit(p => {
+          let actor = p.actors.find(a => a.robot === clip.robot)
+          if (!actor) { Object.assign(p, addActorTo(p, clip.robot, false)); actor = p.actors.at(-1)! }
+          const track = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actor.id)
+          if (!track || track.locked) return false
+          const taken = new Set(Object.values(p.clips).filter(c => c.robot === clip.robot).map(c => c.name))
+          let name = clip.name
+          for (let n = 2; taken.has(name); n++) name = `${clip.name}_${n}`
+          p.clips[clip.id] = { ...clip, name }
+          const item = { id: crypto.randomUUID(), refId: clip.id, start: Math.max(0, ...track.items.map(i => i.start + i.trimOut - i.trimIn)), trimIn: 0, trimOut: clip.length }
+          track.items.push(item)
+          out = { actorId: actor.id, itemId: item.id }
+          return true
+        })
+        return out
+      },
       simplifyClip: (clipId, rot = 0.001, pos = 0.001) => {
         const clip = get().project.clips[clipId]
         if (!clip || clipLocked(get().project, clipId)) return 0
@@ -446,7 +466,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
         set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] } })
       },
       markSaved: fileName => set({ fileName, dirty: false }),
-      newProjectFile: () => get().loadProject(newProject(), null),
+      newProjectFile: () => get().loadProject(emptyProject(), null),
       beginGesture: () => {
         if (gesture) return
         gesture = true; gestureMoved = false // undo entry + redo clear wait for the first commit
@@ -472,7 +492,7 @@ export function createEditorStore(defs: RobotDefs): StoreApi<EditorState> {
 
 let editor: StoreApi<EditorState> | null = null
 export function initEditor(defs: RobotDefs): StoreApi<EditorState> {
-  return (editor = createEditorStore(defs))
+  return (editor = createEditorStore(defs, emptyProject()))
 }
 export function getEditor(): StoreApi<EditorState> {
   if (!editor) throw new Error('editor not initialized')
