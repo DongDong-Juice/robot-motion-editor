@@ -7,7 +7,8 @@ import { makeKey } from '../model/curve'
 import { eulerToQuat, quatYaw } from '../model/rootMath'
 import { evaluate, type RobotDefs } from '../model/evaluate'
 import type { Project } from '../model/types'
-import { csvFileName, itemFrameRange, posesToCsv, samplePoses } from './csv'
+import { csvFileName, exportItemCsv, itemFrameRange, posesToCsv, samplePoses } from './csv'
+import { validatePoses } from './validate'
 
 const load = loadDef
 const defs: RobotDefs = { g1: load('g1'), go2: load('go2') }
@@ -133,4 +134,22 @@ const SAMPLE = new URL('../../assets/data/Track1_원본_합본.csv', import.meta
 test.skipIf(!existsSync(SAMPLE))('export header equals the first line of the real sample', () => {
   const first = readFileSync(SAMPLE, 'utf8').split(/\r?\n/)[0]
   expect(posesToCsv([], defs.g1)).toBe(first)
+})
+
+test('exportItemCsv: same text as samplePoses+posesToCsv, name from csvFileName', () => {
+  const it = itemOf(proj, g1.id)
+  for (const mode of ['local', 'world'] as const) {
+    const r = exportItemCsv(proj, defs, g1.id, it.id, mode)
+    expect(r.text).toBe(posesToCsv(samplePoses(proj, defs, g1.id, it.id, mode), defs.g1))
+    expect(r.name).toBe(csvFileName(proj, g1.id, it.id, new Set()))
+  }
+})
+
+test('exportItemCsv: restPose item starts at zero joints; warnings are returned', () => {
+  const rest = structuredClone(proj)
+  itemOf(rest, g1.id).restPose = true
+  const first = exportItemCsv(rest, defs, g1.id, itemOf(rest, g1.id).id, 'local').text.split('\n')[1].split(',')
+  first.slice(11, 40).forEach(v => expect(Math.abs(Number(v))).toBeLessThan(1e-6))
+  expect(exportItemCsv(proj, defs, g1.id, itemOf(proj, g1.id).id, 'world').warnings).toEqual(
+    validatePoses(samplePoses(proj, defs, g1.id, itemOf(proj, g1.id).id, 'world'), defs.g1, itemFrameRange(itemOf(proj, g1.id)).from))
 })

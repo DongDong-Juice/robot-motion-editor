@@ -4,6 +4,7 @@ import { withRestPose } from '../model/restPose'
 import type { Quat } from '../model/rootMath'
 import type { Item, Project } from '../model/types'
 import type { RobotDef, RobotKind } from '../robot/types'
+import { validatePoses, type Warning } from './validate'
 
 export type RootMode = 'local' | 'world'
 
@@ -63,4 +64,13 @@ export function csvFileName(p: Project, actorId: string, itemId: string, taken: 
   for (let n = 2; taken.has(name); n++) name = `${base}_${n}.csv`
   taken.add(name)
   return name
+}
+
+// One item's CSV: file name, text and validation warnings (the same rows for the multi export and the single export).
+export function exportItemCsv(p: Project, defs: RobotDefs, actorId: string, itemId: string, mode: RootMode, taken = new Set<string>()):
+  { name: string; text: string; warnings: Warning[] } {
+  const robot = p.actors.find(a => a.id === actorId)?.robot
+  if (!robot) throw new Error(`unknown actor ${actorId}`)
+  const poses = samplePoses(p, defs, actorId, itemId, mode)
+  return { name: csvFileName(p, actorId, itemId, taken), text: posesToCsv(poses, defs[robot]), warnings: validatePoses(poses, defs[robot], itemFrameRange(findItem(p, itemId)).from) }
 }

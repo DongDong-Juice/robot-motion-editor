@@ -107,6 +107,24 @@ export async function saveTextFile(text: string, suggested: string, handle: Save
   return { handle: null, name: suggested }
 }
 
+// Save one CSV: save picker when available, else a plain download. false = the user cancelled.
+export async function saveCsvFile(name: string, text: string): Promise<boolean> {
+  const pick = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker
+  if (typeof pick === 'function') {
+    try {
+      const w = await (await pick.call(window, { suggestedName: name, types: [{ description: 'CSV', accept: { 'text/csv': ['.csv'] } }] })).createWritable()
+      try { await w.write(text) } catch (e) { await w.abort().catch(() => {}); throw e }
+      await w.close()
+      return true
+    } catch (e) {
+      if (aborted(e)) return false
+      throw e
+    }
+  }
+  await writeTextFiles(null, [{ name, text }])
+  return true
+}
+
 export const objectUrl = (file: File) => URL.createObjectURL(file)
 export const revokeUrl = (url: string) => URL.revokeObjectURL(url)
 

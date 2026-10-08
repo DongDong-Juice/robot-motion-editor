@@ -10,6 +10,7 @@ import { dropPlacement } from '../model/dropPlacement'
 import { COLOR } from '../model/defaults'
 import { draggedAsset, dropAsset, isAssetDrag } from './assetDrop'
 import { mediaUrl, subscribeMedia } from '../media/registry'
+import { exportOne } from '../export/exportOne'
 import { formatTimecode, frameToX, hoverFrame, hoverScrub, xToFrame, type TimeScale } from './timeScale'
 
 const ROW_H = 28, CHILD_H = 22, EDGE = 6
@@ -50,12 +51,15 @@ interface Row { t: Track; it?: Item; y: number; h: number }
 // In-progress drag preview; the store is untouched until mouseup.
 interface Drag { itemId: string; mode: 'move' | 'in' | 'out'; df: number }
 interface Msg { text: string; left: number; top: number }
+interface Ctx { x: number; y: number; actorId: string; itemId: string }
 interface Rename { index: number; left: number; value: string }
 
 export default function SequenceCanvas() {
   const cv = useRef<HTMLCanvasElement>(null)
   const [msg, setMsg] = useState<Msg | null>(null)
   const [rename, setRename] = useState<Rename | null>(null)
+  const [ctx, setCtx] = useState<Ctx | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const cancel = useRef(false)
   const renaming = useRef(false)
   renaming.current = !!rename
@@ -294,7 +298,11 @@ export default function SequenceCanvas() {
 
     const onContext = (e: MouseEvent) => {
       const { x, y } = pos(e), s = ed.getState()
-      if (y >= RULER_H) return
+      if (y >= RULER_H) { // motion item (bar or child row): export menu
+        const r = layout()[rowAt(y)], hit = r?.it ? { t: r.t, it: r.it } : itemAt(x, y)
+        if (hit && hit.t.actorId && !isVideo(hit.t)) { e.preventDefault(); setCtx({ x: e.clientX, y: e.clientY, actorId: hit.t.actorId, itemId: hit.it.id }) }
+        return
+      }
       e.preventDefault()
       const mi = hitMarker(s.project.sequence, scale(), x)
       if (mi !== null) s.deleteMarker(mi)
@@ -380,6 +388,18 @@ export default function SequenceCanvas() {
     }
     setRename(null)
   }
+  const closeCtx = (refocus: boolean) => { setCtx(null); if (refocus) cv.current?.focus() }
+  useEffect(() => {
+    if (!ctx) return
+    menuRef.current?.querySelector<HTMLElement>('[role=menuitem]')?.focus()
+    const away = (e: Event) => { if (!menuRef.current?.contains(e.target as Node)) setCtx(null) }
+    document.addEventListener('pointerdown', away); document.addEventListener('wheel', away, true); document.addEventListener('scroll', away, true)
+    return () => { document.removeEventListener('pointerdown', away); document.removeEventListener('wheel', away, true); document.removeEventListener('scroll', away, true) }
+  }, [ctx])
+  const runExport = async (c: Ctx) => {
+    const st = getEditor().getState(), m = await exportOne(st.project, st.defs, c.actorId, c.itemId)
+    if (m) seqFlash.fn?.(m, c.itemId)
+  }
   const project = useEditor(s => s.project)
   const rows = project.sequence.tracks.filter(t => t.kind === 'motion' || (isVideo(t) && project.media.length > 0))
   return (
@@ -407,6 +427,12 @@ export default function SequenceCanvas() {
         })}
       </div>
       {!rows.length && <div className="seq-empty">CSV 가져오기로 모션을 불러오세요</div>}
+      {ctx && (
+        <div ref={menuRef} role="menu" aria-label="클립" className="tl-menu" style={{ left: ctx.x, top: ctx.y }}
+          onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeCtx(true) } else if (e.key === 'Tab') closeCtx(true) }}>
+          <button role="menuitem" tabIndex={-1} onClick={() => { closeCtx(false); void runExport(ctx) }}>export하기</button>
+        </div>
+      )}
       {msg && <div className="seq-msg" style={{ left: msg.left, top: msg.top }}>{msg.text}</div>}
       {rename && (
         <input className="seq-rename" autoFocus value={rename.value} style={{ left: rename.left }}

@@ -2,8 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useEditor } from '../store/store'
 import { formatTimecode } from '../timeline/timeScale'
 import { pickDirectory, writeTextFiles } from '../fileio'
-import { csvFileName, itemFrameRange, posesToCsv, samplePoses, type RootMode } from './csv'
-import { validatePoses } from './validate'
+import { exportItemCsv, itemFrameRange, type RootMode } from './csv'
 
 export default function ExportDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null)
@@ -28,7 +27,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
   const checked = rows.filter(r => !off.has(r.item.id))
 
   const warnings = useMemo(() => open ? checked.flatMap(({ actor, item }) =>
-    validatePoses(samplePoses(project, defs, actor.id, item.id, 'world'), defs[actor.robot], itemFrameRange(item).from)
+    exportItemCsv(project, defs, actor.id, item.id, 'world').warnings
       .map(w => ({ ...w, actorId: actor.id, actorName: actor.name }))) : [],
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [project, defs, off, open])
@@ -39,10 +38,10 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
   async function doExport() {
     try {
       const taken = new Set<string>()
-      const files = checked.map(({ actor, item }) => ({
-        name: csvFileName(project, actor.id, item.id, taken),
-        text: posesToCsv(samplePoses(project, defs, actor.id, item.id, mode), defs[actor.robot]),
-      }))
+      const files = checked.map(({ actor, item }) => {
+        const { name, text } = exportItemCsv(project, defs, actor.id, item.id, mode, taken)
+        return { name, text }
+      })
       await writeTextFiles(dir, files)
       setMsg(`CSV ${files.length}개를 내보냈습니다.`)
     } catch (e) { setMsg(`내보내기 실패: ${e instanceof Error ? e.message : e}`) }
