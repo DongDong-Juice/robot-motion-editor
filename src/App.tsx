@@ -30,7 +30,7 @@ function Menubar() {
   const videoMode = useEditor(s => s.videoMode), videoOpacity = useEditor(s => s.videoOpacity)
   const hasVideo = useEditor(s => !!videoTrack(s.project)?.items.length)
   const [exporting, setExporting] = useState(false)
-  const name = useEditor(s => s.fileName ?? '새 프로젝트'), dirty = useEditor(s => s.dirty)
+  const name = useEditor(s => s.fileName ?? 'Motion Editor'), dirty = useEditor(s => s.dirty)
   const [msg, setMsg] = useState('')
   const title = name + (dirty ? ' •' : '')
   useEffect(() => { document.title = title }, [title])
