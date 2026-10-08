@@ -50,6 +50,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
     for (const [id, c] of Object.entries<any>(p.clips)) {
       const at = `clips.${id}`
       if (!isObj(c) || c.id !== id || !str(c.name)) fail(at)
+      if (c.owner !== undefined && !str(c.owner)) fail(`${at}.owner`)
       robot(c.robot, `${at}.robot`)
       if (!int(c.length) || c.length < 1) fail(`${at}.length`)
       if (!isObj(c.channels)) fail(`${at}.channels`)
@@ -120,6 +121,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
       })
       if (!(t.kind === 'video' ? validVideoTrack(t.items, media) : validTrack(t.items))) fail(at, '항목 배치가 올바르지 않습니다 (겹침 또는 범위)')
     })
+    for (const c of Object.values<any>(p.clips)) if (c.owner !== undefined && !itemIds.has(c.owner)) delete c.owner // dangling owner: back to a normal asset
   } catch (e) {
     throw e instanceof Bad ? new Error(e.message) : e
   }

@@ -62,7 +62,7 @@ export default function ProjectPanel() {
 
   const uses = (id: string) => project.sequence.tracks.reduce((n, t) => n + t.items.filter(i => i.refId === id).length, 0)
   const del = (id: string) => { if (!ed.getState().deleteClip(id)) setMsg(performance.now()) }
-  const clips = Object.values(project.clips)
+  const clips = Object.values(project.clips).filter(c => !c.owner)
 
   const [menu, setMenu] = useState<Menu | null>(null)
   const closeMenu = (refocus: boolean) => { if (refocus) menu?.card.focus(); setMenu(null) }

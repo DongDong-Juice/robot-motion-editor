@@ -36,9 +36,11 @@ test('tree: expand a track, click a child row → clip preview; 기본자세 세
 
   await pane.getByRole('button', { name: '기본자세 세팅' }).click()
   await expect(pane.getByRole('status')).toHaveText('시작 자세를 기본자세로 맞췄습니다')
-  expect(await items(page)).toBe(2) // no clip/item added
-  const start = await page.evaluate(() => { // second item's first frame (clip frame 40): every joint key is 0
-    const p = (window as any).__editor.getState().project, c = p.clips[Object.keys(p.clips)[0]]
+  expect(await items(page)).toBe(2) // no item added
+  await expect(page.locator('.pp-card')).toHaveCount(1) // the private copy is not an asset
+  const start = await page.evaluate(() => { // second item's first frame (clip frame 40): every joint key is 0, in its private copy
+    const p = (window as any).__editor.getState().project, it = p.sequence.tracks.find((t: any) => t.kind === 'motion').items[1], c = p.clips[it.refId]
+    if (Object.keys(p.clips).length !== 2 || c.owner !== it.id) throw new Error('expected a private copy owned by the item')
     return Object.entries(c.channels).filter(([n]) => !n.startsWith('root.')).map(([, cv]: any) => cv.keys.find((k: any) => k.f === 40)?.v)
   })
   expect(start.length).toBeGreaterThan(0)

@@ -4,7 +4,7 @@ export type Interp = 'linear' | 'bezier' | 'hold';
 export interface Tan { df: number; dv: number }
 export interface Key { f: number; v: number; interp: Interp; inTan: Tan; outTan: Tan }
 export interface Curve { keys: Key[] }
-export interface Clip { id: string; name: string; robot: RobotKind; length: number; channels: Record<string, Curve> }
+export interface Clip { id: string; name: string; robot: RobotKind; length: number; channels: Record<string, Curve>; owner?: string /* item id: private copy made by 기본자세 세팅, hidden from assets */ }
 export interface Actor { id: string; name: string; robot: RobotKind; color: string; placement: { x: number; y: number; yaw: number } }
 export interface Item { id: string; refId: string; start: number; trimIn: number; trimOut: number }
 export interface Track { id: string; kind: 'video' | 'motion'; actorId?: string; hidden: boolean; locked: boolean; items: Item[] }

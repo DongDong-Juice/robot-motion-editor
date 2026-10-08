@@ -29,6 +29,16 @@ test('roundtrip preserves project', () => {
   expect(parseProject(serializeProject(p), defs)).toEqual(p)
 })
 
+test('clip owner round-trips; a dangling owner is dropped', () => {
+  const p = mk(), id = p.sequence.tracks.flatMap(t => t.items)[0].id, c = Object.values(p.clips)[0]
+  c.owner = id
+  expect(parseProject(serializeProject(p), defs).clips[c.id].owner).toBe(id)
+  c.owner = 'gone'
+  expect(parseProject(serializeProject(p), defs).clips[c.id].owner).toBeUndefined()
+  ;(c as any).owner = 5
+  expect(() => parseProject(serializeProject(p), defs)).toThrow('owner')
+})
+
 test('v2: roundtrip within 1e-6, v1 opens as v2', () => {
   const p = mk()
   const k = { f: 3, v: 0.1234567891, interp: 'bezier' as const, inTan: { df: -2, dv: -0.00000049 }, outTan: { df: 2.5, dv: 1 / 3 } }

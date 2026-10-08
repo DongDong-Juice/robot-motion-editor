@@ -485,6 +485,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
           const f = findItem(p, itemId)
           if (!f || f.t.locked) return false
           f.t.items = f.t.items.filter(i => i.id !== itemId)
+          const rc = p.clips[f.it.refId] // its private rest-pose copy goes with it unless a split sibling still uses it
+          if (rc?.owner && !p.sequence.tracks.some(t => t.items.some(i => i.refId === rc.id))) delete p.clips[rc.id]
           // last clip of a motion track gone -> the robot goes with it (the clip stays in the assets)
           if (f.t.kind === 'motion' && !f.t.items.length) {
             p.actors = p.actors.filter(a => a.id !== f.t.actorId)
@@ -500,9 +502,16 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       },
       setRestPose: itemId => {
         const f = findItem(get().project, itemId), clip = f && get().project.clips[f.it.refId]
-        if (!f || !clip || f.t.locked || f.t.kind !== 'motion' || clipLocked(get().project, clip.id) || f.it.trimOut - f.it.trimIn < 3) return false
-        edit(p => { p.clips[clip.id] = applyRestPose(p.clips[clip.id], defs[clip.robot], f.it.trimIn, f.it.trimOut) }, [{ clipId: clip.id, channels: 'all' }])
-        return true
+        if (!f || !clip || f.t.locked || f.t.kind !== 'motion' || f.it.trimOut - f.it.trimIn < 3) return false
+        const shared = get().project.sequence.tracks.some(t => t.items.some(i => i.id !== itemId && i.refId === clip.id))
+        if (!shared && clipLocked(get().project, clip.id)) return false
+        // shared clip: bake into a private copy owned by this item, so other items keep the original
+        const id = shared ? crypto.randomUUID() : clip.id
+        return tryEdit(p => {
+          if (shared) { p.clips[id] = { ...structuredClone(clip), id, owner: itemId }; findItem(p, itemId)!.it.refId = id }
+          p.clips[id] = applyRestPose(p.clips[id], defs[clip.robot], f.it.trimIn, f.it.trimOut)
+          return true
+        }, shared ? [] : [{ clipId: id, channels: 'all' }])
       },
       fileName: null, dirty: false,
       loadProject: (project, fileName) => {

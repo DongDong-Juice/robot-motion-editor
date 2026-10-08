@@ -107,6 +107,40 @@ test('setRestPose: short item shrinks hold/blend; len < 3 rejected; locked and u
   expect(s().setRestPose(s().project.sequence.tracks.find(t => t.kind === 'video')!.items[0].id)).toBe(false)
 })
 
+test('setRestPose on a shared clip bakes a private copy; others untouched; one undo', () => {
+  const { st, track } = rpSetup([10, 110]) // i0 = k0
+  const s = () => st.getState()
+  s().splitItem('i0', 30)
+  const a = track().items.find(i => i.id === 'i0')!, b = track().items.find(i => i.id !== 'i0' && i.refId === 'k0')!, before = s().project, orig = before.clips[a.refId]
+  expect(a.refId).toBe(b.refId)
+  const curves = JSON.stringify(orig.channels), poseA = evaluateItem(before, defs, a.id, a.start + 5).q
+  expect(s().setRestPose(b.id)).toBe(true)
+  const p = s().project, a2 = track().items.find(i => i.id === 'i0')!, b2 = track().items.find(i => i.id === b.id)!, copy = p.clips[b2.refId]
+  expect(b2.refId).not.toBe(a.refId); expect(copy.owner).toBe(b.id); expect(copy.name).toBe(orig.name)
+  expect(a2.refId).toBe(a.refId)
+  expect(JSON.stringify(p.clips[a.refId].channels)).toBe(curves)
+  expect(evaluateItem(p, defs, a.id, a.start + 5).q).toEqual(poseA)
+  expect(evaluateClip(copy, g1, b2.trimIn).q.every(v => Math.abs(v) < 1e-9)).toBe(true)
+  expect(Object.values(p.clips).filter(c => !c.owner).length).toBe(Object.keys(before.clips).length) // the copy is hidden
+  s().undo()
+  expect(s().project).toBe(before)
+  s().redo(); s().deleteItem(b2.id) // owner removed -> copy removed
+  expect(s().project.clips[copy.id]).toBeUndefined()
+})
+
+test('setRestPose: single user bakes in place; same asset on two tracks stays private', () => {
+  const one = rpSetup([10, 110]), n = Object.keys(one.st.getState().project.clips).length
+  one.st.getState().setRestPose('i1')
+  expect(Object.keys(one.st.getState().project.clips).length).toBe(n)
+  expect(one.st.getState().project.clips.k1.owner).toBeUndefined()
+  const s = () => one.st.getState()
+  const r = s().placeClipAsNewActor('k1', 0)!
+  const before = JSON.stringify(s().project.clips.k1.channels)
+  expect(s().setRestPose(r.itemId)).toBe(true)
+  expect(JSON.stringify(s().project.clips.k1.channels)).toBe(before)
+  expect(s().project.sequence.tracks.flatMap(t => t.items).find(i => i.id === r.itemId)!.refId).not.toBe('k1')
+})
+
 test('itemPreview: open/close, pruned when the item goes away', () => {
   const { st } = setup([[0, 0, 60], [100, 0, 60]])
   const s = () => st.getState()
