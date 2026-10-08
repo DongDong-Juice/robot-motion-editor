@@ -29,14 +29,15 @@ test('roundtrip preserves project', () => {
   expect(parseProject(serializeProject(p), defs)).toEqual(p)
 })
 
-test('clip owner round-trips; a dangling owner is dropped', () => {
-  const p = mk(), id = p.sequence.tracks.flatMap(t => t.items)[0].id, c = Object.values(p.clips)[0]
-  c.owner = id
-  expect(parseProject(serializeProject(p), defs).clips[c.id].owner).toBe(id)
-  c.owner = 'gone'
-  expect(parseProject(serializeProject(p), defs).clips[c.id].owner).toBeUndefined()
-  ;(c as any).owner = 5
-  expect(() => parseProject(serializeProject(p), defs)).toThrow('owner')
+test('item restPose round-trips; non-true is rejected; an old unknown clip owner is kept and ignored', () => {
+  const p = mk(), it = p.sequence.tracks.flatMap(t => t.items)[0], c = Object.values(p.clips)[0]
+  it.restPose = true
+  expect(parseProject(serializeProject(p), defs).sequence.tracks.flatMap(t => t.items)[0].restPose).toBe(true)
+  ;(it as any).restPose = false
+  expect(() => parseProject(serializeProject(p), defs)).toThrow('restPose')
+  delete it.restPose
+  ;(c as any).owner = 'gone'
+  expect(Object.keys(parseProject(serializeProject(p), defs).clips)).toEqual(Object.keys(p.clips))
 })
 
 test('v2: roundtrip within 1e-6, v1 opens as v2', () => {

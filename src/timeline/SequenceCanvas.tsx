@@ -36,7 +36,7 @@ function drawLock(ctx: CanvasRenderingContext2D, cx: number, cy: number, on: boo
 }
 const isVideo = (t: Track) => t.kind === 'video'
 // "<start>–<end> · <clip name>" of a child row (sequence frames); time first since split pieces share a clip name
-const childLabel = (it: Item, name: string) => `${formatTimecode(it.start)}–${formatTimecode(it.start + itemLen(it))} · ${name}`
+const childLabel = (it: Item, name: string) => `${formatTimecode(it.start)}–${formatTimecode(it.start + itemLen(it))} · ${name}${it.restPose ? ' · 기본자세' : ''}`
 // text cut to `w` px with an ellipsis
 function fit(ctx: CanvasRenderingContext2D, text: string, w: number) {
   if (ctx.measureText(text).width <= w) return text
@@ -166,6 +166,13 @@ export default function SequenceCanvas() {
         for (const it of items) {
           const x = Math.max(frameToX(sc, it.start), LABEL_W) + 4, right = frameToX(sc, it.start + itemLen(it)) - 4
           if (right > x) ctx.fillText(refName(it) + (video && !mediaUrl(it.refId) ? ' (오프라인)' : ''), x, y + ROW_H / 2, right - x)
+          if (it.restPose) { // 기본자세 marker: accent tick at the bar's left edge, label if it fits
+            const bx = frameToX(sc, it.start)
+            ctx.fillStyle = C.accent; ctx.fillRect(bx + 1, y + 2, 3, ROW_H - 5)
+            const lw = ctx.measureText('기본자세').width
+            if (right - bx > lw + 80) ctx.fillText('기본자세', right - lw, y + ROW_H / 2)
+            ctx.fillStyle = C.text
+          }
         }
         ctx.restore()
         ctx.fillStyle = C.bg; ctx.fillRect(0, y, LABEL_W, ROW_H - 1)

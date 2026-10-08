@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 const items = (page: import('@playwright/test').Page) => page.evaluate(() =>
   (window as any).__editor.getState().project.sequence.tracks.find((t: any) => t.kind === 'motion').items.length as number)
 
-test('tree: expand a track, click a child row → clip preview; 기본자세 세팅 bakes the rest pose in place', async ({ page }) => {
+test('tree: expand a track, click a child row → clip preview; 기본자세 세팅 only flags the item', async ({ page }) => {
   await page.addInitScript(() => { delete (window as any).showOpenFilePicker; delete (window as any).showDirectoryPicker })
   const errors: string[] = []
   page.on('pageerror', e => errors.push(String(e)))
@@ -34,18 +34,22 @@ test('tree: expand a track, click a child row → clip preview; 기본자세 세
   await expect(pane).toContainText('클립 프리뷰 · G1 #1 / a')
   await expect.poll(() => pane.locator('canvas').evaluate(c => c.getBoundingClientRect().width), { timeout: 15000 }).toBeGreaterThan(0)
 
-  await pane.getByRole('button', { name: '기본자세 세팅' }).click()
-  // assert the outcome, not the transient (3 s) message: slow parallel runs can outlive it
-  await expect.poll(() => page.evaluate(() => Object.keys((window as any).__editor.getState().project.clips).length)).toBe(2)
-  expect(await items(page)).toBe(2) // no item added
-  await expect(page.locator('.pp-card')).toHaveCount(1) // the private copy is not an asset
-  const start = await page.evaluate(() => { // second item's first frame (clip frame 40): every joint key is 0, in its private copy
-    const p = (window as any).__editor.getState().project, it = p.sequence.tracks.find((t: any) => t.kind === 'motion').items[1], c = p.clips[it.refId]
-    if (Object.keys(p.clips).length !== 2 || c.owner !== it.id) throw new Error('expected a private copy owned by the item')
-    return Object.entries(c.channels).filter(([n]) => !n.startsWith('root.')).map(([, cv]: any) => cv.keys.find((k: any) => k.f === 40)?.v)
+  const snap = () => page.evaluate(async () => {
+    const { evaluate } = await import(/* @vite-ignore */ '/src/model/evaluate.ts')
+    const ed = (window as any).__editor, st = ed.getState(), p = st.project
+    const tr = p.sequence.tracks.find((t: any) => t.kind === 'motion'), it = tr.items[1]
+    return { clips: Object.keys(p.clips).length, flag: it.restPose ?? null, pose: JSON.stringify(evaluate(p, st.defs, tr.actorId, it.start)) }
   })
-  expect(start.length).toBeGreaterThan(0)
-  for (const v of start) expect(Math.abs(v)).toBeLessThan(1e-9)
+  const before = await snap()
+  await pane.getByRole('button', { name: '기본자세 세팅' }).click()
+  await expect(pane.getByRole('button', { name: '기본자세 해제' })).toBeVisible()
+  const after = await snap()
+  expect(after.clips).toBe(before.clips) // no clip added or baked
+  expect(after.flag).toBe(true)
+  expect(after.pose).toBe(before.pose) // sequence evaluation at the item start is unchanged
+  await pane.getByRole('button', { name: '기본자세 해제' }).click()
+  await expect(pane.getByRole('button', { name: '기본자세 세팅' })).toBeVisible()
+  expect((await snap()).flag).toBeNull()
   await pane.getByRole('button', { name: '클립 프리뷰 닫기' }).click()
   await expect(pane).toHaveCount(0)
   expect(errors).toEqual([])

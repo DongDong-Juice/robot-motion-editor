@@ -2,7 +2,9 @@ import { loadDef } from '../test/defs'
 import { expect, test } from 'vitest'
 import { makeKey } from './curve'
 import { newProject } from './defaults'
-import { evaluateClip, evaluateItem, type RobotDefs } from './evaluate'
+import { evaluate, evaluateClip, type RobotDefs } from './evaluate'
+import { restClipFor } from './restPose'
+import { samplePoses } from '../export/csv'
 import { eulerToQuat, quatAngle, quatYaw } from './rootMath'
 import { rebasePose } from './pose'
 import { createEditorStore } from '../store/store'
@@ -52,93 +54,62 @@ function rpSetup(win: [number, number], mk: (c: Curve) => Curve = c => c) {
   return { ...s, orig }
 }
 
-test('setRestPose: rest at a and a+HOLD, original from end, outside untouched, in place, one undo', () => {
-  for (const mk of [(c: Curve) => c, () => dense(f => 0.5 + 0.3 * Math.sin(f / 7))]) {
-    const { st, track, orig } = rpSetup([10, 110], mk)
-    const before = st.getState().project, t0 = track().items
-    expect(st.getState().setRestPose('i1')).toBe(true)
-    const p = st.getState().project, c = p.clips.k1, a = 10, hold = 30, end = a + hold + 60
-    expect(track().items).toEqual(t0)
-    expect(Object.keys(p.clips)).toEqual(Object.keys(before.clips))
-    const at = (cl: Clip, f: number) => evaluateClip(cl, g1, f), o = (f: number) => at(orig, f)
-    for (const f of [a, a + hold]) {
-      const r = at(c, f)
-      expect(r.q.every(v => Math.abs(v) < 1e-9)).toBe(true)
-      expect(r.rootPos[2]).toBeCloseTo(g1.standingHeight, 9)
-      expect(r.rootPos[0]).toBeCloseTo(o(a).rootPos[0], 9); expect(r.rootPos[1]).toBeCloseTo(o(a).rootPos[1], 9)
-      expect(quatAngle(r.rootQuat, eulerToQuat(0, 0, quatYaw(o(a).rootQuat)))).toBeLessThan(1e-6)
-    }
-    expect(at(c, end).q[ki]).toBeCloseTo(o(end).q[ki], 12)
-    const mid = at(c, a + hold + 30).q[ki]
-    expect(mid).toBeGreaterThan(0); expect(mid).toBeLessThan(o(a + hold + 30).q[ki] + 1e-9)
-    for (const f of [0, 3, 8, 9, end, end + 1, end + 2, 100, 119]) {
-      const x = at(c, f), y = o(f)
-      expect(Math.abs(x.q[ki] - y.q[ki])).toBeLessThan(1e-6); expect(Math.abs(x.rootPos[2] - y.rootPos[2])).toBeLessThan(1e-6)
-    }
-    for (let f = end + 1; f < 120; f += 3) expect(Math.abs(at(c, f).q[ki] - o(f).q[ki])).toBeLessThan(1e-6)
-    for (let f = 0; f < a; f++) expect(Math.abs(at(c, f).rootPos[0] - o(f).rootPos[0])).toBeLessThan(1e-6)
-    // previous piece (clip frames before a) is unaffected in the sequence
-    expect(evaluateItem(p, defs, 'i0', 30).q).toEqual(evaluateItem(before, defs, 'i0', 30).q)
-    st.getState().undo()
-    expect(st.getState().project).toBe(before)
-  }
+const flag = (st: ReturnType<typeof setup>['st'], id: string) => st.getState().project.sequence.tracks.flatMap(t => t.items).find(i => i.id === id)!.restPose
+
+test('setRestPose: toggles the flag only, one undo each, clips untouched', () => {
+  const { st } = rpSetup([10, 110]), s = () => st.getState(), before = s().project
+  expect(s().setRestPose('i1', true)).toBe(true)
+  expect(flag(st, 'i1')).toBe(true); expect(flag(st, 'i0')).toBeUndefined()
+  expect(s().project.clips).toEqual(before.clips); expect(s().dirty).toBe(true)
+  s().undo(); expect(s().project).toBe(before); expect(flag(st, 'i1')).toBeUndefined()
+  s().redo(); expect(s().setRestPose('i1', false)).toBe(true)
+  expect(flag(st, 'i1')).toBeUndefined()
 })
 
-test('setRestPose: short item shrinks hold/blend; len < 3 rejected; locked and unknown rejected', () => {
-  const { st, orig } = rpSetup([20, 29]) // len 9: HOLD 3, BLEND 5 -> end = 28
-  expect(st.getState().setRestPose('i1')).toBe(true)
-  const c = st.getState().project.clips.k1
-  expect(evaluateClip(c, g1, 23).q.every(v => Math.abs(v) < 1e-9)).toBe(true)
-  expect(evaluateClip(c, g1, 24).q[ki]).not.toBe(0)
-  expect(evaluateClip(c, g1, 28).q[ki]).toBeCloseTo(evaluateClip(orig, g1, 28).q[ki], 12)
-  const t = rpSetup([20, 22])
-  const p = t.st.getState().project
-  expect(t.st.getState().setRestPose('i1')).toBe(false)
-  expect(t.st.getState().project).toBe(p)
+test('setRestPose: locked, unknown and video items rejected', () => {
   const l = rpSetup([10, 110]), s = () => l.st.getState()
   s().setTrackFlag(l.track().id, 'locked', true)
   const q = s().project
-  expect(s().setRestPose('i1')).toBe(false)
+  expect(s().setRestPose('i1', true)).toBe(false)
   expect(s().project).toBe(q)
   s().setTrackFlag(l.track().id, 'locked', false)
-  expect(s().setRestPose('nope')).toBe(false)
+  expect(s().setRestPose('nope', true)).toBe(false)
   const m = s().addMedia('v', 100)
   expect(s().addVideoItem(m, 0)).toBe(true)
-  expect(s().setRestPose(s().project.sequence.tracks.find(t => t.kind === 'video')!.items[0].id)).toBe(false)
+  expect(s().setRestPose(s().project.sequence.tracks.find(t => t.kind === 'video')!.items[0].id, true)).toBe(false)
 })
 
-test('setRestPose on a shared clip bakes a private copy; others untouched; one undo', () => {
-  const { st, track } = rpSetup([10, 110]) // i0 = k0
-  const s = () => st.getState()
-  s().splitItem('i0', 30)
-  const a = track().items.find(i => i.id === 'i0')!, b = track().items.find(i => i.id !== 'i0' && i.refId === 'k0')!, before = s().project, orig = before.clips[a.refId]
-  expect(a.refId).toBe(b.refId)
-  const curves = JSON.stringify(orig.channels), poseA = evaluateItem(before, defs, a.id, a.start + 5).q
-  expect(s().setRestPose(b.id)).toBe(true)
-  const p = s().project, a2 = track().items.find(i => i.id === 'i0')!, b2 = track().items.find(i => i.id === b.id)!, copy = p.clips[b2.refId]
-  expect(b2.refId).not.toBe(a.refId); expect(copy.owner).toBe(b.id); expect(copy.name).toBe(orig.name)
-  expect(a2.refId).toBe(a.refId)
-  expect(JSON.stringify(p.clips[a.refId].channels)).toBe(curves)
-  expect(evaluateItem(p, defs, a.id, a.start + 5).q).toEqual(poseA)
-  expect(evaluateClip(copy, g1, b2.trimIn).q.every(v => Math.abs(v) < 1e-9)).toBe(true)
-  expect(Object.values(p.clips).filter(c => !c.owner).length).toBe(Object.keys(before.clips).length) // the copy is hidden
-  s().undo()
-  expect(s().project).toBe(before)
-  s().redo(); s().deleteItem(b2.id) // owner removed -> copy removed
-  expect(s().project.clips[copy.id]).toBeUndefined()
+test('the flag never changes sequence evaluation (no jump at the item start)', () => {
+  const { st, actor } = rpSetup([10, 110]), s = () => st.getState()
+  const frames = [0, 59, 60, 61, 70, 100, 119], at = () => frames.map(f => evaluate(s().project, defs, actor, f))
+  const before = at()
+  s().setRestPose('i1', true)
+  expect(at()).toEqual(before)
 })
 
-test('setRestPose: single user bakes in place; same asset on two tracks stays private', () => {
-  const one = rpSetup([10, 110]), n = Object.keys(one.st.getState().project.clips).length
-  one.st.getState().setRestPose('i1')
-  expect(Object.keys(one.st.getState().project.clips).length).toBe(n)
-  expect(one.st.getState().project.clips.k1.owner).toBeUndefined()
-  const s = () => one.st.getState()
-  const r = s().placeClipAsNewActor('k1', 0)!
-  const before = JSON.stringify(s().project.clips.k1.channels)
-  expect(s().setRestPose(r.itemId)).toBe(true)
-  expect(JSON.stringify(s().project.clips.k1.channels)).toBe(before)
-  expect(s().project.sequence.tracks.flatMap(t => t.items).find(i => i.id === r.itemId)!.refId).not.toBe('k1')
+test('restClipFor: cached by clip identity and window; rest at a, original after the blend; input untouched', () => {
+  const { orig } = rpSetup([10, 110])
+  const a = restClipFor(orig, g1, 10, 110)
+  expect(restClipFor(orig, g1, 10, 110)).toBe(a)
+  expect(restClipFor(orig, g1, 10, 100)).not.toBe(a)
+  expect(evaluateClip(a, g1, 10).q.every(v => Math.abs(v) < 1e-9)).toBe(true)
+  expect(evaluateClip(a, g1, 109).q[ki]).toBeCloseTo(evaluateClip(orig, g1, 109).q[ki], 9)
+})
+
+test('samplePoses: flagged item starts standing; later rows and other items match the unflagged export', () => {
+  const { st, actor } = rpSetup([10, 110]), s = () => st.getState()
+  s().splitItem('i0', 30) // second piece of k0 shares its clip with i0
+  const sibling = s().project.sequence.tracks[0].items.find(i => i.id !== 'i0' && i.refId === 'k0')!
+  const plain = samplePoses(s().project, defs, actor, 'i1', 'world'), plainSib = samplePoses(s().project, defs, actor, sibling.id, 'world')
+  const proj = s().project
+  s().setRestPose('i1', true)
+  expect(s().project.clips).toEqual(proj.clips)
+  const rest = samplePoses(s().project, defs, actor, 'i1', 'world')
+  expect(rest.length).toBe(plain.length)
+  expect(rest[0].q.every(v => Math.abs(v) < 1e-9)).toBe(true)
+  expect(rest[0].rootPos[2]).toBeCloseTo(g1.standingHeight, 9)
+  for (let i = 30 + 60 + 1; i < rest.length; i++) expect(rest[i].q[ki]).toBeCloseTo(plain[i].q[ki], 6)
+  expect(samplePoses(s().project, defs, actor, sibling.id, 'world')).toEqual(plainSib)
 })
 
 test('itemPreview: open/close, pruned when the item goes away', () => {

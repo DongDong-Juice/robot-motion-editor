@@ -32,7 +32,7 @@ const findItem = (p: Project, id: string) => {
   for (const t of p.sequence.tracks) { const it = t.items.find(i => i.id === id); if (it) return { t, it } }
   return null
 }
-// Clip preview: loops one item's [trimIn, trimOut) on its own clock; 기본자세 세팅 bakes a standing-pose start into the item's own clip.
+// Clip preview: loops one item's [trimIn, trimOut) on its own clock; 기본자세 flags the item to start from the standing pose here and in its CSV export only.
 function ItemPreview({ id }: { id: string }) {
   const item = useEditor(s => findItem(s.project, id)?.it ?? null)
   const label = useEditor(s => {
@@ -43,8 +43,8 @@ function ItemPreview({ id }: { id: string }) {
   const timer = useRef(0)
   useEffect(() => () => clearTimeout(timer.current), [])
   const rest = () => {
-    const s = getEditor().getState(), ok = s.setRestPose(id)
-    setMsg(ok ? '시작 자세를 기본자세로 맞췄습니다' : findItem(s.project, id)?.t.locked ? '잠긴 트랙입니다' : '기본자세 구간을 넣을 수 없습니다')
+    const s = getEditor().getState(), want = !item?.restPose, ok = s.setRestPose(id, want)
+    setMsg(ok ? (want ? '기본자세 시작을 켰습니다 (프리뷰·내보내기에만 적용)' : '기본자세 시작을 껐습니다') : findItem(s.project, id)?.t.locked ? '잠긴 트랙입니다' : '기본자세를 바꿀 수 없습니다')
     clearTimeout(timer.current); timer.current = window.setTimeout(() => setMsg(null), 3000)
   }
   if (!item) return null
@@ -55,8 +55,8 @@ function ItemPreview({ id }: { id: string }) {
         <button aria-label="클립 프리뷰 닫기" onClick={() => getEditor().getState().closeItemPreview()}>✕</button>
       </div>
       <div className="stage-3d">
-        <Stage compareClipId={item.refId} range={[item.trimIn, item.trimOut]} />
-        <button className="pv-rest" onClick={rest}>기본자세 세팅</button>
+        <Stage compareClipId={item.refId} range={[item.trimIn, item.trimOut]} itemId={id} />
+        <button className="pv-rest" onClick={rest}>{item.restPose ? '기본자세 해제' : '기본자세 세팅'}</button>
         {msg && <div className="pv-msg" role="status">{msg}</div>}
       </div>
     </>

@@ -1,5 +1,6 @@
 import { evalCurve, makeKey } from './curve'
-import type { Clip, Curve, Key } from './types'
+import type { RobotDefs } from './evaluate'
+import type { Clip, Curve, Key, Project } from './types'
 import type { RobotDef } from '../robot/types'
 
 export const REST_HOLD = 30 // max frames held at the rest pose (0.5 s)
@@ -56,4 +57,30 @@ export function applyRestPose(clip: Clip, def: RobotDef, a: number, b: number): 
     channels[n] = { keys: [...left, ...win, ...right] }
   }
   return { ...clip, channels }
+}
+
+// Memoized bake: the same clip object and window give the same derived clip (preview redraws every frame).
+const cache = new WeakMap<Clip, Map<string, Clip>>()
+export function restClipFor(clip: Clip, def: RobotDef, a: number, b: number): Clip {
+  if (b - a < 3) return clip // too short to hold a pose
+  let m = cache.get(clip)
+  if (!m) cache.set(clip, m = new Map())
+  const k = `${a}:${b}`
+  let r = m.get(k)
+  if (!r) m.set(k, r = applyRestPose(clip, def, a, b))
+  return r
+}
+
+/** Shallow project copy where only `itemId` plays its rest-pose clip (temporary clip id); the input is untouched. */
+export function withRestPose(p: Project, defs: RobotDefs, itemId: string): Project {
+  const tracks = p.sequence.tracks.map(t => {
+    const it = t.items.find(i => i.id === itemId)
+    return it ? { t, it } : null
+  }).find(Boolean)
+  if (!tracks) return p
+  const { it } = tracks, clip = p.clips[it.refId], id = `${clip.id}#rest:${itemId}`
+  return {
+    ...p, clips: { ...p.clips, [id]: { ...restClipFor(clip, defs[clip.robot], it.trimIn, it.trimOut), id } },
+    sequence: { ...p.sequence, tracks: p.sequence.tracks.map(t => ({ ...t, items: t.items.map(i => i.id === itemId ? { ...i, refId: id } : i) })) },
+  }
 }

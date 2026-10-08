@@ -6,6 +6,7 @@ import { evalCurve } from '../model/curve'
 import { COLOR } from '../model/defaults'
 import { evaluate, evaluateClip, evaluateItem, evaluateRoot } from '../model/evaluate'
 import { rebasePose } from '../model/pose'
+import { restClipFor } from '../model/restPose'
 import { nearestAngle } from '../model/rootMath'
 import { stitchTransforms, worldToClipRoot } from '../model/sequence'
 import type { Clip, Project } from '../model/types'
@@ -41,8 +42,9 @@ function makeGrid(): THREE.LineSegments {
 interface Entry { rig: RobotRig; trail: THREE.Line; dot: THREE.Points; ghost: boolean; trailKey?: string; trailClips?: (Clip | undefined)[] }
 
 /** One 3D view. `compareClipId` = a view-only compare pane: one robot at the origin driven by that clip from sequence frame 0 (no gizmo, picking or actors). Omitted = the main pane (every actor).
+ * With `itemId` + `range`, an item flagged restPose plays its derived rest-pose clip instead (preview only).
  * With `range` = [from, to) clip frames, the compare robot instead loops that range on its own 60 fps clock, root re-based so frame `from` sits at the origin. */
-export default function Stage({ compareClipId: cid, range }: { compareClipId?: string; range?: [number, number] }) {
+export default function Stage({ compareClipId: cid, range, itemId }: { compareClipId?: string; range?: [number, number]; itemId?: string }) {
   const [lo, hi] = range ?? [0, 0]
   const host = useRef<HTMLDivElement>(null)
 
@@ -125,10 +127,17 @@ export default function Stage({ compareClipId: cid, range }: { compareClipId?: s
       for (const o of [e.rig.root, e.trail, e.dot]) disposeObj(o)
     }
 
+    // the clip a compare pane shows: the original, or (flagged item preview) the cached rest-pose bake
+    const shownClip = () => {
+      const { project, defs } = store.getState(), clip = cid ? project.clips[cid] : undefined
+      if (!clip || !ranged || !itemId) return clip
+      const it = project.sequence.tracks.flatMap(t => t.items).find(i => i.id === itemId)
+      return it?.restPose ? restClipFor(clip, defs[clip.robot], lo, hi) : clip
+    }
     // compare pane: one rig for the clip at the origin; trail rebuilt only when the clip object changes
     const syncClip = () => {
       const { project, defs } = store.getState()
-      const clip = cid ? project.clips[cid] : undefined
+      const clip = shownClip()
       if (!clip) return
       let e = entries.get(cid!)
       if (!e) {
@@ -150,7 +159,7 @@ export default function Stage({ compareClipId: cid, range }: { compareClipId?: s
       e.trail.geometry = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pts, 3))
     }
     const applyClip = () => {
-      const s = store.getState(), clip = s.project.clips[cid!], e = entries.get(cid!)
+      const s = store.getState(), clip = shownClip(), e = entries.get(cid!)
       if (!clip || !e) return
       const f = ranged ? lo + Math.floor((performance.now() - t0) * 60 / 1000) % Math.max(hi - lo, 1) : s.frame
       if (ranged && f === shownF) return
@@ -363,7 +372,7 @@ export default function Stage({ compareClipId: cid, range }: { compareClipId?: s
         if (w.__stage === hook) delete w.__stage
       }
     }
-  }, [cid, lo, hi])
+  }, [cid, lo, hi, itemId])
 
   return <div ref={host} tabIndex={0} style={{ width: '100%', height: '100%', outline: 'none' }} />
 }

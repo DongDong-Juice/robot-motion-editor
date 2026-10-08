@@ -1,5 +1,6 @@
 import { evaluate, type Pose, type RobotDefs } from '../model/evaluate'
 import { rebasePose } from '../model/pose'
+import { withRestPose } from '../model/restPose'
 import type { Quat } from '../model/rootMath'
 import type { Item, Project } from '../model/types'
 import type { RobotDef, RobotKind } from '../robot/types'
@@ -24,7 +25,8 @@ export function normalizedPose(src: Pose, prev?: Pose): Pose {
 }
 
 export function samplePoses(p: Project, defs: RobotDefs, actorId: string, itemId: string, mode: RootMode): Pose[] {
-  const { from, to } = itemFrameRange(findItem(p, itemId))
+  const item = findItem(p, itemId), { from, to } = itemFrameRange(item)
+  if (item.restPose) p = withRestPose(p, defs, itemId) // the stored project is never touched
   const out: Pose[] = []
   for (let f = from; f < to; f++) {
     out.push(normalizedPose(evaluate(p, defs, actorId, f), out[out.length - 1]))

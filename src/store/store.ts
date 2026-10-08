@@ -4,7 +4,6 @@ import { simplifyCurve, simplifyTolerance } from '../model/simplify'
 import { addActor as addActorTo, emptyProject, newProject, nextClipName } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
 import { inCrossfade, resolve, sortedItems, validTrack } from '../model/sequence'
-import { applyRestPose } from '../model/restPose'
 import type { Actor, Item, Clip, Curve, Interp, Project, Tan, Track } from '../model/types'
 import { validVideoTrack, videoTrack } from '../model/video'
 import type { RobotKind } from '../robot/types'
@@ -57,8 +56,8 @@ export interface EditorState {
   trimItem(itemId: string, side: 'in' | 'out', df: number): boolean
   splitItem(itemId: string, frame: number): boolean
   deleteItem(itemId: string): boolean
-  // Ripple-insert a rest-pose lead-in clip before the item (same track); false = rejected, nothing changed.
-  setRestPose(itemId: string): boolean
+  // Flag an item so its clip preview and CSV export start from the standing pose (clips and sequence playback untouched); false = rejected.
+  setRestPose(itemId: string, on: boolean): boolean
   beginGesture(): void; endGesture(): void
   fileName: string | null; dirty: boolean
   loadProject(p: Project, fileName: string | null): void; markSaved(fileName: string): void; newProjectFile(): void
@@ -485,8 +484,6 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
           const f = findItem(p, itemId)
           if (!f || f.t.locked) return false
           f.t.items = f.t.items.filter(i => i.id !== itemId)
-          const rc = p.clips[f.it.refId] // its private rest-pose copy goes with it unless a split sibling still uses it
-          if (rc?.owner && !p.sequence.tracks.some(t => t.items.some(i => i.refId === rc.id))) delete p.clips[rc.id]
           // last clip of a motion track gone -> the robot goes with it (the clip stays in the assets)
           if (f.t.kind === 'motion' && !f.t.items.length) {
             p.actors = p.actors.filter(a => a.id !== f.t.actorId)
@@ -500,19 +497,12 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         }))
         return ok
       },
-      setRestPose: itemId => {
-        const f = findItem(get().project, itemId), clip = f && get().project.clips[f.it.refId]
-        if (!f || !clip || f.t.locked || f.t.kind !== 'motion' || f.it.trimOut - f.it.trimIn < 3) return false
-        const shared = get().project.sequence.tracks.some(t => t.items.some(i => i.id !== itemId && i.refId === clip.id))
-        if (!shared && clipLocked(get().project, clip.id)) return false
-        // shared clip: bake into a private copy owned by this item, so other items keep the original
-        const id = shared ? crypto.randomUUID() : clip.id
-        return tryEdit(p => {
-          if (shared) { p.clips[id] = { ...structuredClone(clip), id, owner: itemId }; findItem(p, itemId)!.it.refId = id }
-          p.clips[id] = applyRestPose(p.clips[id], defs[clip.robot], f.it.trimIn, f.it.trimOut)
-          return true
-        }, shared ? [] : [{ clipId: id, channels: 'all' }])
-      },
+      setRestPose: (itemId, on) => tryEdit(p => {
+        const f = findItem(p, itemId)
+        if (!f || f.t.locked || f.t.kind !== 'motion') return false
+        if (on) f.it.restPose = true; else delete f.it.restPose
+        return true
+      }),
       fileName: null, dirty: false,
       loadProject: (project, fileName) => {
         generation++
