@@ -69,7 +69,7 @@ tools/urdf_to_json.py   URDF+DAE → RobotDef JSON (GO2 생성에 사용)
 완료(모두 `master`): M1 코어, M2 시퀀스, M3 참조 영상, 개선 1(파일 v2·키 줄이기·잠금·패널 크기), 이후 UI 개선(파일 메뉴·에셋 카드·⇄비교 프리뷰·트리·클립 프리뷰·기본자세 표시·호버 스크럽·재생헤드/카메라 따라가기·단일 export하기).
 
 **다음 작업 — MuJoCo 물리 검증(골반 보조력 지표)**
-- 스펙 승인됨: `docs/superpowers/specs/2026-10-08-physics-assist-design.md`. 다음 단계는 **구현 계획 작성**(writing-plans). 첫 작업은 브라우저 웹 워커 실측(1분 모션 ≤ 5분, 미달 시 중단·보고).
+- 스펙 승인됨: `docs/superpowers/specs/2026-10-08-physics-assist-design.md`. 구현 계획: `docs/superpowers/plans/2026-10-08-physics-assist.md`(Task 1–9, subagent-driven로 실행). 스파이크 기준 코드: `docs/superpowers/spikes/mujoco-sim.mjs`. 첫 작업은 브라우저 웹 워커 실측(1분 모션 ≤ 5분, 미달 시 중단·보고).
 - 스파이크 결과(Node, `@mujoco/mujoco` 3.15.0): G1 60 s ≈ 2 s, 결정적, 보조 없음 f66 넘어짐, 보조 있음 Track1 60 s 평균 31%·최대 112% 체중.
 - G1 MJCF·메시 원본은 원래 PC의 `D:/Project/00_ROS/G1_motion_editor_인수인계_20261002/02_g1/g1-motion-editor/mujoco/`(g1_scene.xml, meshes/, replay.py). 다른 PC라면 이 폴더를 받아 `public/physics/g1/`로 복사해야 함. GO2 MJCF는 unitree_mujoco 레포에서.
 - RL팀 kp/kd 값은 아직 없음 → Unitree 공개값 기본, 설정 창에서 수정 가능하게.
