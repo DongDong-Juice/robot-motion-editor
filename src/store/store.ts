@@ -7,6 +7,7 @@ import { inCrossfade, resolve, sortedItems, validTrack } from '../model/sequence
 import type { Actor, Item, Clip, Curve, Interp, Project, Tan, Track } from '../model/types'
 import { validVideoTrack, videoTrack } from '../model/video'
 import type { RobotKind } from '../robot/types'
+import type { PhysicsSettings } from '../physics/settings'
 
 // Bumped whenever a different project is loaded; async work started against one project checks it before landing.
 let generation = 0
@@ -58,6 +59,7 @@ export interface EditorState {
   deleteItem(itemId: string): boolean
   // Flag an item so its clip preview and CSV export start from the standing pose (clips and sequence playback untouched); false = rejected.
   setRestPose(itemId: string, on: boolean): boolean
+  setPhysics(next: PhysicsSettings): void // project-wide physics-assist settings: one undo step
   beginGesture(): void; endGesture(): void
   fileName: string | null; dirty: boolean
   loadProject(p: Project, fileName: string | null): void; markSaved(fileName: string): void; newProjectFile(): void
@@ -331,6 +333,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
           }
         }, [{ clipId, channels: names }])
       },
+      setPhysics: next => edit(p => { p.physics = next }, []),
       setTrackFlag: (trackId, flag, on) => edit(p => { const t = p.sequence.tracks.find(t => t.id === trackId); if (t) t[flag] = on }, []),
       setClip: (clipId, patch) => {
         if (clipLocked(get().project, clipId)) return false

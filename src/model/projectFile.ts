@@ -125,5 +125,6 @@ export function parseProject(text: string, defs: RobotDefs): Project {
     throw e instanceof Bad ? new Error(e.message) : e
   }
   p.version = 2
+  if (!isObj(p.physics)) delete p.physics
   return p as Project
 }
