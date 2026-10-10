@@ -18,17 +18,21 @@ export function itemInput(p: Project, defs: RobotDefs, actorId: string, itemId: 
   return { robot, rows: csvRows(text), key }
 }
 
-// ponytail: synchronous re-export (~290 ms for a 210 s item) once per edit per item with a result; debounce/idle-callback if edits hitch
-const keys = new WeakMap<Project, Map<string, string>>() // projects are immutable: one export per item per project version
+// The item's CSV reads only its track (neighbours: crossfade, root stitching), the clips of that track, the actor and defs;
+// the key adds p.physics. Clips are structurally shared (same object when untouched); every edit structuredClones
+// actors and sequence, so track and actor are compared by value.
+// ponytail: editing the item's own clip still re-exports once per gesture tick (~290 ms for 210 s); defer during gestures if it hitches
+const keys = new Map<string, { deps: unknown[]; key: string }>()
+const sameDeps = (a: unknown[], b: unknown[]) => a.length === b.length && a.every((v, i) => v === b[i])
 /** True when the item's stored result was computed from a different CSV/settings than the current project gives. */
 export function stale(p: Project, defs: RobotDefs, actorId: string, itemId: string): boolean {
   const st = usePhysics.getState().byItem[itemId]
   if (st?.status !== 'done') return false
-  let m = keys.get(p)
-  if (!m) keys.set(p, m = new Map())
-  let k = m.get(itemId)
-  if (k === undefined) m.set(itemId, k = csvKey(p, defs, actorId, itemId).key)
-  return k !== st.key
+  const track = p.sequence.tracks.find(t => t.items.some(i => i.id === itemId))
+  const deps = [JSON.stringify(track), JSON.stringify(p.actors.find(a => a.id === actorId)), p.physics, defs, ...(track?.items.map(i => p.clips[i.refId]) ?? [])]
+  let c = keys.get(itemId)
+  if (!c || !sameDeps(c.deps, deps)) keys.set(itemId, c = { deps, key: csvKey(p, defs, actorId, itemId).key })
+  return c.key !== st.key
 }
 
 let nextId = 1
