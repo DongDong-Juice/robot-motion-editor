@@ -41,10 +41,13 @@ const idOf = new Map<string, number>()
 const msgs = new Map<number, ToWorker>() // live run requests, to re-post after a worker restart
 let total = 0, done = 0, cur = 0, label = ''
 const setItem = (itemId: string, v: ItemPhys) => usePhysics.setState(s => ({ byItem: { ...s.byItem, [itemId]: v } }))
+const waiters = new Map<string, (() => void)[]>() // runItems callers waiting for an item to leave the queue
+const settle = (item: string) => { waiters.get(item)?.forEach(r => r()); waiters.delete(item) }
 const showProgress = () => usePhysics.setState({ progress: total && done < total ? { done, total, label, cur } : null })
 function leave(id: number) { // request leaves the queue
   const item = byId.get(id)!
   byId.delete(id); idOf.delete(item); msgs.delete(id); cur = 0
+  settle(item)
   if (++done >= total) total = done = 0
   showProgress()
 }
@@ -64,14 +67,17 @@ onWorkerMessage(m => {
   setItem(item, m.type === 'result' ? { key: st.key, status: 'done', metrics: m.metrics } : { key: st.key, status: 'error', message: m.message })
 })
 
-/** Queues every item on the worker (it runs them in order). Re-requesting an item replaces its pending request. */
-export async function runItems(list: { actorId: string; itemId: string }[]): Promise<void> {
+/** Queues every item on the worker (it runs them in order). Re-requesting an item replaces its pending request.
+ *  Resolves once every listed item is done, errored, replaced or cancelled. */
+export function runItems(list: { actorId: string; itemId: string }[]): Promise<void> {
   const ed = getEditor().getState()
+  const waits: Promise<void>[] = []
   for (const { actorId, itemId } of list) {
     const old = idOf.get(itemId)
     if (old !== undefined) { // superseded: takes no progress slot
       const running = usePhysics.getState().byItem[itemId]?.status === 'running'
       byId.delete(old); msgs.delete(old); total--; cur = running ? 0 : cur
+      settle(itemId)
       if (running) restart()
       else post({ type: 'cancel', id: old })
     }
@@ -84,10 +90,12 @@ export async function runItems(list: { actorId: string; itemId: string }[]): Pro
       const run: ToWorker = { type: 'run', id, robot, rows, settings: withDefaults(ed.project.physics) }
       msgs.set(id, run)
       post(run)
+      waits.push(new Promise(r => waiters.set(itemId, [...(waiters.get(itemId) ?? []), r])))
     } catch (e) {
       setItem(itemId, { key: usePhysics.getState().byItem[itemId]?.key ?? '', status: 'error', message: e instanceof Error ? e.message : String(e) })
     }
   }
+  return Promise.all(waits).then(() => {})
 }
 
 /** Terminates the worker (aborting the running sim) and re-posts the still-live requests to a fresh one. */
@@ -101,6 +109,7 @@ export function cancelAll() {
   for (const [id, item] of [...byId]) {
     byId.delete(id); idOf.delete(item); msgs.delete(id)
     usePhysics.setState(s => { const { [item]: _, ...rest } = s.byItem; return { byItem: rest } })
+    settle(item)
   }
   total = done = cur = 0
   usePhysics.setState({ progress: null, loading: false })

@@ -16,7 +16,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
   const [dir, setDir] = useState<FileSystemDirectoryHandle | null>(null)
   const [msg, setMsg] = useState('')
   const [skip, setSkip] = useState(false) // 물리 검증 건너뛰기 (dialog state only)
-  const phys = usePhysics(s => s.byItem)
+  const phys = usePhysics(s => s.byItem), prog = usePhysics(s => s.progress), loading = usePhysics(s => s.loading)
 
   useEffect(() => {
     const d = ref.current
@@ -101,6 +101,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
         <button onClick={doExport} disabled={!checked.length || running}>
           {running ? '물리 검증 중…' : warnings.length ? `경고 ${warnings.length}개 무시하고 내보내기` : 'CSV 내보내기'}
         </button>
+        {running && <span className="exp-dim">{loading ? '물리 엔진 불러오는 중…' : prog && `물리 검증 ${prog.done + 1}/${prog.total} · ${Math.round(prog.cur * 100)}%`}</span>}
         <button onClick={onClose}>닫기</button>
       </div>
       <p role="status" className="exp-dim">{msg}</p>

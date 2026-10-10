@@ -17,7 +17,10 @@ const key = itemInput(p, defs, g1.id, item.id).key
 const base = exportItemCsv(p, defs, g1.id, item.id, 'local')
 const seg = (from: number) => ({ from, to: from + 4, maxPct: 99.4, maxTorque: 1 })
 const done = { key, status: 'done' as const, metrics: { segments: [seg(10), seg(30)] } as never }
-const fake = (v: { byItem: Record<string, typeof done> }) => vi.mocked(runItems).mockImplementation(async () => { usePhysics.setState(v) })
+const fake = (v: { byItem: Record<string, typeof done> }) => vi.mocked(runItems).mockImplementation(async () => { // like the real one: queued now, result later
+  usePhysics.setState({ byItem: { [item.id]: { key, status: 'queued' } } })
+  await new Promise(r => setTimeout(r, 5)); usePhysics.setState(v)
+})
 
 beforeEach(() => { usePhysics.setState({ byItem: {} }); vi.mocked(runItems).mockReset(); saved.text = '' })
 

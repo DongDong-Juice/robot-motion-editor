@@ -38,7 +38,7 @@ test('right-click an item bar or tree child row → export하기 saves exactly t
 
   await page.mouse.click(box.x + 400, box.y + 24 + 14, { button: 'right' })
   await page.keyboard.press('Enter')
-  await expect(page.locator('.seq-msg')).toContainText('G1_a.csv 을(를) 내보냈습니다')
+  await expect(page.locator('.seq-msg')).toContainText('G1_a.csv 을(를) 내보냈습니다', { timeout: 45_000 }) // waits for the physics check
   await expect.poll(() => downloads.length).toBe(1)
   expect(downloads[0].suggestedFilename()).toBe('G1_a.csv')
   const lines = fs.readFileSync((await downloads[0].path())!, 'utf8').split('\n')
