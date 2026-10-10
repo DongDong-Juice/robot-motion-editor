@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { beforeAll, expect, it, test } from 'vitest'
+import { beforeAll, describe, expect, it, test } from 'vitest'
 import loadMujoco from '@mujoco/mujoco'
 import { loadModel, simulate, type Loaded } from './sim'
 import { csvRows } from './csvRows'
@@ -67,3 +67,33 @@ it.skipIf(!existsSync(csv))('Track1 first 600 rows: spike-like range', () => {
   expect(M.maxPct).toBeGreaterThan(20)
   expect(M.maxPct).toBeLessThan(200)
 }, 120000)
+
+describe('go2', () => {
+  const gdir = new URL('../../public/physics/go2/', import.meta.url)
+  const gdef = loadDef('go2')
+  let G: Loaded
+  beforeAll(async () => {
+    const names: string[] = JSON.parse(readFileSync(new URL('files.json', gdir), 'utf8'))
+    G = await loadModel(mj, 'go2', { scene: new Uint8Array(readFileSync(new URL('scene.xml', gdir))), meshes: names.map(n => ({ name: n.replace('meshes/', ''), data: new Uint8Array(readFileSync(new URL(n, gdir))) })) })
+  }, 60000)
+  const stand = Array.from({ length: 4 }, () => [0, 0.9, -1.8]).flat()
+  const grow = (q: number[]) => Float64Array.from([60, 1, 12, 0, 0, 0, 0.27, 0, 0, 0, 1, ...q])
+
+  test('12 actuators in CSV joint order', () => {
+    expect(G.m.nu).toBe(12)
+    const act = Array.from({ length: 12 }, (_, i) => mj.mj_id2name(G.m, mj.mjtObj.mjOBJ_JOINT.value, G.m.actuator_trnid[2 * i]))
+    expect(act).toEqual(gdef.joints.map(j => j.name))
+  })
+
+  test('standstill: assist below warn threshold', () => {
+    const M = simulate(G, Array.from({ length: 120 }, () => grow(stand)), S)
+    console.log('go2 standstill', M.meanPct, M.maxPct)
+    expect(M.meanPct).toBeLessThan(S.go2.warnPct) // baseline ~39% at kp 20: physical sag; raise kp in 물리 설정 for a tighter baseline
+  })
+
+  it('deterministic', () => {
+    const rows = Array.from({ length: 90 }, (_, f) => grow(stand.map((v, i) => (i === 1 ? v + 0.2 * Math.sin(f / 10) : v))))
+    const a = simulate(G, rows, S), b = simulate(G, rows, S)
+    expect(Buffer.from(a.forceN.buffer).equals(Buffer.from(b.forceN.buffer))).toBe(true)
+  })
+})

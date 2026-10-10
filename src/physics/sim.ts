@@ -32,18 +32,19 @@ export function simulate(L: Loaded, rows: Float64Array[], s: PhysicsSettings, on
   const { mj, m, d, robot } = L, n = rows.length
   if (n < 2) throw new Error('물리 검증에는 2프레임 이상 필요합니다')
   const rp = s[robot], A = s.assist, nu = m.nu
-  const body = (name: string) => mj.mj_name2id(m, mj.mjtObj.mjOBJ_BODY.value, name)
-  const PELVIS = body('pelvis') // ponytail: GO2 root body name unchecked (no GO2 model yet)
+  let PELVIS = -1 // root = body owning the freejoint
+  for (let j = 0; j < m.njnt; j++) if (m.jnt_type[j] === 0) PELVIS = m.jnt_bodyid[j]
   const bname = (b: number) => mj.mj_id2name(m, mj.mjtObj.mjOBJ_BODY.value, b) ?? ''
   const soles: number[] = []
-  for (let g = 0; g < m.ngeom; g++) if (m.geom_type[g] === 2 && /(ankle_roll_link|foot)$/.test(bname(m.geom_bodyid[g]))) soles.push(g)
+  for (let g = 0; g < m.ngeom; g++) if (m.geom_type[g] === 2 && /(ankle_roll_link|foot|calf)$/.test(bname(m.geom_bodyid[g]))) soles.push(g)
 
   const KP = new Float64Array(nu), KD = new Float64Array(nu), LIM = new Float64Array(nu), QADR = new Int32Array(nu), VADR = new Int32Array(nu)
   for (let i = 0; i < nu; i++) {
     const j = m.actuator_trnid[2 * i], g = rp.groups[groupOf(robot, mj.mj_id2name(m, mj.mjtObj.mjOBJ_JOINT.value, j))]
     KP[i] = g.kp; KD[i] = g.kd
     m.actuator_gainprm[i * 10] = 1; m.actuator_biasprm[i * 10 + 1] = 0; m.actuator_biasprm[i * 10 + 2] = 0
-    QADR[i] = m.jnt_qposadr[j]; VADR[i] = m.jnt_dofadr[j]; LIM[i] = m.jnt_actfrcrange[2 * j + 1] * rp.torqueScale
+    QADR[i] = m.jnt_qposadr[j]; VADR[i] = m.jnt_dofadr[j]; LIM[i] = (m.jnt_actfrcrange[2 * j + 1] || m.actuator_ctrlrange[2 * i + 1]) * rp.torqueScale // GO2 motors: only ctrlrange
+    if (!(LIM[i] > 0)) throw new Error('액추에이터 토크 한계가 없습니다')
   }
   const { qpos, qvel, ctrl, xfrc, geom_xpos, xmat } = { qpos: d.qpos, qvel: d.qvel, ctrl: d.ctrl, xfrc: d.xfrc_applied, geom_xpos: d.geom_xpos, xmat: d.xmat }
 
