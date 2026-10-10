@@ -6,8 +6,12 @@ import { tv } from './viewState'
 import { buildRows, frameToX, hitKey, hoverFrame, hoverScrub, keysIn, rowKey, xToFrame, type TimeScale } from './timeScale'
 import { followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { drawRuler, LABEL_W, RULER_H } from './ruler'
+import { usePhysics } from '../physics/physicsStore'
+import { stale } from '../physics/runItem'
+import { withDefaults } from '../physics/settings'
+import { drawAssist } from './physGraph'
 
-const ROW_H = 20, KEY = 7
+const ROW_H = 20, KEY = 7, BAND = 24 // 보조력 band under the ruler, only while the open item has a result
 const NO_SEQ: Sequence = { tracks: [], markers: [], inF: null, outF: null }
 const sameKey = (a: KeyRef, b: KeyRef) => a.channel === b.channel && a.f === b.f
 
@@ -47,8 +51,10 @@ export default function TrackCanvas() {
       return e ? e.item.start - e.item.trimIn + Math.min(Math.max(clipF, 0), e.clip.length - 1) : 0
     }
     const rows = () => { const s = ed.getState(), a = editingItem(s)?.actorId; return buildRows(s.project, s.defs, u.expanded).filter(r => r.actorId === a) }
-    const rowAt = (y: number) => Math.floor((y - RULER_H + u.scrollY) / ROW_H)
-    const rowY = (i: number) => RULER_H + i * ROW_H - u.scrollY
+    const band = () => { const e = editingItem(ed.getState()), m = e && usePhysics.getState().byItem[e.item.id]?.metrics; return e && m ? { e, m } : null }
+    const top = () => RULER_H + (band() ? BAND : 0) // rows start here
+    const rowAt = (y: number) => Math.floor((y - top() + u.scrollY) / ROW_H)
+    const rowY = (i: number) => top() + i * ROW_H - u.scrollY
 
     const draw = () => {
       raf = 0
@@ -59,12 +65,12 @@ export default function TrackCanvas() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H)
       ctx.font = '11px "IBM Plex Sans KR", sans-serif'; ctx.textBaseline = 'middle'
-      const rs = rows(), sc = scale()
+      const rs = rows(), sc = scale(), T = top()
 
-      ctx.save(); ctx.beginPath(); ctx.rect(0, RULER_H, W, H - RULER_H); ctx.clip()
+      ctx.save(); ctx.beginPath(); ctx.rect(0, T, W, H - T); ctx.clip()
       rs.forEach((r, i) => {
         const y = rowY(i)
-        if (y + ROW_H < RULER_H || y > H) return
+        if (y + ROW_H < T || y > H) return
         const actor = s.project.actors.find(a => a.id === r.actorId)!
         const isActorRow = r.kind === 'group' && r.channels.length === 0
         ctx.fillStyle = isActorRow ? C.panel : C.bg; ctx.fillRect(0, y, W, ROW_H)
@@ -95,6 +101,14 @@ export default function TrackCanvas() {
       })
       ctx.restore()
 
+      const b = band()
+      if (b) { // 보조력 band: the item's CSV frame 0 is clip frame trimIn
+        const actor = s.project.actors.find(a => a.id === b.e.actorId)!
+        ctx.fillStyle = C.panel; ctx.fillRect(0, RULER_H, W, BAND); ctx.fillStyle = C.line; ctx.fillRect(0, RULER_H + BAND - 1, W, 1)
+        drawAssist(ctx, b.m.pct, b.m.segments, b.e.item.trimIn, sc, LABEL_W, W, RULER_H + 3, BAND - 6, actor.color,
+          withDefaults(s.project.physics)[actor.robot].warnPct, stale(s.project, s.defs, b.e.actorId!, b.e.item.id))
+        ctx.fillStyle = C.text; ctx.fillText('보조력', 6, RULER_H + BAND / 2)
+      }
       const e = editingItem(s)
       if (e) { // dim the trimmed-away part of the clip
         ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, RULER_H, W - LABEL_W, H - RULER_H); ctx.clip()
@@ -125,7 +139,7 @@ export default function TrackCanvas() {
     }
     resetFollow()
     const ro = new ResizeObserver(resize); ro.observe(canvas); resize()
-    const unsub = ed.subscribe(schedule)
+    const unsub = ed.subscribe(schedule), unsubPhys = usePhysics.subscribe(schedule)
 
     // ---- mouse ----
     const pos = (e: MouseEvent) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top } }
@@ -138,7 +152,7 @@ export default function TrackCanvas() {
     // key under the cursor, with the owning actor's clip
     const keyAt = (x: number, y: number) => {
       const r = rows()[rowAt(y)]
-      if (!r || y < RULER_H || x < LABEL_W) return null
+      if (!r || y < top() || x < LABEL_W) return null
       const cs = clipScale(r.actorId), it = itemOf(r.actorId)
       if (!cs || !it) return null
       const hit = hitKey([r], it.clip, cs, ROW_H, x, ROW_H / 2)
@@ -150,7 +164,7 @@ export default function TrackCanvas() {
       if (e.button !== 0) return
       setMenu(null); canvas.focus()
       const { x, y } = pos(e), s = ed.getState()
-      if (y < RULER_H) { // ruler scrub
+      if (y < top()) { // ruler (and 보조력 band) scrub
         s.setFrame(frameAtX(x))
         drag(m => s.setFrame(frameAtX(pos(m).x)), () => {})
         return
@@ -229,7 +243,7 @@ export default function TrackCanvas() {
         tv.ppf = Math.min(Math.max(tv.ppf * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 0.5), 40)
         tv.scrollF = Math.max(0, fAt - (x - LABEL_W) / tv.ppf)
       } else if (e.shiftKey) { // vertical scroll
-        const max = Math.max(0, rows().length * ROW_H - (H - RULER_H))
+        const max = Math.max(0, rows().length * ROW_H - (H - top()))
         u.scrollY = Math.min(Math.max(u.scrollY + (e.deltaY || e.deltaX), 0), max)
       } else tv.scrollF = Math.max(0, tv.scrollF + (e.deltaY + e.deltaX) / tv.ppf)
       schedule()
@@ -288,7 +302,7 @@ export default function TrackCanvas() {
     canvas.addEventListener('contextmenu', onContext)
     window.addEventListener('keydown', onKey)
     return () => {
-      ro.disconnect(); unsub(); cancelAnimationFrame(raf); hover.stop()
+      ro.disconnect(); unsub(); unsubPhys(); cancelAnimationFrame(raf); hover.stop()
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('wheel', onWheel)

@@ -12,6 +12,10 @@ import { draggedAsset, dropAsset, isAssetDrag } from './assetDrop'
 import { mediaUrl, subscribeMedia } from '../media/registry'
 import { exportOne } from '../export/exportOne'
 import { formatTimecode, frameToX, hoverFrame, hoverScrub, xToFrame, type TimeScale } from './timeScale'
+import { usePhysics } from '../physics/physicsStore'
+import { runItems, stale } from '../physics/runItem'
+import { withDefaults } from '../physics/settings'
+import { badge, drawAssist, segmentAt, seqFrameOf, treeSuffix, WARN_RED } from './physGraph'
 
 const ROW_H = 28, CHILD_H = 22, EDGE = 6
 const DENY = '이 위치에 놓을 수 없습니다'
@@ -51,7 +55,7 @@ interface Row { t: Track; it?: Item; y: number; h: number }
 // In-progress drag preview; the store is untouched until mouseup.
 interface Drag { itemId: string; mode: 'move' | 'in' | 'out'; df: number }
 interface Msg { text: string; left: number; top: number }
-interface Ctx { x: number; y: number; actorId: string; itemId: string }
+interface Ctx { x: number; y: number; actorId: string; trackId: string; itemId: string | null } // itemId null: track label menu
 interface Rename { index: number; left: number; value: string }
 
 export default function SequenceCanvas() {
@@ -106,6 +110,12 @@ export default function SequenceCanvas() {
       clearTimeout(timer); timer = window.setTimeout(() => setMsg(null), 2000)
     }
 
+    // stored assist result of a motion item, and whether the current project would export a different CSV
+    const phys = (t: Track, it: Item) => {
+      const s = ed.getState(), st = usePhysics.getState().byItem[it.id]
+      return { st, old: !!t.actorId && stale(s.project, s.defs, t.actorId, it.id) }
+    }
+    const GRAPH = 0.6 // graph fills the bar's bottom 40%
     seqFlash.fn = (text, itemId) => flash(text, layout().findIndex(r => !r.it && r.t.items.some(i => i.id === itemId)))
 
     const draw = () => {
@@ -143,7 +153,8 @@ export default function SequenceCanvas() {
           ctx.fillStyle = C.bg; ctx.fillRect(0, y, LABEL_W - 1, h - 1)
           ctx.font = '10px "IBM Plex Sans KR", sans-serif'
           ctx.fillStyle = it.id === s.selItem ? C.accent : C.text
-          ctx.fillText(fit(ctx, childLabel(it, refName(it)), LABEL_W - CHILD_X - 6), CHILD_X, y + h / 2)
+          const { st, old } = phys(t, r.it), suf = treeSuffix(st, old), sw = ctx.measureText(suf).width // the suffix stays whole, the label is cut
+          ctx.fillText(fit(ctx, childLabel(it, refName(it)), LABEL_W - CHILD_X - 6 - sw) + suf, CHILD_X, y + h / 2)
           ctx.font = '11px "IBM Plex Sans KR", sans-serif'
           return
         }
@@ -159,6 +170,9 @@ export default function SequenceCanvas() {
           if (video && !mediaUrl(it.refId)) hatch(x, x + w, y, 0.25) // offline
           ctx.strokeStyle = it.id === s.selItem ? C.accent : video ? C.line : color; ctx.lineWidth = 1
           ctx.strokeRect(x + 0.5, by + 0.5, w - 1, bh - 1)
+          const { st, old } = video ? { st: undefined, old: false } : phys(t, it)
+          if (st?.metrics && actor) drawAssist(ctx, st.metrics.pct, st.metrics.segments, seqFrameOf(it, 0), sc, Math.max(x, LABEL_W), x + w,
+            by + bh * GRAPH, bh * (1 - GRAPH), color, withDefaults(s.project.physics)[actor.robot].warnPct, old)
         }
         // crossfade: overlap of neighbours, hatched both ways
         for (let k = 0; k + 1 < items.length; k++) {
@@ -169,12 +183,19 @@ export default function SequenceCanvas() {
         ctx.fillStyle = C.text
         for (const it of items) {
           const x = Math.max(frameToX(sc, it.start), LABEL_W) + 4, right = frameToX(sc, it.start + itemLen(it)) - 4
-          if (right > x) ctx.fillText(refName(it) + (video && !mediaUrl(it.refId) ? ' (오프라인)' : ''), x, y + ROW_H / 2, right - x)
+          const { st, old } = video ? { st: undefined, old: false } : phys(t, it), b = badge(st, old)
+          const ty = st?.metrics ? y + 9 : y + ROW_H / 2 // above the graph
+          const bx = frameToX(sc, it.start), br = Math.min(right, W - 4), bw = b && br - x >= ctx.measureText(b).width ? ctx.measureText(b).width + 8 : 0
+          if (b && bw) { // badge at the bar's (visible) right end
+            ctx.fillStyle = b.startsWith('⚠') || st?.status === 'error' ? WARN_RED : old ? '#8d96a3' : C.text
+            ctx.fillText(b, br - bw + 8, ty); ctx.fillStyle = C.text
+          }
+          const nr = bw ? br - bw : right
+          if (nr > x) ctx.fillText(refName(it) + (video && !mediaUrl(it.refId) ? ' (오프라인)' : ''), x, ty, nr - x)
           if (it.restPose) { // 기본자세 marker: accent tick at the bar's left edge, label if it fits
-            const bx = frameToX(sc, it.start)
             ctx.fillStyle = C.accent; ctx.fillRect(bx + 1, y + 2, 3, ROW_H - 5)
             const lw = ctx.measureText('기본자세').width
-            if (right - bx > lw + 80) ctx.fillText('기본자세', right - lw, y + ROW_H / 2)
+            if (nr - bx > lw + 80) ctx.fillText('기본자세', nr - lw, ty)
             ctx.fillStyle = C.text
           }
         }
@@ -210,7 +231,7 @@ export default function SequenceCanvas() {
     }
     resetFollow()
     const ro = new ResizeObserver(resize); ro.observe(canvas); resize()
-    const unsub = ed.subscribe(schedule), unsubMedia = subscribeMedia(schedule)
+    const unsub = ed.subscribe(schedule), unsubMedia = subscribeMedia(schedule), unsubPhys = usePhysics.subscribe(schedule)
 
     // ---- mouse ----
     const pos = (e: { clientX: number; clientY: number }) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top } }
@@ -269,6 +290,11 @@ export default function SequenceCanvas() {
         return
       }
       const { t, it, mode } = hit
+      const m = usePhysics.getState().byItem[it.id]?.metrics, ry = layout()[row].y
+      if (m && t.actorId && mode === 'move' && y >= ry + 2 + (ROW_H - 5) * GRAPH && !stale(s.project, s.defs, t.actorId, it.id)) {
+        const seg = segmentAt(m.segments, xToFrame(scale(), x) - seqFrameOf(it, 0)) // red span: jump to its start
+        if (seg) { hover.stop(); s.selectItem(it.id); s.setFrame(seqFrameOf(it, seg.from)); return } // drop the pending hover scrub
+      }
       s.selectItem(it.id)
       if (t.actorId) s.select(t.actorId)
       track(m => {
@@ -298,9 +324,11 @@ export default function SequenceCanvas() {
 
     const onContext = (e: MouseEvent) => {
       const { x, y } = pos(e), s = ed.getState()
-      if (y >= RULER_H) { // motion item (bar or child row): export menu
-        const r = layout()[rowAt(y)], hit = r?.it ? { t: r.t, it: r.it } : itemAt(x, y)
-        if (hit && hit.t.actorId && !isVideo(hit.t)) { e.preventDefault(); setCtx({ x: e.clientX, y: e.clientY, actorId: hit.t.actorId, itemId: hit.it.id }) }
+      if (y >= RULER_H) { // motion item (bar or child row): item menu; motion track label: track menu
+        const r = layout()[rowAt(y)]
+        if (r && !r.it && x < LABEL_W && r.t.actorId && !isVideo(r.t)) { e.preventDefault(); setCtx({ x: e.clientX, y: e.clientY, actorId: r.t.actorId, trackId: r.t.id, itemId: null }); return }
+        const hit = r?.it ? { t: r.t, it: r.it } : itemAt(x, y)
+        if (hit && hit.t.actorId && !isVideo(hit.t)) { e.preventDefault(); setCtx({ x: e.clientX, y: e.clientY, actorId: hit.t.actorId, trackId: hit.t.id, itemId: hit.it.id }) }
         return
       }
       e.preventDefault()
@@ -368,7 +396,7 @@ export default function SequenceCanvas() {
     addEventListener('dragend', clearGhost)
     return () => {
       seqFlash.fn = null
-      ro.disconnect(); unsub(); unsubMedia(); hover.stop(); cancelAnimationFrame(raf); clearTimeout(timer)
+      ro.disconnect(); unsub(); unsubMedia(); unsubPhys(); hover.stop(); cancelAnimationFrame(raf); clearTimeout(timer)
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('dblclick', onDbl)
@@ -397,10 +425,17 @@ export default function SequenceCanvas() {
     return () => { document.removeEventListener('pointerdown', away); document.removeEventListener('wheel', away, true); document.removeEventListener('scroll', away, true) }
   }, [ctx])
   const runExport = async (c: Ctx) => {
-    const st = getEditor().getState(), m = await exportOne(st.project, st.defs, c.actorId, c.itemId)
-    if (m) seqFlash.fn?.(m, c.itemId)
+    const st = getEditor().getState(), m = await exportOne(st.project, st.defs, c.actorId, c.itemId!)
+    if (m) seqFlash.fn?.(m, c.itemId!)
   }
-  const project = useEditor(s => s.project)
+  const project = useEditor(s => s.project), byItem = usePhysics(s => s.byItem)
+  // a robot is known to have no physics model once one of its items came back 미지원
+  const robotOf = (actorId?: string) => project.actors.find(a => a.id === actorId)?.robot
+  const noModel = !!ctx && project.sequence.tracks.some(t => robotOf(t.actorId) === robotOf(ctx.actorId) && t.items.some(i => byItem[i.id]?.message === '미지원'))
+  const runPhys = (c: Ctx) => {
+    const t = project.sequence.tracks.find(t => t.id === c.trackId)
+    if (t) void runItems((c.itemId ? [c.itemId] : sortedItems(t).map(i => i.id)).map(itemId => ({ actorId: c.actorId, itemId })))
+  }
   const rows = project.sequence.tracks.filter(t => t.kind === 'motion' || (isVideo(t) && project.media.length > 0))
   return (
     <div className="tl-body">
@@ -429,8 +464,17 @@ export default function SequenceCanvas() {
       {!rows.length && <div className="seq-empty">CSV 가져오기로 모션을 불러오세요</div>}
       {ctx && (
         <div ref={menuRef} role="menu" aria-label="클립" className="tl-menu" style={{ left: ctx.x, top: ctx.y }}
-          onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeCtx(true) } else if (e.key === 'Tab') closeCtx(true) }}>
-          <button role="menuitem" tabIndex={-1} onClick={() => { closeCtx(false); void runExport(ctx) }}>export하기</button>
+          onKeyDown={e => {
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeCtx(true) } else if (e.key === 'Tab') closeCtx(true)
+            else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+              e.preventDefault()
+              const its = [...menuRef.current!.querySelectorAll<HTMLElement>('[role=menuitem]')], i = its.indexOf(document.activeElement as HTMLElement)
+              its[(i + (e.key === 'ArrowDown' ? 1 : its.length - 1)) % its.length]?.focus()
+            }
+          }}>
+          {ctx.itemId && <button role="menuitem" tabIndex={-1} onClick={() => { closeCtx(false); void runExport(ctx) }}>export하기</button>}
+          <button role="menuitem" tabIndex={-1} aria-disabled={noModel} title={noModel ? '미지원' : undefined}
+            onClick={() => { if (noModel) return; closeCtx(false); runPhys(ctx) }}>{ctx.itemId ? '물리 검증' : '트랙 물리 검증'}</button>
         </div>
       )}
       {msg && <div className="seq-msg" style={{ left: msg.left, top: msg.top }}>{msg.text}</div>}

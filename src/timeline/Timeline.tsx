@@ -5,6 +5,9 @@ import { draggedAsset, dropAssetInClipView, isAssetDrag } from './assetDrop'
 import SequenceCanvas from './SequenceCanvas'
 import TrackCanvas from './TrackCanvas'
 import { formatTimecode } from './timeScale'
+import { usePhysics } from '../physics/physicsStore'
+import { cancelAll } from '../physics/runItem'
+import { PHYS_NOTE } from './physGraph'
 
 // Transport controls sit with the timeline they drive; the breadcrumb shows only in clip view.
 function TimelineHeader() {
@@ -15,6 +18,8 @@ function TimelineHeader() {
   const st = getEditor().getState()
   const e = editing ? editingItem({ project, editing }) : null
   const actor = e && project.actors.find(a => a.id === e.actorId)
+  const progress = usePhysics(s => s.progress), loading = usePhysics(s => s.loading)
+  const anyDone = usePhysics(s => Object.values(s.byItem).some(v => v.status === 'done'))
   return (
     <div className="tl-head">
       <button onClick={() => st.setPlaying(!playing)} aria-label={playing ? '정지' : '재생'}>{playing ? '■' : '▶'}</button>
@@ -27,6 +32,13 @@ function TimelineHeader() {
           <span> ▸ {actor?.name} / {e.clip.name}</span>
         </span>
       )}
+      {(progress || loading) && (
+        <span className="tl-phys" role="status">
+          {loading ? '물리 엔진 불러오는 중…' : `물리 검증 ${progress!.done + 1}/${progress!.total} · ${Math.round(progress!.cur * 100)}%`}
+          <button onClick={cancelAll}>취소</button>
+        </span>
+      )}
+      {anyDone && !progress && !loading && <span className="tl-phys mb-hint">{PHYS_NOTE}</span>}
     </div>
   )
 }

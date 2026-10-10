@@ -11,6 +11,9 @@ import ExportDialog from './export/ExportDialog'
 import { startTransport } from './transport'
 import { onMessage } from './projectActions'
 import FileMenu from './FileMenu'
+import PhysicsDialog from './physics/PhysicsDialog'
+import { usePhysics } from './physics/physicsStore'
+import { stale } from './physics/runItem'
 import CsvFpsDialog from './project/CsvFpsDialog'
 import { MENUBAR_H, layoutBounds, useLayout, type Layout } from './layout/useLayout'
 import { tv } from './timeline/viewState'
@@ -31,6 +34,7 @@ function Menubar() {
   const videoMode = useEditor(s => s.videoMode), videoOpacity = useEditor(s => s.videoOpacity)
   const hasVideo = useEditor(s => !!videoTrack(s.project)?.items.length)
   const [exporting, setExporting] = useState(false)
+  const [physicsOpen, setPhysicsOpen] = useState(false)
   const name = useEditor(s => s.fileName ?? 'Motion Editor'), dirty = useEditor(s => s.dirty)
   const [msg, setMsg] = useState('')
   const title = name + (dirty ? ' •' : '')
@@ -48,7 +52,7 @@ function Menubar() {
   }, [])
   return (
     <>
-      <FileMenu onExport={() => setExporting(true)} />
+      <FileMenu onExport={() => setExporting(true)} onPhysics={() => setPhysicsOpen(true)} />
       <span className="mb-title">{title}</span>
       {msg && <span role="status" className="mb-msg">{msg}</span>}
       {hasVideo && (
@@ -59,6 +63,7 @@ function Menubar() {
           {videoMode === 'overlay' && <input type="range" aria-label="영상 투명도" min={0} max={1} step={0.05} value={videoOpacity} onChange={e => st.setVideoOpacity(+e.target.value)} />}
         </span>
       )}
+      <PhysicsDialog open={physicsOpen} onClose={() => setPhysicsOpen(false)} />
       <ExportDialog open={exporting} onClose={() => setExporting(false)} />
     </>
   )
@@ -108,7 +113,7 @@ export default function App() {
 
   useEffect(() => {
     Promise.all([fetchRobotDef('g1'), fetchRobotDef('go2')])
-      .then(([g1, go2]) => { initEditor({ g1, go2 }); if (import.meta.env.DEV) (window as any).__editor = getEditor(), (window as any).__tv = tv; setStatus('ready') })
+      .then(([g1, go2]) => { initEditor({ g1, go2 }); if (import.meta.env.DEV) (window as any).__editor = getEditor(), (window as any).__tv = tv, (window as any).__physics = { usePhysics, stale }; setStatus('ready') })
       .catch(e => setStatus(`로봇 불러오기 실패: ${e instanceof Error ? e.message : e}`))
   }, [])
 

@@ -163,3 +163,14 @@ test('empty project saves and reopens', () => {
   const p = emptyProject()
   expect(parseProject(serializeProject(p), defs)).toEqual(p)
 })
+
+test('physics round-trips as-is; absent stays absent; non-object is dropped', () => {
+  const p = mk()
+  expect('physics' in parseProject(serializeProject(p), defs)).toBe(false)
+  p.physics = { assist: { kpF: 1, kdF: 2, kpT: 3, kdT: 4 } }
+  expect(parseProject(serializeProject(p), defs).physics).toEqual(p.physics)
+  for (const v of [5, 'x', [1], null]) {
+    const o = JSON.parse(serializeProject(p)); o.physics = v
+    expect('physics' in parseProject(JSON.stringify(o), defs)).toBe(false)
+  }
+})

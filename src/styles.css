@@ -107,6 +107,7 @@ body {
 }
 .tl-menu button { background: none; color: var(--text); border: 0; font: inherit; font-size: 13px; padding: 5px 12px; text-align: left; cursor: pointer; }
 .tl-menu button:hover { background: var(--bg); }
+.tl-menu button[aria-disabled=true] { opacity: .45; cursor: default; }
 .mb-menu { position: fixed; z-index: 10; display: flex; flex-direction: column; min-width: 200px; background: var(--panel); border: 1px solid var(--line); border-radius: 3px; padding: 2px 0; }
 #menubar .mb-menu button { display: flex; justify-content: space-between; gap: 24px; background: none; border: 0; border-radius: 0; padding: 5px 12px; text-align: left; }
 #menubar .mb-menu button:hover, #menubar .mb-menu button:focus { background: var(--bg); }
@@ -138,6 +139,8 @@ body {
 .tl-head > button:disabled { opacity: .45; cursor: default; }
 .tl-head :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tl-crumb { font-size: 12px; padding-left: 12px; border-left: 1px solid var(--line); }
+.tl-phys { display: flex; align-items: center; gap: 8px; font-size: 12px; font-variant-numeric: tabular-nums; padding-left: 12px; border-left: 1px solid var(--line); }
+.tl-phys button { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 3px; font: inherit; padding: 1px 8px; cursor: pointer; }
 .tl-crumb button { background: none; color: var(--accent); border: 0; font: inherit; cursor: pointer; padding: 0; }
 .tl-body { position: relative; flex: 1; min-height: 0; }
 .tl-body > .track-canvas, .tl-body > .seq-canvas { position: absolute; inset: 0; }

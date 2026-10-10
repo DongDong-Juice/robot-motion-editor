@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import { test, expect, type Download } from '@playwright/test'
 
 test('right-click an item bar or tree child row → export하기 saves exactly that item', async ({ page }) => {
+  test.setTimeout(120_000) // export waits for the physics check, slow under parallel load
   await page.addInitScript(() => { delete (window as any).showOpenFilePicker; delete (window as any).showSaveFilePicker })
   const downloads: Download[] = []
   page.on('download', d => downloads.push(d))
@@ -28,8 +29,8 @@ test('right-click an item bar or tree child row → export하기 saves exactly t
   const box = (await seq.boundingBox())!
   const menu = page.getByRole('menu', { name: '클립' })
   await page.mouse.click(box.x + 400, box.y + 24 + 14, { button: 'right' }) // second bar (frames 60-120 at 4 px/frame, label 160)
-  await expect(menu.getByRole('menuitem')).toHaveText(['export하기'])
-  await expect(menu.getByRole('menuitem')).toBeFocused()
+  await expect(menu.getByRole('menuitem')).toHaveText(['export하기', '물리 검증'])
+  await expect(menu.getByRole('menuitem').first()).toBeFocused()
   await page.keyboard.press('Escape')
   await expect(menu).toHaveCount(0)
   await page.mouse.click(box.x + 400, box.y + 24 + 14, { button: 'right' })
@@ -38,7 +39,7 @@ test('right-click an item bar or tree child row → export하기 saves exactly t
 
   await page.mouse.click(box.x + 400, box.y + 24 + 14, { button: 'right' })
   await page.keyboard.press('Enter')
-  await expect(page.locator('.seq-msg')).toContainText('G1_a.csv 을(를) 내보냈습니다')
+  await expect(page.locator('.seq-msg')).toContainText('G1_a.csv 을(를) 내보냈습니다', { timeout: 45_000 }) // waits for the physics check
   await expect.poll(() => downloads.length).toBe(1)
   expect(downloads[0].suggestedFilename()).toBe('G1_a.csv')
   const lines = fs.readFileSync((await downloads[0].path())!, 'utf8').split('\n')

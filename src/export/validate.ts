@@ -3,7 +3,7 @@ import { quatAngle } from '../model/rootMath'
 import type { RobotDef } from '../robot/types'
 
 export interface Warning {
-  kind: 'jointLimit' | 'jointVelocity' | 'rootJump' | 'gap'
+  kind: 'jointLimit' | 'jointVelocity' | 'rootJump' | 'gap' | 'physicsAssist'
   frame: number
   channel: string
   message: string

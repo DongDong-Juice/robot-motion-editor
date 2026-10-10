@@ -4,6 +4,7 @@ import { beforeEach, expect, test } from 'vitest'
 import type { RobotDefs } from '../model/evaluate'
 import { createEditorStore, editLock, editTarget, gizmoLock } from './store'
 import { makeKey } from '../model/curve'
+import { withDefaults } from '../physics/settings'
 import { emptyProject } from '../model/defaults'
 import type { Clip } from '../model/types'
 
@@ -748,4 +749,14 @@ test('placeClipAsNewActor: new actor with the clip at start, one undo entry, cli
   expect(Object.keys(p.clips)).toEqual(Object.keys(before.clips)) // no default clip
   e.getState().undo()
   expect(e.getState().project).toBe(before)
+})
+
+test('setPhysics is one undoable, dirty edit', () => {
+  s().markSaved('a.json')
+  const next = withDefaults({ assist: { kpF: 1, kdF: 2, kpT: 3, kdT: 4 } })
+  s().setPhysics(next)
+  expect(s().project.physics).toEqual(next)
+  expect(s().dirty).toBe(true)
+  s().undo()
+  expect(s().project.physics).toBeUndefined()
 })

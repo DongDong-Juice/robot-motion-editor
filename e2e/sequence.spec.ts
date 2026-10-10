@@ -38,6 +38,7 @@ test('import CSV, place two items with crossfade, export all', async ({ page }) 
   expect(placed).toEqual({ ok: true, len: 60 })
 
   await menu(page, '내보내기')
+  await page.getByLabel('물리 검증 건너뛰기').check() // keep CSV checks independent of physics load
   await page.getByRole('button', { name: /CSV 내보내기|무시하고 내보내기/ }).click()
   await expect.poll(() => downloads.length).toBe(3)
   const files = await Promise.all(downloads.map(async d => ({ name: d.suggestedFilename(), text: fs.readFileSync((await d.path())!, 'utf8') })))

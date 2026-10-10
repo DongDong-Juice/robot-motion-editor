@@ -21,6 +21,7 @@ test('load both robots, key, export CSV', async ({ page }) => {
     s.setValue(id, 'left_elbow_joint', 1.0)
   })
   await menu(page, '내보내기')
+  await page.getByLabel('물리 검증 건너뛰기').check() // keep CSV checks independent of physics load
   await page.getByRole('button', { name: /CSV 내보내기|무시하고 내보내기/ }).click()
   await expect.poll(() => downloads.length).toBe(2)
   const texts = await Promise.all(downloads.map(async d => fs.readFileSync((await d.path())!, 'utf8')))
