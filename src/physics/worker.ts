@@ -17,7 +17,8 @@ function model(robot: Robot) {
     p = (async () => {
       send({ type: 'loading' })
       const base = `${import.meta.env.BASE_URL}physics/${robot}/`
-      const names: string[] = JSON.parse(new TextDecoder().decode(await get(base + 'files.json')))
+      let names: string[]
+      try { names = JSON.parse(new TextDecoder().decode(await get(base + 'files.json'))) } catch { throw new Error('미지원') } // missing file, or a host answering with index.html
       mj ??= await loadMujoco()
       return loadModel(mj, robot, {
         scene: await get(base + 'scene.xml'),
@@ -31,7 +32,6 @@ function model(robot: Robot) {
 }
 
 const cancelled = new Set<number>()
-class Cancel extends Error {}
 let chain = Promise.resolve()
 
 async function run(m: Extract<ToWorker, { type: 'run' }>) {
@@ -40,20 +40,17 @@ async function run(m: Extract<ToWorker, { type: 'run' }>) {
     if (cancelled.has(id)) return
     const L = await model(m.robot)
     if (cancelled.has(id)) return
-    const metrics = simulate(L, m.rows, m.settings, (done, total) => {
-      if (cancelled.has(id)) throw new Cancel()
-      send({ type: 'progress', id, done, total })
-    })
+    const metrics = simulate(L, m.rows, m.settings, (done, total) => send({ type: 'progress', id, done, total }))
     const bufs = (['forceN', 'torqueNm', 'pct', 'pelvisZ', 'trackErrMax', 'satJoints'] as (keyof Metrics)[]).map(k => (metrics[k] as Float32Array).buffer)
     send({ type: 'result', id, metrics }, bufs)
   } catch (e) {
-    if (!(e instanceof Cancel)) send({ type: 'error', id, message: e instanceof Error ? e.message : String(e) })
+    send({ type: 'error', id, message: e instanceof Error ? e.message : String(e) })
   } finally { cancelled.delete(id) }
 }
 
 self.onmessage = (e: MessageEvent<ToWorker>) => {
   const m = e.data
-  // ponytail: a sim already running is a sync loop and never sees this message, so cancel only stops queued runs; terminate the worker if mid-run abort matters
+  // only queued runs; a running sim is a sync loop, the client terminates the worker for that
   if (m.type === 'cancel') cancelled.add(m.id)
   else chain = chain.then(() => run(m))
 }

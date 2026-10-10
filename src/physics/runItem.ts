@@ -2,7 +2,7 @@ import { exportItemCsv } from '../export/csv'
 import type { RobotDefs } from '../model/evaluate'
 import type { Project } from '../model/types'
 import { getEditor } from '../store/store'
-import { onWorkerMessage, post } from './client'
+import { onWorkerMessage, post, terminateWorker, type ToWorker } from './client'
 import { csvRows } from './csvRows'
 import { usePhysics, type ItemPhys } from './physicsStore'
 import { cacheKey, withDefaults } from './settings'
@@ -17,25 +17,30 @@ export function itemInput(p: Project, defs: RobotDefs, actorId: string, itemId: 
 let nextId = 1
 const byId = new Map<number, string>() // live request id -> itemId (a replaced/cancelled id is absent, so its late messages are ignored)
 const idOf = new Map<string, number>()
-let total = 0, done = 0, label = ''
+const msgs = new Map<number, ToWorker>() // live run requests, to re-post after a worker restart
+let total = 0, done = 0, cur = 0, label = ''
 const setItem = (itemId: string, v: ItemPhys) => usePhysics.setState(s => ({ byItem: { ...s.byItem, [itemId]: v } }))
-const showProgress = () => usePhysics.setState({ progress: total && done < total ? { done, total, label } : null })
+const showProgress = () => usePhysics.setState({ progress: total && done < total ? { done, total, label, cur } : null })
 function leave(id: number) { // request leaves the queue
   const item = byId.get(id)!
-  byId.delete(id); idOf.delete(item)
+  byId.delete(id); idOf.delete(item); msgs.delete(id); cur = 0
   if (++done >= total) total = done = 0
   showProgress()
 }
 
 onWorkerMessage(m => {
-  if (m.type === 'loading') return usePhysics.setState({ loading: true })
+  if (m.type === 'loading') return byId.size ? usePhysics.setState({ loading: true }) : undefined
   const item = byId.get(m.id)
   if (item === undefined) return
   usePhysics.setState({ loading: false })
-  const cur = usePhysics.getState().byItem[item]
-  if (m.type === 'progress') { if (cur.status === 'queued') setItem(item, { ...cur, status: 'running' }); return }
+  const st = usePhysics.getState().byItem[item]
+  if (m.type === 'progress') {
+    if (st.status === 'queued') setItem(item, { ...st, status: 'running' })
+    cur = m.total ? m.done / m.total : 0
+    return showProgress()
+  }
   leave(m.id)
-  setItem(item, m.type === 'result' ? { key: cur.key, status: 'done', metrics: m.metrics } : { key: cur.key, status: 'error', message: m.message })
+  setItem(item, m.type === 'result' ? { key: st.key, status: 'done', metrics: m.metrics } : { key: st.key, status: 'error', message: m.message })
 })
 
 /** Queues every item on the worker (it runs them in order). Re-requesting an item replaces its pending request. */
@@ -43,26 +48,39 @@ export async function runItems(list: { actorId: string; itemId: string }[]): Pro
   const ed = getEditor().getState()
   for (const { actorId, itemId } of list) {
     const old = idOf.get(itemId)
-    if (old !== undefined) { post({ type: 'cancel', id: old }); byId.delete(old); total-- } // superseded: takes no progress slot
+    if (old !== undefined) { // superseded: takes no progress slot
+      const running = usePhysics.getState().byItem[itemId]?.status === 'running'
+      byId.delete(old); msgs.delete(old); total--; cur = running ? 0 : cur
+      if (running) restart()
+      else post({ type: 'cancel', id: old })
+    }
     const id = nextId++
     try {
       const { robot, rows, key } = itemInput(ed.project, ed.defs, actorId, itemId)
       byId.set(id, itemId); idOf.set(itemId, id); total++; label = itemId
       setItem(itemId, { key, status: 'queued' })
       showProgress()
-      post({ type: 'run', id, robot, rows, settings: withDefaults(ed.project.physics) })
+      const run: ToWorker = { type: 'run', id, robot, rows, settings: withDefaults(ed.project.physics) }
+      msgs.set(id, run)
+      post(run)
     } catch (e) {
       setItem(itemId, { key: usePhysics.getState().byItem[itemId]?.key ?? '', status: 'error', message: e instanceof Error ? e.message : String(e) })
     }
   }
 }
 
+/** Terminates the worker (aborting the running sim) and re-posts the still-live requests to a fresh one. */
+function restart() {
+  terminateWorker()
+  for (const m of msgs.values()) post(m)
+}
+
 export function cancelAll() {
+  terminateWorker()
   for (const [id, item] of [...byId]) {
-    post({ type: 'cancel', id })
-    byId.delete(id); idOf.delete(item)
+    byId.delete(id); idOf.delete(item); msgs.delete(id)
     usePhysics.setState(s => { const { [item]: _, ...rest } = s.byItem; return { byItem: rest } })
   }
-  total = done = 0
+  total = done = cur = 0
   usePhysics.setState({ progress: null, loading: false })
 }

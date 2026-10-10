@@ -16,15 +16,17 @@ const target = { actorId: actor.id, itemId: item.id }
 
 let sent: ToWorker[] = []
 let reply: (m: FromWorker) => void
+let made = 0, terminated = 0
 const metrics = { n: 2 } as any
 
 beforeEach(() => {
   cancelAll()
   usePhysics.setState({ byItem: {}, progress: null, loading: false })
-  sent = []
+  sent = []; made = 0; terminated = 0
   setWorkerFactory(() => {
-    const w: any = { postMessage: (m: ToWorker) => sent.push(m), onmessage: null }
-    reply = data => w.onmessage({ data })
+    made++
+    const w: any = { postMessage: (m: ToWorker) => sent.push(m), onmessage: null, terminate: () => { terminated++ } }
+    reply = data => w.onmessage?.({ data })
     return w
   })
 })
@@ -47,10 +49,28 @@ test('cancelAll clears pending state and ignores late results', async () => {
   reply({ type: 'progress', id, done: 60, total: 120 })
   expect(usePhysics.getState().byItem[item.id].status).toBe('running')
   cancelAll()
-  expect(sent.at(-1)).toEqual({ type: 'cancel', id })
+  expect(terminated).toBe(1)
   reply({ type: 'result', id, metrics })
+  reply({ type: 'loading' })
+  expect(usePhysics.getState().loading).toBe(false)
+  await runItems([target])
+  expect(made).toBe(2)
+  expect(usePhysics.getState().byItem[item.id].status).toBe('queued')
+  cancelAll()
   expect(usePhysics.getState().byItem).toEqual({})
   expect(usePhysics.getState().progress).toBeNull()
+})
+
+test('replacing the running item restarts the worker and re-posts the others', async () => {
+  const other = p.actors[1], oi = p.sequence.tracks.find(t => t.actorId === other.id)!.items[0]
+  await runItems([target, { actorId: other.id, itemId: oi.id }])
+  reply({ type: 'progress', id: runs()[0].id, done: 60, total: 120 })
+  expect(usePhysics.getState().progress).toMatchObject({ done: 0, total: 2, cur: 0.5 })
+  await runItems([target])
+  expect(terminated).toBe(1)
+  expect(made).toBe(2)
+  expect(runs().slice(2).map(r => r.id)).toEqual([runs()[1].id, runs()[3].id])
+  expect(usePhysics.getState().progress).toMatchObject({ total: 2, cur: 0 })
 })
 
 test('error -> status error with message', async () => {

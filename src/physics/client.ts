@@ -5,7 +5,7 @@ export type ToWorker = { type: 'run'; id: number; robot: Robot; rows: Float64Arr
 export type FromWorker = { type: 'loading' } | { type: 'progress'; id: number; done: number; total: number }
   | { type: 'result'; id: number; metrics: Metrics } | { type: 'error'; id: number; message: string }
 
-export interface WorkerLike { postMessage(m: ToWorker): void; onmessage: ((e: { data: FromWorker }) => void) | null }
+export interface WorkerLike { postMessage(m: ToWorker): void; terminate(): void; onmessage: ((e: { data: FromWorker }) => void) | null }
 
 let make = (): WorkerLike => new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' }) as unknown as WorkerLike
 let w: WorkerLike | null = null
@@ -18,3 +18,5 @@ export function post(m: ToWorker) {
   if (!w) { w = make(); w.onmessage = e => sink(e.data) }
   w.postMessage(m)
 }
+/** Kills the worker (aborts a running sim); the next post() creates a fresh one. */
+export function terminateWorker() { if (w) { w.onmessage = null; w.terminate(); w = null } }

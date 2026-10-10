@@ -4,7 +4,7 @@ import type { Metrics } from './sim'
 export type ItemPhys = { key: string; status: 'queued' | 'running' | 'done' | 'error'; metrics?: Metrics; message?: string }
 interface PhysState {
   byItem: Record<string, ItemPhys>
-  progress: { done: number; total: number; label: string } | null
+  progress: { done: number; total: number; label: string; cur: number } | null
   loading: boolean
 }
 
