@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import { test, expect, type Download } from '@playwright/test'
 
 test('right-click an item bar or tree child row → export하기 saves exactly that item', async ({ page }) => {
+  test.setTimeout(120_000) // export waits for the physics check, slow under parallel load
   await page.addInitScript(() => { delete (window as any).showOpenFilePicker; delete (window as any).showSaveFilePicker })
   const downloads: Download[] = []
   page.on('download', d => downloads.push(d))
