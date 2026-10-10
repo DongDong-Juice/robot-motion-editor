@@ -100,7 +100,7 @@ test('파일 menu: keyboard navigation and focus return', async ({ page }) => {
   await trigger.focus()
   await page.keyboard.press('Enter')
   await expect(trigger).toHaveAttribute('aria-expanded', 'true')
-  await expect(items).toHaveCount(7)
+  await expect(items).toHaveCount(8)
   expect(await focused()).toBe('새 프로젝트')
   await page.keyboard.press('ArrowUp') // wraps to the last
   expect(await focused()).toBe('내보내기')

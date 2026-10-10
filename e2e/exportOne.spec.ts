@@ -28,8 +28,8 @@ test('right-click an item bar or tree child row → export하기 saves exactly t
   const box = (await seq.boundingBox())!
   const menu = page.getByRole('menu', { name: '클립' })
   await page.mouse.click(box.x + 400, box.y + 24 + 14, { button: 'right' }) // second bar (frames 60-120 at 4 px/frame, label 160)
-  await expect(menu.getByRole('menuitem')).toHaveText(['export하기'])
-  await expect(menu.getByRole('menuitem')).toBeFocused()
+  await expect(menu.getByRole('menuitem')).toHaveText(['export하기', '물리 검증'])
+  await expect(menu.getByRole('menuitem').first()).toBeFocused()
   await page.keyboard.press('Escape')
   await expect(menu).toHaveCount(0)
   await page.mouse.click(box.x + 400, box.y + 24 + 14, { button: 'right' })

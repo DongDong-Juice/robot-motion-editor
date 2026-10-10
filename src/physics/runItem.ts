@@ -8,10 +8,27 @@ import { usePhysics, type ItemPhys } from './physicsStore'
 import { cacheKey, withDefaults } from './settings'
 import type { Robot } from './sim'
 
-export function itemInput(p: Project, defs: RobotDefs, actorId: string, itemId: string): { robot: Robot; rows: Float64Array[]; key: string } {
+function csvKey(p: Project, defs: RobotDefs, actorId: string, itemId: string) {
   const robot = p.actors.find(a => a.id === actorId)!.robot
   const { text } = exportItemCsv(p, defs, actorId, itemId, 'local')
-  return { robot, rows: csvRows(text), key: cacheKey(robot, text, withDefaults(p.physics)) }
+  return { robot, text, key: cacheKey(robot, text, withDefaults(p.physics)) }
+}
+export function itemInput(p: Project, defs: RobotDefs, actorId: string, itemId: string): { robot: Robot; rows: Float64Array[]; key: string } {
+  const { robot, text, key } = csvKey(p, defs, actorId, itemId)
+  return { robot, rows: csvRows(text), key }
+}
+
+// ponytail: synchronous re-export (~290 ms for a 210 s item) once per edit per item with a result; debounce/idle-callback if edits hitch
+const keys = new WeakMap<Project, Map<string, string>>() // projects are immutable: one export per item per project version
+/** True when the item's stored result was computed from a different CSV/settings than the current project gives. */
+export function stale(p: Project, defs: RobotDefs, actorId: string, itemId: string): boolean {
+  const st = usePhysics.getState().byItem[itemId]
+  if (st?.status !== 'done') return false
+  let m = keys.get(p)
+  if (!m) keys.set(p, m = new Map())
+  let k = m.get(itemId)
+  if (k === undefined) m.set(itemId, k = csvKey(p, defs, actorId, itemId).key)
+  return k !== st.key
 }
 
 let nextId = 1
