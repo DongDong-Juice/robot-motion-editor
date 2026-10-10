@@ -12,6 +12,8 @@ import { startTransport } from './transport'
 import { onMessage } from './projectActions'
 import FileMenu from './FileMenu'
 import PhysicsDialog from './physics/PhysicsDialog'
+import { usePhysics } from './physics/physicsStore'
+import { stale } from './physics/runItem'
 import CsvFpsDialog from './project/CsvFpsDialog'
 import { MENUBAR_H, layoutBounds, useLayout, type Layout } from './layout/useLayout'
 import { tv } from './timeline/viewState'
@@ -111,7 +113,7 @@ export default function App() {
 
   useEffect(() => {
     Promise.all([fetchRobotDef('g1'), fetchRobotDef('go2')])
-      .then(([g1, go2]) => { initEditor({ g1, go2 }); if (import.meta.env.DEV) (window as any).__editor = getEditor(), (window as any).__tv = tv; setStatus('ready') })
+      .then(([g1, go2]) => { initEditor({ g1, go2 }); if (import.meta.env.DEV) (window as any).__editor = getEditor(), (window as any).__tv = tv, (window as any).__physics = { usePhysics, stale }; setStatus('ready') })
       .catch(e => setStatus(`로봇 불러오기 실패: ${e instanceof Error ? e.message : e}`))
   }, [])
 
