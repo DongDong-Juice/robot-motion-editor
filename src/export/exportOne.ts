@@ -1,5 +1,8 @@
 import { saveCsvFile } from '../fileio'
 import { exportItemCsv } from './csv'
+import { needsRun, physicsWarnings } from './physicsWarn'
+import { usePhysics } from '../physics/physicsStore'
+import { runItems } from '../physics/runItem'
 import type { Project } from '../model/types'
 import type { RobotDefs } from '../model/evaluate'
 
@@ -8,7 +11,12 @@ export async function exportOne(project: Project, defs: RobotDefs, actorId: stri
   ask: (m: string) => boolean = m => window.confirm(m)): Promise<string | null> {
   try {
     const { name, text, warnings } = exportItemCsv(project, defs, actorId, itemId, 'local')
-    if (warnings.length && !ask(`경고 ${warnings.length}개가 있습니다 (관절 한계·속도·루트). 그래도 내보낼까요?`)) return null
-    return (await saveCsvFile(name, text)) ? `${name} 을(를) 내보냈습니다` : null
+    if (needsRun(project, defs, actorId, itemId, usePhysics.getState().byItem[itemId])) await runItems([{ actorId, itemId }])
+    const st = usePhysics.getState().byItem[itemId]
+    const item = project.sequence.tracks.flatMap(t => t.items).find(i => i.id === itemId)!
+    const n = warnings.length + physicsWarnings(item, st).length
+    const skipped = st?.status === 'error' ? ` (물리 검증 생략: ${st.message})` : ''
+    if (n && !ask(`경고 ${n}개가 있습니다 (관절 한계·속도·루트·물리 보조력)${skipped}. 그래도 내보낼까요?`)) return null
+    return (await saveCsvFile(name, text)) ? `${name} 을(를) 내보냈습니다${skipped}` : null
   } catch (e) { return `내보내기 실패: ${e instanceof Error ? e.message : e}` }
 }
