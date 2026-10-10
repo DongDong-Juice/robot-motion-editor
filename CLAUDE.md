@@ -27,7 +27,7 @@ npm run e2e        # Playwright (dev 서버 자동 기동, 포트 5173)
 
 ## 기술 스택과 제약
 
-- Vite + React 19 + TypeScript + three.js + zustand. 런타임 의존성은 이 넷뿐(물리 검증 구현 시 `@mujoco/mujoco` 추가 예정 — 스펙 참고).
+- Vite + React 19 + TypeScript + three.js + zustand. 런타임 의존성은 이 넷 + `@mujoco/mujoco@3.15.0`(물리 검증, 웹 워커).
 - **파일 API는 `src/fileio.ts`에만**(Tauri/Electron 래핑 시 교체 지점).
 - 60 fps 고정, 정수 프레임.
 - 색 토큰: `--bg #22262D`, `--panel #2B3038`, `--line #3B424D`, `--text #D5DAE1`, `--accent #F0A43A`, G1 `#58B4D1`, GO2 `#C9D65A`. 서체 IBM Plex Sans KR, 수치 `tabular-nums`. 대문자 라벨·그림자·그라데이션 금지.
@@ -68,11 +68,14 @@ tools/urdf_to_json.py   URDF+DAE → RobotDef JSON (GO2 생성에 사용)
 
 완료(모두 `master`): M1 코어, M2 시퀀스, M3 참조 영상, 개선 1(파일 v2·키 줄이기·잠금·패널 크기), 이후 UI 개선(파일 메뉴·에셋 카드·⇄비교 프리뷰·트리·클립 프리뷰·기본자세 표시·호버 스크럽·재생헤드/카메라 따라가기·단일 export하기).
 
-**다음 작업 — MuJoCo 물리 검증(골반 보조력 지표)**
-- 스펙 승인됨: `docs/superpowers/specs/2026-10-08-physics-assist-design.md`. 구현 계획: `docs/superpowers/plans/2026-10-08-physics-assist.md`(Task 1–9, subagent-driven로 실행). 스파이크 기준 코드: `docs/superpowers/spikes/mujoco-sim.mjs`. 첫 작업은 브라우저 웹 워커 실측(1분 모션 ≤ 5분, 미달 시 중단·보고).
-- 스파이크 결과(Node, `@mujoco/mujoco` 3.15.0): G1 60 s ≈ 2 s, 결정적, 보조 없음 f66 넘어짐, 보조 있음 Track1 60 s 평균 31%·최대 112% 체중.
-- G1 MJCF·메시 원본은 원래 PC의 `D:/Project/00_ROS/G1_motion_editor_인수인계_20261002/02_g1/g1-motion-editor/mujoco/`(g1_scene.xml, meshes/, replay.py). 다른 PC라면 이 폴더를 받아 `public/physics/g1/`로 복사해야 함. GO2 MJCF는 unitree_mujoco 레포에서.
-- RL팀 kp/kd 값은 아직 없음 → Unitree 공개값 기본, 설정 창에서 수정 가능하게.
+물리 검증(골반 보조력 지표): 구현·e2e 완료, `feat/physics-assist` 브랜치(아직 `master` 미머지).
+
+## 물리 검증 (MuJoCo 골반 보조력)
+
+- 스펙 `docs/superpowers/specs/2026-10-08-physics-assist-design.md`. 코드 `src/physics/*`(worker·sim·control·segments·runItem 큐/오래됨 판정·physicsStore·PhysicsDialog), 모델·메시 `public/physics/<g1|go2>/`.
+- UI: 시퀀스 막대/트랙 우클릭 `물리 검증`, 막대 배지(✓ 평균·최대 % 체중 / ⚠ / 오래됨 / 미지원), 파일 ▸ `물리 설정…`(kp/kd·경고 기준), 내보내기 창에서 자동 재검증·경고 `물리 보조력`(건너뛰기 가능).
+- GO2 기본 kp 20은 정지 자세에서도 기준선 약 39% → 더 낮은 기준선이 필요하면 물리 설정에서 kp를 올릴 것. RL팀 kp/kd 확정 시 기본값 교체.
+- 개발 모드 훅 `window.__physics`(`usePhysics`, `stale`) — e2e용(`e2e/physics.spec.ts`).
 
 ## 알려진 남은 항목
 
