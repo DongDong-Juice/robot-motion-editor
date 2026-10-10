@@ -1,4 +1,5 @@
 import type { RobotKind } from '../robot/types';
+import type { PhysicsSettings } from '../physics/settings';
 
 export type Interp = 'linear' | 'bezier' | 'hold';
 export interface Tan { df: number; dv: number }
@@ -10,4 +11,4 @@ export interface Item { id: string; refId: string; start: number; trimIn: number
 export interface Track { id: string; kind: 'video' | 'motion'; actorId?: string; hidden: boolean; locked: boolean; items: Item[] }
 export interface Media { id: string; name: string; durationF: number }
 export interface Sequence { tracks: Track[]; markers: { f: number; name: string }[]; inF: number | null; outF: number | null }
-export interface Project { version: 1 | 2; fps: 60; actors: Actor[]; clips: Record<string, Clip>; media: Media[]; sequence: Sequence }
+export interface Project { version: 1 | 2; fps: 60; actors: Actor[]; clips: Record<string, Clip>; media: Media[]; sequence: Sequence; physics?: Partial<PhysicsSettings> }
