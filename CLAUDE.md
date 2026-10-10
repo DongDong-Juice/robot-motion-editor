@@ -68,7 +68,7 @@ tools/urdf_to_json.py   URDF+DAE → RobotDef JSON (GO2 생성에 사용)
 
 완료(모두 `master`): M1 코어, M2 시퀀스, M3 참조 영상, 개선 1(파일 v2·키 줄이기·잠금·패널 크기), 이후 UI 개선(파일 메뉴·에셋 카드·⇄비교 프리뷰·트리·클립 프리뷰·기본자세 표시·호버 스크럽·재생헤드/카메라 따라가기·단일 export하기).
 
-물리 검증(골반 보조력 지표): 구현·e2e 완료, `feat/physics-assist` 브랜치(아직 `master` 미머지).
+물리 검증(골반 보조력 지표): 구현·e2e 완료, `master` 머지.
 
 ## 물리 검증 (MuJoCo 골반 보조력)
 
