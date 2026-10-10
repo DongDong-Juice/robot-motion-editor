@@ -88,6 +88,9 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
         <button onClick={choose}>폴더 선택</button>
         <span className="exp-dim">{dir ? dir.name : '다운로드 폴더'}</span>
       </div>
+      {!skip && checked.map(({ actor, item }) => ({ actor, item, st: phys[item.id] })).filter(r => r.st?.status === 'error').map(({ actor, item, st }) => (
+        <div key={item.id} className="exp-dim">물리 검증 생략: {actor.name} · {project.clips[item.refId]?.name} ({st?.message})</div>
+      ))}
       {warnings.length > 0 && (
         <ul className="exp-warn" aria-label="경고">
           {warnings.map((w, i) => (

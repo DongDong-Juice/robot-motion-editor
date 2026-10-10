@@ -51,6 +51,14 @@ test('aggressive swing makes a warning segment', () => {
   expect(M.segments.length).toBeGreaterThanOrEqual(1)
 })
 
+test('torqueScale 2 lifts the model clamp: fewer saturated joints than 1', () => {
+  const q = (s: number) => { const a = new Array(29).fill(0); for (const i of [0, 3, 6, 9]) a[i] = s * (i === 3 || i === 9 ? 2.5 : 2.8); return a }
+  const rows = Array.from({ length: 120 }, (_, f) => (f < 60 ? row(def.standingHeight, new Array(29).fill(0)) : row(def.standingHeight, q(Math.floor((f - 60) / 3) % 2 ? 1 : -1))))
+  const sat = (k: number) => Math.max(...simulate(L, rows, { ...S, g1: { ...S.g1, torqueScale: k } }).satJoints)
+  expect(sat(1)).toBeGreaterThan(0)
+  expect(sat(2)).toBeLessThan(sat(1))
+})
+
 it('deterministic', () => {
   const rows = Array.from({ length: 90 }, (_, f) => row(def.standingHeight, new Array(29).fill(0).map((_, i) => (i === 3 ? 0.5 * Math.sin(f / 10) : 0))))
   const a = simulate(L, rows, S), b = simulate(L, rows, S)

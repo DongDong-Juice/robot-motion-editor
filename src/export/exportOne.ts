@@ -2,7 +2,7 @@ import { saveCsvFile } from '../fileio'
 import { exportItemCsv } from './csv'
 import { needsRun, physicsWarnings } from './physicsWarn'
 import { usePhysics } from '../physics/physicsStore'
-import { runItems } from '../physics/runItem'
+import { runItems, whenSettled } from '../physics/runItem'
 import type { Project } from '../model/types'
 import type { RobotDefs } from '../model/evaluate'
 
@@ -12,6 +12,7 @@ export async function exportOne(project: Project, defs: RobotDefs, actorId: stri
   try {
     const { name, text, warnings } = exportItemCsv(project, defs, actorId, itemId, 'local')
     if (needsRun(project, defs, actorId, itemId, usePhysics.getState().byItem[itemId])) await runItems([{ actorId, itemId }])
+    await whenSettled(itemId) // already queued/running (e.g. track run): wait for it
     const st = usePhysics.getState().byItem[itemId]
     const item = project.sequence.tracks.flatMap(t => t.items).find(i => i.id === itemId)!
     const n = warnings.length + physicsWarnings(item, st).length

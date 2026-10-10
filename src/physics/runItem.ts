@@ -2,13 +2,13 @@ import { exportItemCsv } from '../export/csv'
 import type { RobotDefs } from '../model/evaluate'
 import type { Project } from '../model/types'
 import { getEditor } from '../store/store'
-import { onWorkerMessage, post, terminateWorker, type ToWorker } from './client'
+import { onWorkerError, onWorkerMessage, post, terminateWorker, type ToWorker } from './client'
 import { csvRows } from './csvRows'
 import { usePhysics, type ItemPhys } from './physicsStore'
 import { cacheKey, withDefaults } from './settings'
 import type { Robot } from './sim'
 
-function csvKey(p: Project, defs: RobotDefs, actorId: string, itemId: string) {
+export function csvKey(p: Project, defs: RobotDefs, actorId: string, itemId: string) {
   const robot = p.actors.find(a => a.id === actorId)!.robot
   const { text } = exportItemCsv(p, defs, actorId, itemId, 'local')
   return { robot, text, key: cacheKey(robot, text, withDefaults(p.physics)) }
@@ -67,8 +67,22 @@ onWorkerMessage(m => {
   setItem(item, m.type === 'result' ? { key: st.key, status: 'done', metrics: m.metrics } : { key: st.key, status: 'error', message: m.message })
 })
 
+// A crashed worker never answers: fail every live request so no waiter hangs (the next run creates a new worker).
+onWorkerError(() => {
+  for (const [id, item] of [...byId]) {
+    const st = usePhysics.getState().byItem[item]
+    leave(id)
+    setItem(item, { key: st?.key ?? '', status: 'error', message: '물리 엔진 오류' })
+  }
+  usePhysics.setState({ loading: false })
+})
+
+/** Resolves once the item has no live request (done, errored, cancelled); a replacement keeps earlier waiters until it settles too. */
+export const whenSettled = (itemId: string): Promise<void> =>
+  idOf.has(itemId) ? new Promise(r => waiters.set(itemId, [...(waiters.get(itemId) ?? []), r])) : Promise.resolve()
+
 /** Queues every item on the worker (it runs them in order). Re-requesting an item replaces its pending request.
- *  Resolves once every listed item is done, errored, replaced or cancelled. */
+ *  Resolves once every listed item is done, errored or cancelled (a replaced request's waiters wait for its replacement). */
 export function runItems(list: { actorId: string; itemId: string }[]): Promise<void> {
   const ed = getEditor().getState()
   const waits: Promise<void>[] = []
@@ -77,7 +91,6 @@ export function runItems(list: { actorId: string; itemId: string }[]): Promise<v
     if (old !== undefined) { // superseded: takes no progress slot
       const running = usePhysics.getState().byItem[itemId]?.status === 'running'
       byId.delete(old); msgs.delete(old); total--; cur = running ? 0 : cur
-      settle(itemId)
       if (running) restart()
       else post({ type: 'cancel', id: old })
     }
@@ -93,6 +106,9 @@ export function runItems(list: { actorId: string; itemId: string }[]): Promise<v
       waits.push(new Promise(r => waiters.set(itemId, [...(waiters.get(itemId) ?? []), r])))
     } catch (e) {
       setItem(itemId, { key: usePhysics.getState().byItem[itemId]?.key ?? '', status: 'error', message: e instanceof Error ? e.message : String(e) })
+      settle(itemId) // superseded request is gone and no replacement queued
+      if (done >= total) total = done = 0
+      showProgress()
     }
   }
   return Promise.all(waits).then(() => {})

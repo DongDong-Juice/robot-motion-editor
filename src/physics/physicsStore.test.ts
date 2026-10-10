@@ -1,11 +1,14 @@
-import { beforeEach, expect, test } from 'vitest'
+import { beforeEach, expect, test, vi } from 'vitest'
+import { exportOne } from '../export/exportOne'
+import { needsRun } from '../export/physicsWarn'
 import { newProject } from '../model/defaults'
 import { loadDef } from '../test/defs'
 import { initEditor } from '../store/store'
 import { setWorkerFactory, type FromWorker, type ToWorker } from './client'
 import { isStale, usePhysics } from './physicsStore'
-import { cancelAll, itemInput, runItems } from './runItem'
+import { cancelAll, itemInput, runItems, whenSettled } from './runItem'
 
+vi.mock('../fileio', () => ({ saveCsvFile: async () => true }))
 const defs = { g1: loadDef('g1'), go2: loadDef('go2') }
 const ed = initEditor(defs)
 ed.getState().loadProject(newProject(), null)
@@ -16,6 +19,7 @@ const target = { actorId: actor.id, itemId: item.id }
 
 let sent: ToWorker[] = []
 let reply: (m: FromWorker) => void
+let crash: () => void
 let made = 0, terminated = 0
 const metrics = { n: 2 } as any
 
@@ -26,6 +30,7 @@ beforeEach(() => {
   setWorkerFactory(() => {
     made++
     const w: any = { postMessage: (m: ToWorker) => sent.push(m), onmessage: null, terminate: () => { terminated++ } }
+    crash = () => w.onerror?.({})
     reply = data => w.onmessage?.({ data })
     return w
   })
@@ -111,4 +116,44 @@ test('runItems resolves only after the result message, and on cancelAll', async 
   const p2 = runItems([target])
   cancelAll()
   await p2
+})
+
+test('worker crash errors every pending item and settles waiters; next run makes a new worker', async () => {
+  const p1 = runItems([target])
+  crash()
+  await p1
+  expect(usePhysics.getState().byItem[item.id]).toMatchObject({ status: 'error', message: '물리 엔진 오류' })
+  expect(usePhysics.getState().progress).toBeNull()
+  void runItems([target])
+  expect(made).toBe(2)
+})
+
+test('replacement keeps the earlier waiter until the new request settles', async () => {
+  let n = 0
+  const p1 = runItems([target]).then(() => n++)
+  void runItems([target])
+  await Promise.resolve(); await Promise.resolve()
+  expect(n).toBe(0)
+  reply({ type: 'result', id: runs()[1].id, metrics })
+  await p1
+  expect(n).toBe(1)
+})
+
+test('exportOne waits for an item that is already queued, then reports its skip note', async () => {
+  void runItems([target])
+  let msg: string | null = null
+  const e = exportOne(p, defs, actor.id, item.id, () => true).then(m => (msg = m))
+  await new Promise(r => setTimeout(r, 10))
+  expect(msg).toBeNull()
+  reply({ type: 'error', id: runs()[0].id, message: '미지원' })
+  await e
+  expect(msg).toContain('물리 검증 생략: 미지원')
+  await whenSettled(item.id)
+})
+
+test('needsRun retries an error only when the key changed (미지원 never)', () => {
+  const { key } = itemInput(p, defs, actor.id, item.id)
+  expect(needsRun(p, defs, actor.id, item.id, { key, status: 'error', message: 'x' })).toBe(false)
+  expect(needsRun(p, defs, actor.id, item.id, { key: key + 'x', status: 'error', message: 'x' })).toBe(true)
+  expect(needsRun(p, defs, actor.id, item.id, { key: key + 'x', status: 'error', message: '미지원' })).toBe(false)
 })

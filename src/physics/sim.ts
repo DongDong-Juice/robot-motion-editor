@@ -44,6 +44,7 @@ export function simulate(L: Loaded, rows: Float64Array[], s: PhysicsSettings, on
     KP[i] = g.kp; KD[i] = g.kd
     m.actuator_gainprm[i * 10] = 1; m.actuator_biasprm[i * 10 + 1] = 0; m.actuator_biasprm[i * 10 + 2] = 0
     QADR[i] = m.jnt_qposadr[j]; VADR[i] = m.jnt_dofadr[j]; LIM[i] = (m.jnt_actfrcrange[2 * j + 1] || m.actuator_ctrlrange[2 * i + 1]) * rp.torqueScale // GO2 motors: only ctrlrange
+    m.jnt_actfrclimited[j] = 0; m.actuator_ctrllimited[i] = 0 // our PD clip (limit x torqueScale) is the only clamp; idempotent, limits stay readable
     if (!(LIM[i] > 0)) throw new Error('액추에이터 토크 한계가 없습니다')
   }
   const { qpos, qvel, ctrl, xfrc, geom_xpos, xmat } = { qpos: d.qpos, qvel: d.qvel, ctrl: d.ctrl, xfrc: d.xfrc_applied, geom_xpos: d.geom_xpos, xmat: d.xmat }
