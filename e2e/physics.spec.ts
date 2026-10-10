@@ -39,14 +39,15 @@ test('physics assist: run → stale on edit/settings → export re-runs and warn
   })
   await expect.poll(async () => (await phys()).stale).toBe(true)
 
-  // 물리 설정: 경고 기준 10% -> settings are part of the key, still stale
-  await page.getByRole('button', { name: '파일', exact: true }).click()
-  await page.getByRole('menuitem', { name: '물리 설정…', exact: true }).click()
-  const dlg = page.getByRole('dialog')
-  await dlg.getByRole('spinbutton', { name: '경고 기준' }).fill('10')
-  await dlg.getByRole('button', { name: '적용', exact: true }).click()
-  await expect(dlg).toHaveCount(0)
-  expect((await phys()).stale).toBe(true)
+  const setWarn = async (v: string) => {
+    await page.getByRole('button', { name: '파일', exact: true }).click()
+    await page.getByRole('menuitem', { name: '물리 설정…', exact: true }).click()
+    const dlg = page.getByRole('dialog')
+    await dlg.getByRole('spinbutton', { name: '경고 기준' }).fill(v)
+    await dlg.getByRole('button', { name: '적용', exact: true }).click()
+    await expect(dlg).toHaveCount(0)
+  }
+  await setWarn('10') // 물리 설정 경고 기준 10%
 
   // export dialog re-runs the check and lists 물리 보조력 warnings
   await page.getByRole('button', { name: '파일', exact: true }).click()
@@ -54,5 +55,11 @@ test('physics assist: run → stale on edit/settings → export re-runs and warn
   const exp = page.getByRole('dialog', { name: '내보내기' })
   await expect(exp.getByRole('list', { name: '경고' })).toContainText('물리 보조력', { timeout: 90_000 })
   expect((await phys()).stale).toBe(false)
+  await exp.getByRole('button', { name: '닫기' }).click()
+  await expect(exp).toHaveCount(0)
+
+  // settings alone (no edit) make a fresh result stale
+  await setWarn('11')
+  expect((await phys()).stale).toBe(true)
   expect(errors).toEqual([])
 })
