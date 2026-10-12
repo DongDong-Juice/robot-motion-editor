@@ -71,12 +71,19 @@ export function stitchTransforms(p: Project, defs: RobotDefs, track: Track): Map
       const def = defs[actor.robot]
       const pcf = Math.min(Math.max(it.start - prev.start + prev.trimIn, prev.trimIn), prev.trimOut - 1)
       const P = applyXf(evaluateClip(prevClip, def, pcf), out.get(prev.id)!)
+      let [px, py] = P.rootPos, pyaw = quatYaw(P.rootQuat)
+      if (it.start - prev.start >= itemLen(prev)) {
+        // cut (no overlap): B's first frame follows A's last, so advance one frame at A's last velocity — else the root stalls a frame
+        const P0 = applyXf(evaluateClip(prevClip, def, Math.max(pcf - 1, prev.trimIn)), out.get(prev.id)!)
+        const dyaw = pyaw - quatYaw(P0.rootQuat)
+        px += px - P0.rootPos[0]; py += py - P0.rootPos[1]; pyaw += Math.atan2(Math.sin(dyaw), Math.cos(dyaw))
+      }
       const C = evaluateClip(clip, def, it.trimIn)
-      const yaw = quatYaw(P.rootQuat) - quatYaw(C.rootQuat)
+      const yaw = pyaw - quatYaw(C.rootQuat)
       const c = Math.cos(yaw), s = Math.sin(yaw)
       xf = {
-        x: P.rootPos[0] - (c * C.rootPos[0] - s * C.rootPos[1]),
-        y: P.rootPos[1] - (s * C.rootPos[0] + c * C.rootPos[1]),
+        x: px - (c * C.rootPos[0] - s * C.rootPos[1]),
+        y: py - (s * C.rootPos[0] + c * C.rootPos[1]),
         yaw,
       }
     }
