@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import { test, expect, type Download, type Page } from '@playwright/test'
+import { unzip } from './unzip'
 
 const menu = async (page: Page, name: string) => {
   await page.getByRole('button', { name: '파일', exact: true }).click()
@@ -23,8 +24,9 @@ test('load both robots, key, export CSV', async ({ page }) => {
   await menu(page, '내보내기')
   await page.getByLabel('물리 검증 건너뛰기').check() // keep CSV checks independent of physics load
   await page.getByRole('button', { name: /CSV 내보내기|무시하고 내보내기/ }).click()
-  await expect.poll(() => downloads.length).toBe(2)
-  const texts = await Promise.all(downloads.map(async d => fs.readFileSync((await d.path())!, 'utf8')))
+  await expect.poll(() => downloads.length).toBe(1) // several files → one zip
+  expect(downloads[0].suggestedFilename()).toBe('motion_export.zip')
+  const texts = unzip(fs.readFileSync((await downloads[0].path())!)).map(f => f.text)
   const rows = (t: string) => t.trim().split('\n')
   // header + data rows, each with a trailing comma (empty last field)
   const widths = texts.map(t => [...new Set(rows(t).map(r => r.split(',').length))].join())

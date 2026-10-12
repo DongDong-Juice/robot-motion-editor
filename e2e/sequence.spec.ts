@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import { test, expect, type Download, type Page } from '@playwright/test'
+import { unzip } from './unzip'
 
 const menu = async (page: Page, name: string) => {
   await page.getByRole('button', { name: '파일', exact: true }).click()
@@ -40,8 +41,9 @@ test('import CSV, place two items with crossfade, export all', async ({ page }) 
   await menu(page, '내보내기')
   await page.getByLabel('물리 검증 건너뛰기').check() // keep CSV checks independent of physics load
   await page.getByRole('button', { name: /CSV 내보내기|무시하고 내보내기/ }).click()
-  await expect.poll(() => downloads.length).toBe(3)
-  const files = await Promise.all(downloads.map(async d => ({ name: d.suggestedFilename(), text: fs.readFileSync((await d.path())!, 'utf8') })))
+  await expect.poll(() => downloads.length).toBe(1) // several files → one zip
+  const files = unzip(fs.readFileSync((await downloads[0].path())!))
+  expect(files).toHaveLength(3)
   const lines = (t: string) => t.trim().split('\n')
   const imp = files.find(f => f.name === 'G1_walk_g1.csv')!
   expect(imp).toBeTruthy()

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useEditor } from '../store/store'
 import { formatTimecode } from '../timeline/timeScale'
-import { pickDirectory, writeTextFiles } from '../fileio'
+import { downloadBlob, pickDirectory, writeTextFiles } from '../fileio'
+import { zip } from './zip'
 import { exportItemCsv, itemFrameRange, type RootMode } from './csv'
 import { needsRun, physicsWarnings } from './physicsWarn'
 import { usePhysics } from '../physics/physicsStore'
@@ -55,8 +56,14 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
         const { name, text } = exportItemCsv(project, defs, actor.id, item.id, mode, taken)
         return { name, text }
       })
-      await writeTextFiles(dir, files)
-      setMsg(`CSV ${files.length}개를 내보냈습니다.`)
+      // No folder picked and several files: one zip download instead of a download per file.
+      if (!dir && files.length > 1) {
+        downloadBlob('motion_export.zip', new Blob([zip(files)], { type: 'application/zip' }))
+        setMsg(`CSV ${files.length}개를 zip으로 내보냈습니다.`)
+      } else {
+        await writeTextFiles(dir, files)
+        setMsg(`CSV ${files.length}개를 내보냈습니다.`)
+      }
     } catch (e) { setMsg(`내보내기 실패: ${e instanceof Error ? e.message : e}`) }
   }
 

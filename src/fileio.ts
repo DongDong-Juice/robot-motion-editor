@@ -21,15 +21,17 @@ export async function writeTextFiles(
       const w = await (await dir.getFileHandle(name, { create: true })).createWritable()
       await w.write(text)
       await w.close()
-    } else {
-      const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }))
-      const a = document.createElement('a')
-      a.href = url
-      a.download = name
-      a.click()
-      setTimeout(() => URL.revokeObjectURL(url), 0)
-    }
+    } else downloadBlob(name, new Blob([text], { type: 'text/csv' }))
   }
+}
+
+export function downloadBlob(name: string, blob: Blob) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 type OpenPicker = (o: { multiple: boolean; types: { accept: Record<string, string[]> }[] }) => Promise<FileSystemFileHandle[]>
