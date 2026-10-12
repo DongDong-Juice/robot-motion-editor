@@ -28,16 +28,30 @@ function build(items: [number, number, number, Record<string, Curve>][]) {
 const range = (p: Project, a: string, f0: number, f1: number): Pose[] =>
   Array.from({ length: f1 - f0 }, (_, i) => evaluate(p, defs, a, f0 + i))
 
-test('stitch: B starts where A ended (x, y, yaw)', () => {
+test('stitch: B starts one frame past where A ended (x, y, yaw)', () => {
   const { p, actor } = build([
     [0, 0, 60, { 'root.x': lin([0, 0], [59, 1]), 'root.yaw': lin([0, 0], [59, Math.PI / 2]) }],
     [60, 0, 60, { 'root.x': lin([0, 0], [59, 1]) }],
   ])
   const a59 = evaluate(p, defs, actor, 59), b60 = evaluate(p, defs, actor, 60)
   expect(Math.hypot(a59.rootPos[0] - b60.rootPos[0], a59.rootPos[1] - b60.rootPos[1])).toBeLessThan(0.02)
-  expect(quatYaw(b60.rootQuat)).toBeCloseTo(Math.PI / 2, 2)
+  expect(quatYaw(b60.rootQuat)).toBeCloseTo(Math.PI / 2 + Math.PI / 2 / 59, 5)
   const b119 = evaluate(p, defs, actor, 119)
   expect(b119.rootPos[1] - b60.rootPos[1]).toBeCloseTo(1, 1)
+})
+
+test('butt seam: root keeps moving across the cut (no 1-frame stall)', () => {
+  const { p, actor } = build([
+    [0, 0, 60, { 'root.x': lin([0, 0], [59, 0.59]), 'root.yaw': lin([0, 0], [59, 0.59]) }],
+    [60, 0, 60, { 'root.x': lin([0, 0], [59, 0.59]) }],
+  ])
+  const x = (f: number) => evaluate(p, defs, actor, f).rootPos
+  const step = (f: number) => Math.hypot(x(f)[0] - x(f - 1)[0], x(f)[1] - x(f - 1)[1])
+  expect(step(59)).toBeCloseTo(0.01, 4)
+  expect(step(60)).toBeCloseTo(0.01, 4)
+  expect(step(61)).toBeCloseTo(0.01, 4)
+  const yaw = (f: number) => quatYaw(evaluate(p, defs, actor, f).rootQuat)
+  expect(yaw(60) - yaw(59)).toBeCloseTo(0.01, 4) // A's turn rate carries over the cut
 })
 
 test('crossfade: weights and continuity', () => {
@@ -96,14 +110,14 @@ test('stitch with nonzero clip-start root: xy/yaw continuous, z/roll/pitch prese
     [0, 0, 60, { 'root.x': lin([0, 0], [59, 1]), 'root.yaw': lin([0, 0], [59, Math.PI / 2]) }],
     [60, 0, 60, b],
   ])
-  const a = evaluate(p, defs, actor, 59), s = evaluate(p, defs, actor, 60)
-  expect(s.rootPos[0]).toBeCloseTo(a.rootPos[0], 5)
-  expect(s.rootPos[1]).toBeCloseTo(a.rootPos[1], 5)
-  expect(quatYaw(s.rootQuat)).toBeCloseTo(quatYaw(a.rootQuat), 5)
+  const a0 = evaluate(p, defs, actor, 58), a = evaluate(p, defs, actor, 59), s = evaluate(p, defs, actor, 60)
+  expect(s.rootPos[0]).toBeCloseTo(2 * a.rootPos[0] - a0.rootPos[0], 5) // one more frame at A's velocity
+  expect(s.rootPos[1]).toBeCloseTo(2 * a.rootPos[1] - a0.rootPos[1], 5)
+  expect(quatYaw(s.rootQuat)).toBeCloseTo(2 * quatYaw(a.rootQuat) - quatYaw(a0.rootQuat), 5)
   expect(s.rootPos[2]).toBeCloseTo(0.5, 5)
   // roll/pitch survive: Rz(yaw)^-1 * q == clip's own roll/pitch/yaw=0.7 quat after removing stitch yaw
   const own = eulerToQuat(0.1, 0.2, 0.7)
-  const yaw = quatYaw(a.rootQuat) - 0.7
+  const yaw = quatYaw(s.rootQuat) - 0.7
   expect(quatAngle(s.rootQuat, quatMul(yawQuat(yaw), own))).toBeCloseTo(0, 5)
 })
 
