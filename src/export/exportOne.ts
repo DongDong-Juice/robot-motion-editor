@@ -15,7 +15,7 @@ export async function exportOne(project: Project, defs: RobotDefs, actorId: stri
     await whenSettled(itemId) // already queued/running (e.g. track run): wait for it
     const st = usePhysics.getState().byItem[itemId]
     const item = project.sequence.tracks.flatMap(t => t.items).find(i => i.id === itemId)!
-    const n = warnings.length + physicsWarnings(item, st).length
+    const n = warnings.length + physicsWarnings(project, defs, item, st).length
     const skipped = st?.status === 'error' ? ` (물리 검증 생략: ${st.message})` : ''
     if (n && !ask(`경고 ${n}개가 있습니다 (관절 한계·속도·루트·물리 보조력)${skipped}. 그래도 내보낼까요?`)) return null
     return (await saveCsvFile(name, text)) ? `${name} 을(를) 내보냈습니다${skipped}` : null

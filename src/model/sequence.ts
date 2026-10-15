@@ -1,11 +1,20 @@
 import { evaluateClip, type Pose, type RobotDefs } from './pose'
 import { quatMul, quatYaw, yawQuat, type Quat } from './rootMath'
 import type { Item, Project, Track } from './types'
+import { itemClip } from './itemClip'
 
 export interface Xf { x: number; y: number; yaw: number } // clip root -> track coords
 
 export const itemLen = (it: Item): number => it.trimOut - it.trimIn
 export const sortedItems = (track: Track): Item[] => [...track.items].sort((a, b) => a.start - b.start)
+
+/** Name tag of a cut piece: "#n · F<from>–<to>" = its order among the track's pieces of the same clip (by start, like the
+ * CSV file's _n) and the clip frames it plays; '' when the item is that clip's only piece on the track. */
+export function pieceTag(t: Track, it: Item): string {
+  const ps = sortedItems(t).filter(i => i.refId === it.refId)
+  return ps.length > 1 ? `#${ps.findIndex(i => i.id === it.id) + 1} · F${it.trimIn}–${it.trimOut}` : ''
+}
+export const pieceName = (t: Track, it: Item, clipName: string) => { const g = pieceTag(t, it); return g ? `${g} · ${clipName}` : clipName }
 
 // `items` must be sorted by start. Item + clip frame for a stage frame: before first item -> its trimIn; gap/after -> previous item's last frame.
 export function resolve(items: Item[], frame: number): { item: Item; cf: number } | null {
@@ -66,7 +75,7 @@ export function stitchTransforms(p: Project, defs: RobotDefs, track: Track): Map
   let prev: Item | null = null
   for (const it of items) {
     let xf: Xf = { x: 0, y: 0, yaw: 0 }
-    const clip = p.clips[it.refId], prevClip = prev && p.clips[prev.refId]
+    const clip = itemClip(p, defs, it), prevClip = prev && itemClip(p, defs, prev)
     if (prev && prevClip && clip && actor) {
       const def = defs[actor.robot]
       const pcf = Math.min(Math.max(it.start - prev.start + prev.trimIn, prev.trimIn), prev.trimOut - 1)
@@ -120,6 +129,13 @@ export function worldToClipRoot(world: { pos: [number, number, number]; quat: Qu
     pitch: Math.asin(Math.max(-1, Math.min(1, 2 * (qw * qy - qz * qx)))),
     yaw: Math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz)),
   }
+}
+
+// Stage-only 숨기기 of pieces: hidden when every piece covering `frame` is hidden (both in a crossfade); in a gap or past
+// the end, the piece the robot holds (as `resolve`). Evaluation and export ignore it.
+export function hiddenAt(track: Track, frame: number): boolean {
+  const s = sortedItems(track), cover = s.filter(i => frame >= i.start && frame < i.start + itemLen(i))
+  return cover.length ? cover.every(i => i.hidden) : !!resolve(s, frame)?.item.hidden
 }
 
 // True when `frame` lies in a crossfade overlap of the track.

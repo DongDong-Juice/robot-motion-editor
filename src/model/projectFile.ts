@@ -1,20 +1,21 @@
 import type { RobotDefs } from './evaluate'
 import { validTrack } from './sequence'
-import type { Media, Project } from './types'
+import type { Curve, Media, Project } from './types'
 import { validVideoTrack } from './video'
 
 const INTERP = ['linear', 'bezier', 'hold'] as const
+const ROOT_CH = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw']
 const r6 = (x: number) => Math.round(x * 1e6) / 1e6 + 0 // +0 turns -0 into 0
 
 // v2: each curve is { k: [f, v, interp, inDf, inDv, outDf, outDv, ...] }, reals rounded to 6 decimals, no indentation.
+// Clip channels and items' 수정 층 (offset) use the same encoding.
+const packCurves = (chs: Record<string, Curve>) => Object.fromEntries(Object.entries(chs).map(([ch, cv]) => [ch, {
+  k: cv.keys.flatMap(k => [k.f, r6(k.v), INTERP.indexOf(k.interp), r6(k.inTan.df), r6(k.inTan.dv), r6(k.outTan.df), r6(k.outTan.dv)]),
+}]))
 export const serializeProject = (p: Project): string => JSON.stringify({
   ...p, version: 2,
-  clips: Object.fromEntries(Object.entries(p.clips).map(([id, c]) => [id, {
-    ...c,
-    channels: Object.fromEntries(Object.entries(c.channels).map(([ch, cv]) => [ch, {
-      k: cv.keys.flatMap(k => [k.f, r6(k.v), INTERP.indexOf(k.interp), r6(k.inTan.df), r6(k.inTan.dv), r6(k.outTan.df), r6(k.outTan.dv)]),
-    }])),
-  }])),
+  clips: Object.fromEntries(Object.entries(p.clips).map(([id, c]) => [id, { ...c, channels: packCurves(c.channels) }])),
+  sequence: { ...p.sequence, tracks: p.sequence.tracks.map(t => ({ ...t, items: t.items.map(it => it.offset ? { ...it, offset: packCurves(it.offset) } : it) })) },
 })
 
 class Bad extends Error {}
@@ -53,12 +54,19 @@ export function parseProject(text: string, defs: RobotDefs): Project {
       robot(c.robot, `${at}.robot`)
       if (!int(c.length) || c.length < 1) fail(`${at}.length`)
       if (!isObj(c.channels)) fail(`${at}.channels`)
-      for (const [ch, cv0] of Object.entries<any>(c.channels)) {
+      curves(c.channels, `${at}.channels`, c.robot, true)
+    }
+
+    // Expands v2 { k } into { keys } in place and checks the keys. clampJoints: r6 rounding must not push a clip key past its
+    // URDF limit (off for 수정 층 deltas, which must also name a joint or root channel of the robot).
+    function curves(chs: Record<string, any>, at: string, rb: keyof RobotDefs, clampJoints: boolean) {
+      for (const [ch, cv0] of Object.entries<any>(chs)) {
         let cv = cv0
-        const jd = defs[c.robot as keyof RobotDefs].joints.find((j: { name: string }) => j.name === ch) // r6 rounding must not push a key past its URDF limit
-        const clampJ = (v: number) => jd ? Math.min(Math.max(v, jd.lower), jd.upper) : v
+        const jd = defs[rb].joints.find((j: { name: string }) => j.name === ch)
+        if (!clampJoints && !jd && !ROOT_CH.includes(ch)) fail(`${at}.${ch}`, '채널 이름을 알 수 없습니다')
+        const clampJ = (v: number) => jd && clampJoints ? Math.min(Math.max(v, jd.lower), jd.upper) : v
         if (p.version === 2) { // expand { k } into { keys } so v1 and v2 share the key checks below
-          const kp = `${at}.channels.${ch}.k`
+          const kp = `${at}.${ch}.k`
           if (!isObj(cv0) || !Array.isArray(cv0.k) || cv0.k.length % 7 !== 0 || !cv0.k.every(num)) fail(kp)
           const keys: any[] = []
           for (let i = 0; i < cv0.k.length; i += 7) {
@@ -66,11 +74,11 @@ export function parseProject(text: string, defs: RobotDefs): Project {
             if (!(ip in INTERP)) fail(`${kp}.${i + 2}`)
             keys.push({ f, v: clampJ(v), interp: INTERP[ip], inTan: { df: idf, dv: idv }, outTan: { df: odf, dv: odv } })
           }
-          cv = c.channels[ch] = { keys }
+          cv = chs[ch] = { keys }
         }
-        if (!isObj(cv) || !Array.isArray(cv.keys)) fail(`${at}.channels.${ch}`)
+        if (!isObj(cv) || !Array.isArray(cv.keys)) fail(`${at}.${ch}`)
         cv.keys.forEach((k: any, i: number) => {
-          const kt = `${at}.channels.${ch}.keys.${i}`
+          const kt = `${at}.${ch}.keys.${i}`
           if (!isObj(k) || !int(k.f) || !num(k.v)) fail(kt)
           if (i > 0 && k.f <= cv.keys[i - 1].f) fail(`${kt}.f`, '순서가 올바르지 않습니다')
           if (!['linear', 'bezier', 'hold'].includes(k.interp)) fail(`${kt}.interp`)
@@ -97,6 +105,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
     s.tracks.forEach((t: any, i: number) => {
       const at = `sequence.tracks.${i}`
       if (!isObj(t) || !str(t.id) || !['video', 'motion'].includes(t.kind) || typeof t.hidden !== 'boolean' || typeof t.locked !== 'boolean') fail(at)
+      if (t.trail !== undefined && t.trail !== true) fail(`${at}.trail`)
       if (t.kind === 'video') {
         if (++videoTracks > 1) fail(at, '영상 트랙은 하나만 둘 수 있습니다')
         if (t.actorId !== undefined) fail(`${at}.actorId`, '영상 트랙에는 액터가 없어야 합니다')
@@ -107,7 +116,12 @@ export function parseProject(text: string, defs: RobotDefs): Project {
       t.items.forEach((it: any, j: number) => {
         const it_ = `${at}.items.${j}`
         if (!isObj(it) || !str(it.id) || !int(it.start) || !int(it.trimIn) || !int(it.trimOut)) fail(it_)
-        if (it.restPose !== undefined && it.restPose !== true) fail(`${it_}.restPose`)
+        if (it.restPose !== undefined && it.restPose !== true && it.restPose !== 'prepend') fail(`${it_}.restPose`)
+        if (it.hidden !== undefined && it.hidden !== true) fail(`${it_}.hidden`)
+        if (it.restTail !== undefined && typeof it.restTail !== 'boolean') fail(`${it_}.restTail`)
+        if (it.restHold !== undefined && !(int(it.restHold) && it.restHold >= 0)) fail(`${it_}.restHold`)
+        if (it.restBlend !== undefined && it.restBlend !== 'auto' && !(int(it.restBlend) && it.restBlend >= 0)) fail(`${it_}.restBlend`)
+        if (it.inertia !== undefined && !(int(it.inertia) && it.inertia >= 0)) fail(`${it_}.inertia`)
         if (itemIds.has(it.id)) fail(`${it_}.id`, '중복된 ID입니다')
         itemIds.add(it.id)
         if (t.kind === 'video') {
@@ -118,6 +132,8 @@ export function parseProject(text: string, defs: RobotDefs): Project {
         if (!str(it.refId) || !Object.hasOwn(p.clips, it.refId)) fail(`${it_}.refId`, '클립이 없습니다')
         if (t.kind === 'motion' && p.clips[it.refId].robot !== actorRobot[t.actorId]) fail(`${it_}.refId`, '클립의 로봇이 액터와 다릅니다')
         if (it.trimOut > p.clips[it.refId].length) fail(`${it_}.trimOut`, '클립 길이를 넘습니다')
+        if (it.use !== undefined && it.use !== 'original') fail(`${it_}.use`)
+        if (it.offset !== undefined) { if (!isObj(it.offset)) fail(`${it_}.offset`); curves(it.offset, `${it_}.offset`, p.clips[it.refId].robot, false) }
       })
       if (!(t.kind === 'video' ? validVideoTrack(t.items, media) : validTrack(t.items))) fail(at, '항목 배치가 올바르지 않습니다 (겹침 또는 범위)')
     })

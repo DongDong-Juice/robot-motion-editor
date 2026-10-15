@@ -4,6 +4,7 @@ import { sortedItems } from './model/sequence'
 import type { Project } from './model/types'
 import { openProject, saveProject } from './projectActions'
 import { seqFlash } from './timeline/viewState'
+import { cancelDrag, dragActive } from './timeline/drag'
 
 export function sequenceEnd(p: Project): number {
   let end = 0
@@ -20,11 +21,12 @@ export function playRange(s: Pick<EditorState, 'project' | 'editing'>): [number,
 }
 
 // Item the C key splits: an item under the playhead (strictly inside), preferring the track of the selected item, then the selected actor's, then the top-most. None in clip view.
-export function splitTarget(s: Pick<EditorState, 'project' | 'editing' | 'selItem' | 'sel' | 'frame'>): string | null {
+// `frame` overrides the playhead (the 자르기 button cuts at a typed frame).
+export function splitTarget(s: Pick<EditorState, 'project' | 'editing' | 'selItem' | 'sel' | 'frame'>, frame = s.frame): string | null {
   if (s.editing) return null
   const tracks = s.project.sequence.tracks
   const hits = tracks.flatMap(t => {
-    const it = sortedItems(t).filter(i => s.frame > i.start && s.frame < i.start + i.trimOut - i.trimIn).at(-1)
+    const it = sortedItems(t).filter(i => frame > i.start && frame < i.start + i.trimOut - i.trimIn).at(-1)
     return it ? [{ t, it }] : []
   })
   const pick = hits.find(h => h.t.items.some(i => i.id === s.selItem))
@@ -40,6 +42,17 @@ export function splitAtPlayhead(ed: Pick<ReturnType<typeof getEditor>, 'getState
   const right = s.project.sequence.tracks.find(t => t.items.some(i => i.id === id))?.items.find(i => i.id !== id && i.start === frame)
   if (right) s.selectItem(right.id)
   return true
+}
+
+// 자르기 button: cut at a sequence frame (same target rule as C), move the playhead there. Returns why it could not cut, or null.
+export function cutAtFrame(ed: Pick<ReturnType<typeof getEditor>, 'getState'>, frame: number): string | null {
+  const s = ed.getState()
+  if (s.editing) return '시퀀스에서만 자를 수 있습니다'
+  const id = splitTarget(s, frame)
+  if (!id) return '그 프레임에 자를 조각이 없습니다'
+  if (lockedItem(s, id)) return '잠긴 트랙입니다'
+  s.setFrame(frame)
+  return splitAtPlayhead(ed, id) ? null : '자를 수 없습니다'
 }
 
 // Delete/C on an item of a locked track: the store rejects it; say why.
@@ -73,6 +86,13 @@ export function startTransport(): () => void {
   }
   raf = requestAnimationFrame(tick)
 
+  // Space always plays/pauses the sequence, whatever has focus (a button, the menu, a panel); only text fields and form
+  // controls keep it. Capture phase, so no button, menu or panel handler sees it first.
+  const onSpace = (e: KeyboardEvent) => {
+    if (e.key !== ' ' || e.ctrlKey || e.metaKey || e.altKey || typing(e.target)) return
+    e.preventDefault(); e.stopPropagation() // also stops a focused button's own click; focus stays where it was
+    if (!e.repeat) { const s = ed.getState(); s.setPlaying(!s.playing) }
+  }
   const onKey = (e: KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && !e.altKey && ['s', 'o'].includes(e.key.toLowerCase())) { // file shortcuts work everywhere
       e.preventDefault()
@@ -81,7 +101,7 @@ export function startTransport(): () => void {
     }
     if (typing(e.target) || e.altKey || (e.target instanceof Element && e.target.closest('[role=menu]'))) return // menus own their keys
     if (onHandleArrow(e)) return // resize handles own their arrow keys
-    // panel rows own Delete/Backspace and the plain editing keys; undo, Space and arrows still pass through
+    // panel rows own Delete/Backspace and the plain editing keys; undo and arrows still pass through
     if (e.target instanceof Element && e.target.closest('#project') && !e.ctrlKey && !e.metaKey && ['Delete', 'Backspace', 'Escape', 'c', 'i', 'o', 'm'].includes(e.key.length === 1 ? e.key.toLowerCase() : e.key)) return
     const s = ed.getState()
     const step = (n: number) => {
@@ -91,15 +111,11 @@ export function startTransport(): () => void {
     }
     if (e.ctrlKey || e.metaKey) {
       const k = e.key.toLowerCase()
-      if (k === 'z') { e.preventDefault(); e.shiftKey ? s.redo() : s.undo() }
-      else if (k === 'y') { e.preventDefault(); s.redo() }
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); if (!cancelDrag()) s.undo() } // mid-drag: cancel that drag only
+      else if (k === 'z' || k === 'y') { e.preventDefault(); if (!dragActive()) s.redo() }
       return
     }
-    if (e.key === ' ') {
-      e.preventDefault()
-      if (e.target instanceof HTMLButtonElement) e.target.blur() // avoid a second toggle from the button's own click
-      s.setPlaying(!s.playing)
-    } else if (e.key === 'ArrowLeft') step(e.shiftKey ? -10 : -1)
+    if (e.key === 'ArrowLeft') step(e.shiftKey ? -10 : -1)
     else if (e.key === 'ArrowRight') step(e.shiftKey ? 10 : 1)
     else if (e.key === 'Escape') { if (s.editing && !e.defaultPrevented && !(e.target as Element | null)?.closest?.('dialog[open]')) s.closeItem() }
     else if (e.key === 'Delete') { if (!s.editing && s.selItem) { e.preventDefault(); if (!lockedItem(s, s.selItem)) s.deleteItem(s.selItem) } }
@@ -116,6 +132,7 @@ export function startTransport(): () => void {
       requestAnimationFrame(() => document.querySelector<HTMLElement>('#timeline canvas')?.focus())
     }
   }
+  window.addEventListener('keydown', onSpace, true)
   window.addEventListener('keydown', onKey)
-  return () => { cancelAnimationFrame(raf); window.removeEventListener('keydown', onKey) }
+  return () => { cancelAnimationFrame(raf); window.removeEventListener('keydown', onSpace, true); window.removeEventListener('keydown', onKey) }
 }

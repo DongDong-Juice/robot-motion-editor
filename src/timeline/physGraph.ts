@@ -1,5 +1,6 @@
-import { itemFrameRange } from '../export/csv'
-import type { Item } from '../model/types'
+import { itemFrameRange, restLead } from '../export/csv'
+import type { RobotDefs } from '../model/evaluate'
+import type { Item, Project } from '../model/types'
 import type { ItemPhys } from '../physics/physicsStore'
 import type { Segment } from '../physics/segments'
 import { frameToX, type TimeScale } from './timeScale'
@@ -27,8 +28,8 @@ export function graphCols(pct: ArrayLike<number>, f0: number, sc: TimeScale, xa:
 
 export const segmentAt = (segs: Segment[], k: number) => segs.find(s => k >= s.from && k <= s.to) ?? null
 
-/** Sequence frame of CSV frame k (exportItemCsv samples itemFrameRange; the rest pose keeps the length). */
-export const seqFrameOf = (item: Item, k: number) => itemFrameRange(item).from + k
+/** Sequence frame of CSV frame k (exportItemCsv samples itemFrameRange; 기본자세 덧붙이기 adds restLead rows before it). */
+export const seqFrameOf = (p: Project, defs: RobotDefs, item: Item, k: number) => itemFrameRange(item).from - restLead(p, defs, item) + k
 
 export function badge(st: ItemPhys | undefined, stale: boolean): string | null {
   if (!st || st.status === 'queued' || st.status === 'running') return null
@@ -44,6 +45,15 @@ export function treeSuffix(st: ItemPhys | undefined, stale: boolean): string {
   if (stale) return ' · 오래됨'
   const m = st.metrics!
   return ` · 최대 ${Math.round(m.maxPct)}%${m.segments.length ? ` ⚠${m.segments.length}` : ''}`
+}
+
+/** Short form of treeSuffix for a narrow lane label: "⚠3" (warn), "87%", "오래됨", or the error; '' while none. */
+export function treeTag(st: ItemPhys | undefined, stale: boolean): { text: string; warn: boolean } {
+  if (!st || st.status === 'queued' || st.status === 'running') return { text: '', warn: false }
+  if (st.status === 'error') return { text: st.message ?? '오류', warn: false }
+  if (stale) return { text: '오래됨', warn: false }
+  const m = st.metrics!
+  return m.segments.length ? { text: `⚠${m.segments.length}`, warn: true } : { text: `${Math.round(m.maxPct)}%`, warn: false }
 }
 
 /** Assist % line over [top, top+h], red warning spans behind it, dotted warning level. */

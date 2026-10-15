@@ -5,7 +5,7 @@ import { makeKey } from './curve'
 import { newProject } from './defaults'
 import { evaluate, evaluateItem, type Pose, type RobotDefs } from './evaluate'
 import { eulerToQuat, quatAngle, quatMul, quatYaw, yawQuat } from './rootMath'
-import { blendPose, slerp, stitchTransforms, worldToClipRoot } from './sequence'
+import { blendPose, hiddenAt, slerp, stitchTransforms, worldToClipRoot } from './sequence'
 import type { Curve, Project } from './types'
 
 const g1 = loadDef('g1')
@@ -134,4 +134,27 @@ test('worldToClipRoot inverts evaluateItem (placement + stitch)', () => {
   const r = worldToClipRoot({ pos: w.rootPos, quat: w.rootQuat }, p.actors[0].placement, xf)
   expect(r.x).toBeCloseTo(0.3 + 0.5 * 30 / 59, 5); expect(r.y).toBeCloseTo(0.2, 5); expect(r.z).toBeCloseTo(0.7, 5)
   expect(r.roll).toBeCloseTo(0.1, 5); expect(r.pitch).toBeCloseTo(-0.2, 5); expect(r.yaw).toBeCloseTo(0.5, 5)
+})
+
+test('hiddenAt: the piece under the playhead; a crossfade only when both are hidden; a gap holds the piece before', () => {
+  const it = (id: string, start: number, len: number, hidden?: true) => ({ id, refId: 'c', start, trimIn: 0, trimOut: len, ...(hidden ? { hidden } : {}) })
+  const track = (...items: ReturnType<typeof it>[]) => ({ id: 't', kind: 'motion' as const, actorId: 'a', hidden: false, locked: false, items })
+  const t = track(it('a', 0, 60), it('b', 50, 60, true), it('c', 200, 30))
+  expect([0, 49, 55, 60, 109, 150, 199, 200, 300].map(f => hiddenAt(t, f))).toEqual([false, false, false, true, true, true, true, false, false])
+  expect(hiddenAt(track(it('a', 0, 60, true), it('b', 50, 60, true)), 55)).toBe(true)
+  expect(hiddenAt(track(), 10)).toBe(false)
+})
+
+test('pieceTag: cut pieces of one clip are numbered by start with their clip frames; a lone item has none', async () => {
+  const { pieceTag, pieceName } = await import('./sequence')
+  const t = { id: 't', kind: 'motion' as const, hidden: false, locked: false, items: [
+    { id: 'b', refId: 'c', start: 100, trimIn: 100, trimOut: 250 },
+    { id: 'a', refId: 'c', start: 0, trimIn: 0, trimOut: 100 },
+    { id: 'x', refId: 'other', start: 300, trimIn: 0, trimOut: 50 },
+  ] }
+  expect(pieceTag(t, t.items[1])).toBe('#1 · F0–100')
+  expect(pieceTag(t, t.items[0])).toBe('#2 · F100–250')
+  expect(pieceTag(t, t.items[2])).toBe('')
+  expect(pieceName(t, t.items[0], 'Track2')).toBe('#2 · F100–250 · Track2')
+  expect(pieceName(t, t.items[2], 'Other')).toBe('Other')
 })

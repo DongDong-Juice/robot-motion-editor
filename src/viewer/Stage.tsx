@@ -6,9 +6,10 @@ import { evalCurve } from '../model/curve'
 import { COLOR } from '../model/defaults'
 import { evaluate, evaluateClip, evaluateItem, evaluateRoot } from '../model/evaluate'
 import { rebasePose } from '../model/pose'
-import { restClipFor } from '../model/restPose'
+import { itemLead, restClipFor, tailedClip } from '../model/restPose'
+import { editedClip, withUse } from '../model/itemClip'
 import { nearestAngle } from '../model/rootMath'
-import { stitchTransforms, worldToClipRoot } from '../model/sequence'
+import { hiddenAt, stitchTransforms, worldToClipRoot } from '../model/sequence'
 import type { Clip, Project } from '../model/types'
 import { clipLocked, editingItem, editTarget, getEditor, gizmoLock, trackLocked } from '../store/store'
 import { sequenceEnd } from '../transport'
@@ -39,19 +40,26 @@ function makeGrid(): THREE.LineSegments {
   return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true }))
 }
 
+const OVERLAY = '#6ED3A3' // 겹쳐 보기 ghost: the 조각 수정 층 colour (--piece)
+
 // trailKey/trailClips: what the cached trail was built from (items + placement serialized, clips by identity)
 interface Entry { rig: RobotRig; trail: THREE.Line; dot: THREE.Points; ghost: boolean; trailKey?: string; trailClips?: (Clip | undefined)[] }
 
 /** One 3D view. `compareClipId` = a view-only compare pane: one robot at the origin driven by that clip from sequence frame 0 (no gizmo, picking or actors). Omitted = the main pane (every actor).
  * With `itemId` + `range`, an item flagged restPose plays its derived rest-pose clip instead (preview only).
- * With `range` = [from, to) clip frames, the compare robot instead loops that range on its own 60 fps clock, root re-based so frame `from` sits at the origin. */
-export default function Stage({ compareClipId: cid, range, itemId, children }: { compareClipId?: string; range?: [number, number]; itemId?: string; children?: ReactNode }) {
+ * With `range` = [from, to) clip frames, the compare robot shows that range, root re-based so frame `from` sits at the origin: with `itemId` it follows
+ * the main playhead (item start = `from`), else it loops on its own 60 fps clock. */
+export default function Stage({ compareClipId: cid, range, itemId, edited, children }: { compareClipId?: string; range?: [number, number]; itemId?: string; edited?: boolean; children?: ReactNode }) {
   const [lo, hi] = range ?? [0, 0]
   const host = useRef<HTMLDivElement>(null)
   // 로봇 따라가기: per-pane local UI state, read by the render loop through a ref
   const [follow, setFollow] = useState(false)
   const followRef = useRef(false)
   followRef.current = follow
+  // 경로 표시 of a compare/clip pane (its one robot), off by default; the main pane follows each track's 경로 표시 (Track.trail, sequence)
+  const [trail, setTrail] = useState(false)
+  const trailRef = useRef(false)
+  trailRef.current = trail
 
   useEffect(() => {
     const el = host.current!
@@ -82,7 +90,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
     if (!cid) scene.add(tc.getHelper())
     // dev/e2e hook
     // dev/e2e hook: __stage = main pane, __stages = every pane by key ('main' or the compare clip id)
-    const hook = { camera, tc, entries: () => entries, renderer, camTarget: () => orbit.target.toArray() }
+    const hook = { camera, tc, entries: () => entries, renderer, camTarget: () => orbit.target.toArray(), overlay: () => overlay?.rig ?? null }
     const hookKey = ranged ? 'preview' : cid ?? 'main'
     if (import.meta.env.DEV) {
       const w = window as any
@@ -102,22 +110,44 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
 
     // hidden track: stage-only (rig, trail, dot, picking, gizmo); evaluation and export are untouched
     const isHidden = (p: Project, id: string) => !!p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === id)?.hidden
+    // main pane: that track's 경로 표시 on and the track shown
+    const showTrail = (p: Project, id: string) => { const t = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === id); return !!t?.trail && !t.hidden }
+    // track hidden, or (sequence view) the piece under the playhead hidden
+    const offStage = (s: { project: Project; frame: number; editing: string | null }, id: string) => {
+      const t = s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === id)
+      return !!t && (t.hidden || (!s.editing && hiddenAt(t, s.frame)))
+    }
+    // 원본 | 수정본 비교: the compared piece is drawn as its original here (the 수정본 is in the preview pane, or ghosted)
+    const viewProject = (s: ReturnType<typeof store.getState>) => s.previewEdit && s.itemPreview ? withUse(s.project, s.itemPreview, 'original') : s.project
+    let overlay: { robot: string; rig: RobotRig } | null = null
+    const applyOverlay = (s: ReturnType<typeof store.getState>) => {
+      const actorId = s.previewEdit && s.compareOverlay && s.itemPreview
+        ? s.project.sequence.tracks.find(t => t.items.some(i => i.id === s.itemPreview))?.actorId : undefined
+      const a = actorId ? s.project.actors.find(x => x.id === actorId) : undefined
+      if (overlay && (!a || overlay.robot !== a.robot)) { scene.remove(overlay.rig.root); disposeObj(overlay.rig.root); overlay = null }
+      if (!a || offStage(s, a.id)) return
+      if (!overlay) { overlay = { robot: a.robot, rig: buildRobot(s.defs[a.robot], OVERLAY) }; overlay.rig.setGhost(true); scene.add(overlay.rig.root) }
+      const ep = withUse(s.project, s.itemPreview!, null), ei = editingItem(s), t = ei && ei.actorId === a.id ? editTarget(s, a.id) : null
+      overlay.rig.applyPose(t ? evaluateItem(ep, s.defs, t.itemId, t.f) : evaluate(ep, s.defs, a.id, s.frame))
+    }
     const applyAll = () => {
-      const s = store.getState()
+      const s = store.getState(), vp = viewProject(s)
       const ei = editingItem(s)
       for (const a of s.project.actors) {
         const e = entries.get(a.id)
         if (!e) continue
-        const hid = isHidden(s.project, a.id)
-        e.rig.root.visible = e.trail.visible = e.dot.visible = !hid
+        const hid = offStage(s, a.id)
+        e.rig.root.visible = e.dot.visible = !hid
+        e.trail.visible = showTrail(s.project, a.id)
         if (hid) continue
         const ghost = !!ei && ei.actorId !== a.id
         if (e.ghost !== ghost) { e.ghost = ghost; e.rig.setGhost(ghost) }
         const t = ei && !ghost ? editTarget(s, a.id) : null
-        const pose = t ? evaluateItem(s.project, s.defs, t.itemId, t.f) : evaluate(s.project, s.defs, a.id, s.frame)
+        const pose = t ? evaluateItem(vp, s.defs, t.itemId, t.f) : evaluate(vp, s.defs, a.id, s.frame)
         e.rig.applyPose(pose)
         e.dot.position.set(pose.rootPos[0], pose.rootPos[1], 0.002)
       }
+      if (!cid) applyOverlay(s)
       dirty = true
     }
 
@@ -132,13 +162,17 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       for (const o of [e.rig.root, e.trail, e.dot]) disposeObj(o)
     }
 
-    // the clip a compare pane shows: the original, or (flagged item preview) the cached rest-pose bake
+    // the clip a compare pane shows: the original, or (item preview) the piece's clip with its 수정 층 and rest-pose bake
     const shownClip = () => {
-      const { project, defs } = store.getState(), clip = cid ? project.clips[cid] : undefined
+      const { defs } = store.getState(), project = paneProject(), clip = cid ? project.clips[cid] : undefined
       if (!clip || !ranged || !itemId) return clip
       const it = project.sequence.tracks.flatMap(t => t.items).find(i => i.id === itemId)
-      return it?.restPose ? restClipFor(clip, defs[clip.robot], lo, hi) : clip
+      const base = (it && tailedClip(project, defs, it)) || clip // with its 끝 기본자세 after trimOut
+      const ld = it ? itemLead(project, defs, it) : null // prepend: range = [trimIn − 관성, trimOut + 정지 + 전이), the derived clip's frames
+      return ld ? restClipFor(base, defs[clip.robot], lo, hi, 'prepend', ld.hold, ld.blend) : it?.restPose ? restClipFor(base, defs[clip.robot], lo, hi) : base
     }
+    // the item preview's project: as stored, or (수정본 pane) with the piece set to its 수정본
+    const paneProject = () => { const p = store.getState().project; return edited && itemId ? withUse(p, itemId, null) : p }
     // compare pane: one rig for the clip at the origin; trail rebuilt only when the clip object changes
     const syncClip = () => {
       const { project, defs } = store.getState()
@@ -146,9 +180,12 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       if (!clip) return
       let e = entries.get(cid!)
       if (!e) {
-        const color = new THREE.Color(COLOR[clip.robot])
-        const rig = buildRobot(defs[clip.robot], COLOR[clip.robot])
+        // item preview: the piece's actor colour, like that robot on the main stage; compare pane: the robot type colour
+        const actor = itemId ? project.actors.find(a => a.id === project.sequence.tracks.find(t => t.items.some(i => i.id === itemId))?.actorId) : undefined
+        const hex = actor?.color ?? COLOR[clip.robot], color = new THREE.Color(hex)
+        const rig = buildRobot(defs[clip.robot], hex)
         const trail = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color }))
+        trail.visible = trailRef.current
         const dot = new THREE.Points(
           new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3)),
           new THREE.PointsMaterial({ color, size: 8, sizeAttenuation: false }))
@@ -164,9 +201,14 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       e.trail.geometry = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pts, 3))
     }
     const applyClip = () => {
-      const s = store.getState(), clip = shownClip(), e = entries.get(cid!)
+      const s = { ...store.getState(), project: paneProject() }, clip = shownClip(), e = entries.get(cid!)
       if (!clip || !e) return
-      const f = ranged ? lo + Math.floor((performance.now() - t0) * 60 / 1000) % Math.max(hi - lo, 1) : s.frame
+      // item preview follows the main playhead: range frame lo shows at the item start, or (기본자세 덧붙이기) 1.5 s before it,
+      // where the timeline draws the lead-in, so preview, lane, physics graph and CSV rows line up; clamped to the range outside it
+      const it = itemId ? s.project.sequence.tracks.flatMap(t => t.items).find(i => i.id === itemId) : undefined
+      const f = !ranged ? s.frame
+        : it ? lo + Math.min(Math.max(s.frame - it.start + (itemLead(s.project, s.defs, it)?.lead ?? 0), 0), hi - lo - 1)
+        : lo + Math.floor((performance.now() - t0) * 60 / 1000) % Math.max(hi - lo, 1)
       if (ranged && f === shownF) return
       shownF = f
       const pose = clipPose(clip, s.defs[clip.robot], Math.min(Math.max(f, 0), clip.length - 1))
@@ -187,6 +229,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
         if (!e) {
           const rig = buildRobot(defs[a.robot], a.color)
           const trail = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color }))
+          trail.visible = false
           const dot = new THREE.Points(
             new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3)),
             new THREE.PointsMaterial({ color, size: 8, sizeAttenuation: false }))
@@ -194,7 +237,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
           e = { rig, trail, dot, ghost: false }
           entries.set(a.id, e)
         } else e.rig.setColor(a.color)
-        if (isHidden(project, a.id)) continue // trail rebuilt on unhide (trailKey still compares against the stale one)
+        if (!showTrail(project, a.id)) continue // built only while shown; rebuilt on show if anything changed meanwhile (trailKey)
         // trail covers the whole sequence; rebuilt only when this actor's items, placement or clips change
         const track = project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === a.id)
         const clips = track?.items.map(i => project.clips[i.refId]) ?? []
@@ -217,7 +260,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
     const locked = () => {
       const s = store.getState(), id = s.sel.actorId
       const t = id ? editTarget(s, id) : null
-      return gizmoLock(s) !== null || (!!id && (isHidden(s.project, id) || trackLocked(s.project, id) || (!!t && clipLocked(s.project, t.clipId))))
+      return gizmoLock(s) !== null || (!!id && (offStage(s, id) || trackLocked(s.project, id) || (!!t && clipLocked(s.project, t.clipId))))
     }
     const syncSelection = () => {
       const s = store.getState()
@@ -263,7 +306,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       if (rootMode === 'translate') return [['root.x', r.x], ['root.y', r.y], ['root.z', r.z]]
       // euler read-back wraps to (-pi, pi]; keep each angle continuous with the stored channel value
       if (!target) return [['root.roll', r.roll], ['root.pitch', r.pitch], ['root.yaw', r.yaw]]
-      const clip = s.project.clips[target.clipId]
+      const it = track?.items.find(i => i.id === target.itemId), clip = (it && editedClip(s.project, s.defs, it)) || s.project.clips[target.clipId]
       const cur = (ch: string) => evalCurve(clip.channels[ch] ?? { keys: [] }, target.f, 0)
       return [['root.roll', nearestAngle(r.roll, cur('root.roll'))], ['root.pitch', nearestAngle(r.pitch, cur('root.pitch'))], ['root.yaw', nearestAngle(r.yaw, cur('root.yaw'))]]
     }
@@ -368,8 +411,14 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       orbit.target.fromArray(r.target); camera.position.fromArray(r.camera)
       if (moved) { orbit.update(); dirty = true }
     }
+    let shownTrail = trailRef.current
     const loop = () => {
       raf = requestAnimationFrame(loop)
+      if (trailRef.current !== shownTrail) { // 경로 표시 toggled
+        shownTrail = trailRef.current
+        if (cid) for (const e of entries.values()) e.trail.visible = shownTrail
+        dirty = true
+      }
       if (ranged) applyClip()
       followCam()
       if (!dirty) return
@@ -385,6 +434,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       dom.removeEventListener('pointerup', onUp)
       el.removeEventListener('keydown', onKey)
       for (const e of entries.values()) disposeEntry(e)
+      if (overlay) disposeObj(overlay.rig.root)
       disposeObj(grid)
       tc.dispose(); orbit.dispose()
       // dispose() alone keeps the WebGL context alive until GC; release it now so opening/closing
@@ -397,13 +447,14 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
         if (w.__stage === hook) delete w.__stage
       }
     }
-  }, [cid, lo, hi, itemId])
+  }, [cid, lo, hi, itemId, edited])
 
   return (
     <>
       <div ref={host} tabIndex={0} style={{ width: '100%', height: '100%', outline: 'none' }} />
       <div className="pv-tools">
         <button className="pv-btn" aria-pressed={follow} onClick={() => setFollow(f => !f)}>로봇 따라가기</button>
+        {cid && <button className="pv-btn" aria-pressed={trail} onClick={() => setTrail(v => !v)} title="로봇 골반이 지나간 바닥 경로를 선으로 보여 줍니다">경로 표시</button>}
         {children}
       </div>
     </>

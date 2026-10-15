@@ -33,11 +33,33 @@ test('item restPose round-trips; non-true is rejected; an old unknown clip owner
   const p = mk(), it = p.sequence.tracks.flatMap(t => t.items)[0], c = Object.values(p.clips)[0]
   it.restPose = true
   expect(parseProject(serializeProject(p), defs).sequence.tracks.flatMap(t => t.items)[0].restPose).toBe(true)
+  it.restPose = 'prepend'
+  expect(parseProject(serializeProject(p), defs).sequence.tracks.flatMap(t => t.items)[0].restPose).toBe('prepend')
   ;(it as any).restPose = false
   expect(() => parseProject(serializeProject(p), defs)).toThrow('restPose')
   delete it.restPose
   ;(c as any).owner = 'gone'
   expect(Object.keys(parseProject(serializeProject(p), defs).clips)).toEqual(Object.keys(p.clips))
+})
+
+test('item lead-in lengths (정지·전이·관성) round-trip; bad values are rejected', () => {
+  const p = mk(), it = p.sequence.tracks.flatMap(t => t.items)[0], first = (q: typeof p) => q.sequence.tracks.flatMap(t => t.items)[0]
+  Object.assign(it, { restPose: 'prepend', restHold: 12, restBlend: 'auto', inertia: 0 })
+  expect(first(parseProject(serializeProject(p), defs))).toMatchObject({ restHold: 12, restBlend: 'auto', inertia: 0 })
+  it.restBlend = 45
+  expect(first(parseProject(serializeProject(p), defs)).restBlend).toBe(45)
+  for (const [k, v] of [['restHold', -1], ['restBlend', -1], ['restBlend', 'fast'], ['inertia', 1.5]] as const) {
+    const q = structuredClone(p); Object.assign(first(q), { [k]: v })
+    expect(() => parseProject(serializeProject(q), defs)).toThrow(k)
+  }
+})
+
+test('item hidden (숨기기) round-trips; anything but true is rejected', () => {
+  const p = mk(), it = p.sequence.tracks.flatMap(t => t.items)[0]
+  it.hidden = true
+  expect(parseProject(serializeProject(p), defs).sequence.tracks.flatMap(t => t.items)[0].hidden).toBe(true)
+  ;(it as any).hidden = false
+  expect(() => parseProject(serializeProject(p), defs)).toThrow('hidden')
 })
 
 test('v2: roundtrip within 1e-6, v1 opens as v2', () => {

@@ -19,14 +19,15 @@ import { MENUBAR_H, layoutBounds, useLayout, type Layout } from './layout/useLay
 import { tv } from './timeline/viewState'
 
 function AutoKeyHint() {
-  const off = useEditor(s => !s.autoKey && !!s.sel.channel && !s.sel.channel.startsWith('group:'))
+  const off = useEditor(s => s.layer === 'clip' && !s.autoKey && !!s.sel.channel && !s.sel.channel.startsWith('group:')) // 이 조각 수정 keys without 자동 키
   return off ? <div className="stage-hint">자동 키 꺼짐: 기즈모 변경은 저장되지 않습니다</div> : null
 }
 
 export function CrossfadeHint() {
   const lock = useEditor(gizmoLock)
   return lock === 'crossfade' ? <div className="stage-hint hi">크로스페이드 구간에서는 클립 보기에서 편집하세요</div>
-    : lock === 'stitch' ? <div className="stage-hint hi">이 프레임의 루트 위치·방향은 앞 클립 끝에 맞춰집니다</div> : null
+    : lock === 'stitch' ? <div className="stage-hint hi">이 프레임의 루트 위치·방향은 앞 클립 끝에 맞춰집니다</div>
+    : lock === 'compare' ? <div className="stage-hint hi">원본을 보는 중입니다 · 오른쪽 패널로 수정하면 수정본 창에 보입니다</div> : null
 }
 
 function Menubar() {

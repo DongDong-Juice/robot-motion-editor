@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+import { trackDrag } from './drag'
 import { getEditor, useEditor } from '../store/store'
-import { itemLen, sortedItems } from '../model/sequence'
+import { itemLen, sortedItems, pieceName, pieceTag } from '../model/sequence'
+import { itemLead, itemTail, REST_BLEND, REST_HOLD } from '../model/restPose'
 import type { Item, Track } from '../model/types'
+import { offsetKeyCount } from '../model/itemClip'
 import { seqFlash, tv } from './viewState'
 import { followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { sequenceEnd } from '../transport'
@@ -15,14 +18,16 @@ import { formatTimecode, frameToX, hoverFrame, hoverScrub, xToFrame, type TimeSc
 import { usePhysics } from '../physics/physicsStore'
 import { runItems, stale } from '../physics/runItem'
 import { withDefaults } from '../physics/settings'
-import { badge, drawAssist, segmentAt, seqFrameOf, treeSuffix, WARN_RED } from './physGraph'
+import { badge, drawAssist, segmentAt, seqFrameOf, treeSuffix, treeTag, WARN_RED } from './physGraph'
+import { drawHScrollbar, drawScrollbar, pressScrollbar, SB_W, sbGeom } from './vscroll'
 
-const ROW_H = 28, CHILD_H = 22, EDGE = 6
+const ROW_H = 28, EDGE = 6
 const DENY = '이 위치에 놓을 수 없습니다'
 const LOCKED = '잠긴 트랙입니다'
-const ICON_HIT = 18 // hit area; icons are drawn 14px, eye then padlock at the label column's right edge
-const EYE_X = LABEL_W - 36, LOCK_X = LABEL_W - 16
+const ICON_HIT = 18 // hit area; icons are drawn 14px: (motion) path, eye, padlock at the label column's right edge
+const TRAIL_X = LABEL_W - 56, EYE_X = LABEL_W - 36, LOCK_X = LABEL_W - 16
 const TRI_W = 18, NAME_X = 20, CHILD_X = NAME_X + 16 // disclosure triangle hit width; track / child label x
+const USE_X = NAME_X + 6 // ● (the side that plays and exports) in front of a lane / 수정 row label; its hit spans [NAME_X, CHILD_X)
 
 // Eye (slashed when the track is hidden) and padlock (shackle open when unlocked); `on` = accent, off = line.
 function drawEye(ctx: CanvasRenderingContext2D, cx: number, cy: number, on: boolean, col: string) {
@@ -30,6 +35,13 @@ function drawEye(ctx: CanvasRenderingContext2D, cx: number, cy: number, on: bool
   ctx.beginPath(); ctx.ellipse(cx, cy, 7, 4.5, 0, 0, Math.PI * 2); ctx.stroke()
   ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI * 2); ctx.fill()
   if (on) { ctx.beginPath(); ctx.moveTo(cx - 6, cy + 6); ctx.lineTo(cx + 6, cy - 6); ctx.stroke() }
+  ctx.restore()
+}
+// 경로 표시: a floor path (S curve) ending in the root dot
+function drawTrail(ctx: CanvasRenderingContext2D, cx: number, cy: number, col: string) {
+  ctx.save(); ctx.strokeStyle = ctx.fillStyle = col; ctx.lineWidth = 1.5
+  ctx.beginPath(); ctx.moveTo(cx - 6, cy + 5); ctx.bezierCurveTo(cx + 6, cy + 5, cx - 6, cy - 4, cx + 4, cy - 4); ctx.stroke()
+  ctx.beginPath(); ctx.arc(cx + 5, cy - 4, 2, 0, Math.PI * 2); ctx.fill()
   ctx.restore()
 }
 function drawLock(ctx: CanvasRenderingContext2D, cx: number, cy: number, on: boolean, col: string) {
@@ -41,7 +53,12 @@ function drawLock(ctx: CanvasRenderingContext2D, cx: number, cy: number, on: boo
 }
 const isVideo = (t: Track) => t.kind === 'video'
 // "<start>–<end> · <clip name>" of a child row (sequence frames); time first since split pieces share a clip name
-const childLabel = (it: Item, name: string) => `${formatTimecode(it.start)}–${formatTimecode(it.start + itemLen(it))} · ${name}${it.restPose ? ' · 기본자세' : ''}`
+const OVERWRITE = REST_HOLD + REST_BLEND // 덮어쓰기 replaces up to the first 1.5 s
+const restTag = (it: Item) => it.restPose === 'prepend' ? '기본자세 덧붙임' : '기본자세'
+const childLabel = (t: Track, it: Item, name: string) => `${pieceTag(t, it).split(' · ')[0]}${pieceTag(t, it) ? ' · ' : ''}${formatTimecode(it.start)}–${formatTimecode(it.start + itemLen(it))} · ${name}${it.restPose ? ` · ${restTag(it)}` : ''}`
+// short lane label: "#n · m:ss" of the piece start ("m:ss" alone for a clip's only piece); exact times are in the hover text
+const mss = (f: number) => { const t = Math.floor(f / 60); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}` }
+const laneLabel = (t: Track, it: Item) => `${pieceTag(t, it).split(' · ')[0]}${pieceTag(t, it) ? ' · ' : ''}${mss(it.start)}`
 // text cut to `w` px with an ellipsis
 function fit(ctx: CanvasRenderingContext2D, text: string, w: number) {
   if (ctx.measureText(text).width <= w) return text
@@ -49,8 +66,11 @@ function fit(ctx: CanvasRenderingContext2D, text: string, w: number) {
   while (n > 0 && ctx.measureText(text.slice(0, n) + '…').width > w) n--
   return text.slice(0, n) + '…'
 }
-// Label column rows: one per track, plus (expanded motion tracks) one child per item in time order; y is canvas px.
-interface Row { t: Track; it?: Item; y: number; h: number }
+// Label column rows: one per track, plus (expanded motion tracks) one child per item in time order, and under a piece with a
+// 수정 층 its 수정 row (`edit`); y is canvas px.
+interface Row { t: Track; it?: Item; y: number; h: number; edit?: boolean }
+const hasEdit = (it: Item) => offsetKeyCount(it) > 0
+const editLabel = (it: Item) => `수정 · 키 ${offsetKeyCount(it)}개`
 
 // In-progress drag preview; the store is untouched until mouseup.
 interface Drag { itemId: string; mode: 'move' | 'in' | 'out'; df: number }
@@ -73,13 +93,25 @@ export default function SequenceCanvas() {
   const redraw = useRef<() => void>(() => {})
   useEffect(() => redraw.current(), [expanded])
   const toggle = (id: string) => setExpanded(e => { const n = new Set(e); if (!n.delete(id)) n.add(id); return n })
+  // a motion track that gains a piece (a cut, a drop) and has several opens its staircase of piece rows
+  // (or whose piece gains a 수정 층: its 수정 row sits under the piece's lane)
+  const tracks = useEditor(s => s.project.sequence.tracks), counts = useRef(new Map<string, number>()), edits = useRef(new Map<string, number>())
+  useEffect(() => {
+    const nEdit = (t: Track) => t.items.filter(hasEdit).length
+    const grown = tracks.filter(t => !isVideo(t) && ((t.items.length >= 2 && t.items.length > (counts.current.get(t.id) ?? 0))
+      || nEdit(t) > (edits.current.get(t.id) ?? 0))).map(t => t.id)
+    counts.current = new Map(tracks.map(t => [t.id, t.items.length]))
+    edits.current = new Map(tracks.map(t => [t.id, nEdit(t)]))
+    if (grown.some(id => !exp.current.has(id))) setExpanded(e => new Set([...e, ...grown]))
+  }, [tracks])
 
   useEffect(() => {
     const canvas = cv.current!, ed = getEditor()
     const css = getComputedStyle(document.documentElement)
     const col = (n: string) => css.getPropertyValue(n).trim()
-    const C = { bg: col('--bg'), panel: col('--panel'), line: col('--line'), text: col('--text'), accent: col('--accent') }
-    let W = 0, H = 0, raf = 0, drag: Drag | null = null, ghost: { y: number; start: number; len: number; color: string } | null = null, timer = 0, scrollY = 0
+    const C = { bg: col('--bg'), panel: col('--panel'), line: col('--line'), text: col('--text'), accent: col('--accent'), rest: col('--rest'), piece: col('--piece'), inertia: col('--inertia'), blend: col('--blend') }
+    let W = 0, H = 0, raf = 0, drag: Drag | null = null, ghost: { y: number; start: number; len: number; color: string } | null = null, timer = 0, scrollY = 0, scrollTo = 0 // rows: shown offset, and where the wheel is easing it to
+    let sbHover = false, sbDrag = false, hbHover = false, hbDrag = false
 
     const scale = (): TimeScale => ({ x0: LABEL_W - tv.scrollF * tv.ppf, pxPerFrame: tv.ppf })
     // V1 (always first) only shows once the project has media
@@ -94,15 +126,27 @@ export default function SequenceCanvas() {
       if (drag.mode === 'in') { const k = Math.min(Math.max(d, -it.trimIn), itemLen(it) - 1); return { ...it, start: it.start + k, trimIn: it.trimIn + k } }
       return { ...it, trimOut: it.trimOut + Math.min(Math.max(d, 1 - itemLen(it)), clipLen - it.trimOut) }
     })
+    const stairs = (t: Track) => !isVideo(t) && exp.current.has(t.id) // pieces laid out one per lane below the track row
     const layout = (): Row[] => {
       const out: Row[] = []
       let y = RULER_H - scrollY
       for (const t of tracks()) {
         out.push({ t, y, h: ROW_H }); y += ROW_H
-        if (!isVideo(t) && exp.current.has(t.id)) for (const it of sortedItems(t)) { out.push({ t, it, y, h: CHILD_H }); y += CHILD_H }
+        if (stairs(t)) for (const it of sortedItems(t)) { // one lane per piece, going down; a 수정 row under a piece with a 수정 층
+          out.push({ t, it, y, h: ROW_H }); y += ROW_H
+          if (hasEdit(it)) { out.push({ t, it, y, h: ROW_H, edit: true }); y += ROW_H }
+        }
       }
       return out
     }
+    // horizontal scrollbar under the lanes (px along x): the sequence plus half a screen of room after its end; null when it all fits
+    const hbar = () => {
+      const vis = (W - SB_W - LABEL_W) / tv.ppf, end = sequenceEnd(ed.getState().project) + vis / 2
+      return sbGeom(LABEL_W, W - SB_W, Math.max(end, tv.scrollF + vis) * tv.ppf, tv.scrollF * tv.ppf)
+    }
+    const hbH = () => hbar() ? SB_W : 0 // rows end above it
+    const maxScroll = () => Math.max(0, layout().reduce((a, r) => a + r.h, 0) - (H - hbH() - RULER_H)) // 0 when the rows fit
+    const sbar = () => sbGeom(RULER_H, H - hbH(), layout().reduce((a, r) => a + r.h, 0), scrollY) // vertical scrollbar, null when the rows fit
     const flash = (text: string, row: number) => {
       const r = layout()[row]
       if (!r) return
@@ -136,77 +180,155 @@ export default function SequenceCanvas() {
         }
         ctx.stroke(); ctx.restore()
       }
-      const rows = layout(), total = rows.reduce((a, r) => a + r.h, 0)
-      const maxY = Math.max(0, total - (H - RULER_H))
-      if (scrollY > maxY) { scrollY = maxY; schedule() } // rows collapsed or the panel grew
-      rows.forEach(r => {
-        const { t, y } = r, actor = s.project.actors.find(a => a.id === t.actorId), video = isVideo(t)
-        const color = actor?.color ?? C.text
-        if (r.it) { // child row: faint span bar, indented "<clip> · start–end"
-          const it = shown(t).find(i => i.id === r.it!.id) ?? r.it, h = r.h
-          ctx.fillStyle = C.line; ctx.fillRect(0, y + h - 1, W, 1)
-          ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, y, W - LABEL_W, h); ctx.clip()
-          const x = frameToX(sc, it.start), w = itemLen(it) * tv.ppf
-          ctx.globalAlpha = 0.25; ctx.fillStyle = color; ctx.fillRect(x, y + 3, w, h - 7); ctx.globalAlpha = 1
-          if (it.id === s.selItem) { ctx.strokeStyle = C.accent; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 3.5, w - 1, h - 8) }
-          ctx.restore()
-          ctx.fillStyle = C.bg; ctx.fillRect(0, y, LABEL_W - 1, h - 1)
-          ctx.font = '10px "IBM Plex Sans KR", sans-serif'
-          ctx.fillStyle = it.id === s.selItem ? C.accent : C.text
-          const { st, old } = phys(t, r.it), suf = treeSuffix(st, old), sw = ctx.measureText(suf).width // the suffix stays whole, the label is cut
-          ctx.fillText(fit(ctx, childLabel(it, refName(it)), LABEL_W - CHILD_X - 6 - sw) + suf, CHILD_X, y + h / 2)
-          ctx.font = '11px "IBM Plex Sans KR", sans-serif'
-          return
-        }
-        ctx.fillStyle = C.line; ctx.fillRect(0, y + ROW_H - 1, W, 1)
+      // rows: clamp first (rows collapsed or the panel grew), then ease toward the wheel target; laid out only after that, so a frame
+      // never shows the rows shifted past the end (that one-frame jump was the flicker)
+      const maxY = maxScroll()
+      scrollTo = Math.min(Math.max(scrollTo, 0), maxY)
+      if (scrollY > maxY) scrollY = maxY
+      if (scrollY !== scrollTo) { scrollY = Math.abs(scrollTo - scrollY) < 0.5 ? scrollTo : scrollY + (scrollTo - scrollY) * 0.35; schedule() }
+      const rows = layout()
+      // Bars of `items` in one row at y: fill, 기본자세 section, outline, assist graph, crossfade hatch over `xfade`, labels.
+      const bars = (t: Track, items: Item[], y: number, color: string, lane: boolean, xfade: [number, number][]) => {
+        const video = isVideo(t), actor = s.project.actors.find(a => a.id === t.actorId)
         ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, y, W - LABEL_W, ROW_H); ctx.clip()
-        const ga = t.locked ? 0.5 : 1 // locked bars: half transparent, no hatch
+        const unused = lane && !!items[0] && items[0].use !== 'original' && hasEdit(items[0]) // the piece plays its 수정본: the original lane is the unused side
+        const ga = (t.locked ? 0.5 : 1) * (lane && items[0]?.hidden ? 0.4 : 1) * (unused ? 0.45 : 1) // locked: half transparent, no hatch; hidden / unused: faded
         ctx.globalAlpha = ga
-        const items = sortedItems({ ...t, items: shown(t) })
         for (const it of items) {
           const x = frameToX(sc, it.start), w = itemLen(it) * tv.ppf, by = y + 2, bh = ROW_H - 5
           if (video) { ctx.fillStyle = C.panel; ctx.fillRect(x, by, w, bh) }
           else { ctx.fillStyle = color; ctx.globalAlpha = 0.18 * ga; ctx.fillRect(x, by, w, bh); ctx.globalAlpha = ga }
+          if (it.restPose) { // 기본자세 section in its own colour: 덮어쓰기 = the first 1.5 s; 덧붙이기 = the lead-in played before the piece
+            ctx.fillStyle = C.rest; ctx.globalAlpha = 0.55 * ga
+            const ld = itemLead(s.project, s.defs, it)
+            if (!ld) ctx.fillRect(x, by, Math.min(OVERWRITE, itemLen(it)) * tv.ppf, bh)
+            else { // 기본자세 (정지) · 전이 · 관성 (original frames), each in its own colour; one row: a strip, so the piece before stays visible
+              let xs = x - ld.lead * tv.ppf
+              for (const [n, c] of [[ld.hold, C.rest], [ld.blend, C.blend], [ld.inertia, C.inertia]] as const) {
+                ctx.fillStyle = c; ctx.fillRect(xs, by, n * tv.ppf, lane ? bh : 4); xs += n * tv.ppf
+              }
+            }
+            ctx.globalAlpha = ga
+          }
+          const tl = itemTail(s.project, s.defs, it)
+          if (tl) { // 끝 기본자세 after the piece's end: 전이 then 기본자세 (정지); one row: a strip, so the next piece stays visible
+            ctx.globalAlpha = 0.55 * ga
+            let xs = x + w
+            for (const [n, c] of [[tl.blend, C.blend], [tl.hold, C.rest]] as const) { ctx.fillStyle = c; ctx.fillRect(xs, by, n * tv.ppf, lane ? bh : 4); xs += n * tv.ppf }
+            ctx.globalAlpha = ga
+          }
+          if (it.offset && !lane) { // 수정 층 keys (collapsed row; a lane has its 수정 row): ticks along the bar's bottom edge (clip frames inside the trim)
+            ctx.fillStyle = C.piece; ctx.globalAlpha = ga
+            const fs = new Set(Object.values(it.offset).flatMap(c => c.keys.map(k => k.f)).filter(f => f >= it.trimIn && f < it.trimOut))
+            for (const f of fs) ctx.fillRect(Math.round(frameToX(sc, it.start + f - it.trimIn)) - 1, by + bh - 4, 2, 4)
+          }
           if (video && !mediaUrl(it.refId)) hatch(x, x + w, y, 0.25) // offline
           ctx.strokeStyle = it.id === s.selItem ? C.accent : video ? C.line : color; ctx.lineWidth = 1
           ctx.strokeRect(x + 0.5, by + 0.5, w - 1, bh - 1)
+          if (it.id === s.itemPreview && !(lane && s.previewEdit)) { // the piece open in the clip preview: a light dashed frame inside the bar (수정 비교: on its 수정 row)
+            ctx.save(); ctx.strokeStyle = C.text; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3])
+            ctx.strokeRect(x + 2.5, by + 2.5, w - 5, bh - 5); ctx.restore()
+          }
           const { st, old } = video ? { st: undefined, old: false } : phys(t, it)
-          if (st?.metrics && actor) drawAssist(ctx, st.metrics.pct, st.metrics.segments, seqFrameOf(it, 0), sc, Math.max(x, LABEL_W), x + w,
+          if (st?.metrics && actor) drawAssist(ctx, st.metrics.pct, st.metrics.segments, seqFrameOf(s.project, s.defs, it, 0), sc, Math.max(x, LABEL_W), x + w,
             by + bh * GRAPH, bh * (1 - GRAPH), color, withDefaults(s.project.physics)[actor.robot].warnPct, old)
         }
-        // crossfade: overlap of neighbours, hatched both ways
-        for (let k = 0; k + 1 < items.length; k++) {
-          const a = frameToX(sc, items[k + 1].start), b = frameToX(sc, items[k].start + itemLen(items[k]))
-          if (b <= a) continue
-          hatch(a, b, y, 0.5)
-        }
+        for (const [a, b] of xfade) hatch(frameToX(sc, a), frameToX(sc, b), y, 0.5) // crossfade, hatched both ways
         ctx.fillStyle = C.text
         for (const it of items) {
-          const x = Math.max(frameToX(sc, it.start), LABEL_W) + 4, right = frameToX(sc, it.start + itemLen(it)) - 4
+          // 기본자세 section label: only where the whole word fits inside the coloured block (덧붙이기 only in a lane)
+          const ld = it.restPose === 'prepend' ? itemLead(s.project, s.defs, it) : null
+          const rb = it.restPose === true ? [frameToX(sc, it.start), Math.min(OVERWRITE, itemLen(it)) * tv.ppf]
+            : ld && lane ? [frameToX(sc, it.start) - ld.lead * tv.ppf, ld.hold * tv.ppf] : null
+          const tag = (text: string, x0: number, x1: number) => { // a section label, only where the whole word fits inside its block
+            const a = Math.max(x0, LABEL_W)
+            if (x1 - a >= ctx.measureText(text).width + 8) ctx.fillText(text, a + 4, y + ROW_H / 2)
+          }
+          if (rb) tag('기본자세', rb[0], rb[0] + rb[1])
+          if (rb && ld) {
+            const b0 = rb[0] + rb[1], b1 = b0 + ld.blend * tv.ppf
+            tag('전이', b0, b1)
+            tag('관성', b1, b1 + ld.inertia * tv.ppf)
+          }
+          const tl = lane ? itemTail(s.project, s.defs, it) : null
+          if (tl) { const e0 = frameToX(sc, it.start + itemLen(it)), e1 = e0 + tl.blend * tv.ppf; tag('전이', e0, e1); tag('기본자세', e1, e1 + tl.hold * tv.ppf) }
+          const x = Math.max(frameToX(sc, it.start) + (it.restPose === true && rb ? rb[1] : 0), LABEL_W) + 4, right = frameToX(sc, it.start + itemLen(it)) - 4 // 덮어쓰기: the name after the block
           const { st, old } = video ? { st: undefined, old: false } : phys(t, it), b = badge(st, old)
           const ty = st?.metrics ? y + 9 : y + ROW_H / 2 // above the graph
-          const bx = frameToX(sc, it.start), br = Math.min(right, W - 4), bw = b && br - x >= ctx.measureText(b).width ? ctx.measureText(b).width + 8 : 0
+          const br = Math.min(right, W - 4), bw = b && br - x >= ctx.measureText(b).width ? ctx.measureText(b).width + 8 : 0
           if (b && bw) { // badge at the bar's (visible) right end
             ctx.fillStyle = b.startsWith('⚠') || st?.status === 'error' ? WARN_RED : old ? '#8d96a3' : C.text
             ctx.fillText(b, br - bw + 8, ty); ctx.fillStyle = C.text
           }
           const nr = bw ? br - bw : right
-          if (nr > x) ctx.fillText(refName(it) + (video && !mediaUrl(it.refId) ? ' (오프라인)' : ''), x, ty, nr - x)
-          if (it.restPose) { // 기본자세 marker: accent tick at the bar's left edge, label if it fits
-            ctx.fillStyle = C.accent; ctx.fillRect(bx + 1, y + 2, 3, ROW_H - 5)
-            const lw = ctx.measureText('기본자세').width
-            if (nr - bx > lw + 80) ctx.fillText('기본자세', nr - lw, ty)
-            ctx.fillStyle = C.text
-          }
+          if (nr > x) ctx.fillText((video ? refName(it) : pieceName(t, it, refName(it))) + (video && !mediaUrl(it.refId) ? ' (오프라인)' : ''), x, ty, nr - x)
         }
         ctx.restore()
+      }
+      // overlaps of neighbouring items (crossfades) as frame ranges
+      const overlaps = (items: Item[]) => items.slice(1).map((n, k) => [n.start, items[k].start + itemLen(items[k])] as [number, number]).filter(([a, b]) => b > a)
+      rows.forEach(r => {
+        const { t, y } = r, actor = s.project.actors.find(a => a.id === t.actorId), video = isVideo(t)
+        const color = actor?.color ?? C.text
+        const items = sortedItems({ ...t, items: shown(t) })
+        ctx.fillStyle = C.line; ctx.fillRect(0, y + ROW_H - 1, W, 1)
+        const useMark = (it: Item, mine: boolean) => { // ● on the side that plays and exports, ○ on the other (click to switch)
+          if (!hasEdit(it)) return
+          ctx.save(); ctx.strokeStyle = ctx.fillStyle = mine ? C.piece : C.line; ctx.lineWidth = 1.5
+          ctx.beginPath(); ctx.arc(USE_X, y + ROW_H / 2, 3.5, 0, Math.PI * 2); if (mine) ctx.fill(); else ctx.stroke(); ctx.restore()
+        }
+        if (r.edit && r.it) { // 수정 row: the piece's 수정본, the frames its 수정 keys span strong; moves and trims with the piece
+          const it = items.find(i => i.id === r.it!.id) ?? r.it, used = it.use !== 'original'
+          ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, y, W - LABEL_W, ROW_H); ctx.clip()
+          const ga = (t.locked ? 0.5 : 1) * (used ? 1 : 0.45), x = frameToX(sc, it.start), w = itemLen(it) * tv.ppf, by = y + 2, bh = ROW_H - 5
+          ctx.globalAlpha = 0.18 * ga; ctx.fillStyle = C.piece; ctx.fillRect(x, by, w, bh)
+          const fs = Object.values(it.offset ?? {}).flatMap(c => c.keys.map(k => k.f))
+          const a = Math.max(Math.min(...fs), it.trimIn), b = Math.min(Math.max(...fs) + 1, it.trimOut)
+          if (b > a) { ctx.globalAlpha = 0.5 * ga; ctx.fillRect(frameToX(sc, it.start + a - it.trimIn), by, (b - a) * tv.ppf, bh) }
+          ctx.globalAlpha = ga
+          for (const f of new Set(fs)) if (f >= it.trimIn && f < it.trimOut) ctx.fillRect(Math.round(frameToX(sc, it.start + f - it.trimIn)) - 1, by + bh - 4, 2, 4)
+          ctx.strokeStyle = it.id === s.selItem ? C.accent : C.piece; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, by + 0.5, w - 1, bh - 1)
+          if (it.id === s.itemPreview && s.previewEdit) { // open in the 수정본 pane: the dashed frame
+            ctx.save(); ctx.strokeStyle = C.text; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]); ctx.strokeRect(x + 2.5, by + 2.5, w - 5, bh - 5); ctx.restore()
+          }
+          ctx.fillStyle = C.text
+          const tx = Math.max(x, LABEL_W) + 4
+          if (x + w - 4 > tx) ctx.fillText('수정본', tx, y + ROW_H / 2, x + w - 4 - tx)
+          ctx.restore()
+          ctx.fillStyle = C.bg; ctx.fillRect(0, y, LABEL_W - 1, ROW_H - 1)
+          useMark(it, used)
+          ctx.font = '10px "IBM Plex Sans KR", sans-serif'; ctx.fillStyle = C.piece
+          ctx.fillText(fit(ctx, (it.id === s.itemPreview && s.previewEdit ? '▶ ' : '') + editLabel(it), LABEL_W - 8 - CHILD_X), CHILD_X, y + ROW_H / 2)
+          ctx.font = '11px "IBM Plex Sans KR", sans-serif'
+          return
+        }
+        if (r.it) { // piece lane (staircase): that piece's bar, with the crossfades it takes part in
+          const it = items.find(i => i.id === r.it!.id) ?? r.it
+          bars(t, [it], y, color, true, overlaps(items).filter(([a, b]) => a < it.start + itemLen(it) && b > it.start))
+          ctx.fillStyle = C.bg; ctx.fillRect(0, y, LABEL_W - 1, ROW_H - 1)
+          useMark(it, it.use === 'original')
+          drawEye(ctx, EYE_X, y + ROW_H / 2, !!it.hidden, it.hidden ? C.accent : C.line)
+          ctx.font = '10px "IBM Plex Sans KR", sans-serif'
+          ctx.fillStyle = it.id === s.selItem ? C.accent : C.text
+          // the column is narrow: "#n · start" (the bar shows the clip name), a short physics tag on the right; the full text on hover
+          const { st, old } = phys(t, r.it), tag = treeTag(st, old), right = EYE_X - ICON_HIT / 2 - 4, tw = tag.text ? ctx.measureText(tag.text).width + 6 : 0
+          if (tag.text) {
+            ctx.save(); ctx.textAlign = 'right'; ctx.fillStyle = tag.warn ? WARN_RED : '#8d96a3'; ctx.fillText(tag.text, right, y + ROW_H / 2); ctx.restore()
+          }
+          const warn = (it.id === s.itemPreview && !s.previewEdit ? '▶ ' : '') + (it.restPose === 'prepend' && itemLead(s.project, s.defs, it)?.why === 'review' ? '⚠ ' : '') // 관성 검토 필요, in front so it is never cut
+          ctx.fillText(fit(ctx, warn + laneLabel(t, it), right - CHILD_X - tw), CHILD_X, y + ROW_H / 2)
+          ctx.font = '11px "IBM Plex Sans KR", sans-serif'
+          return
+        }
+        if (!stairs(t)) bars(t, items, y, color, false, overlaps(items)) // expanded: the bars are in the lanes below
         ctx.fillStyle = C.bg; ctx.fillRect(0, y, LABEL_W, ROW_H - 1)
         ctx.globalAlpha = t.hidden ? 0.4 : 1
         if (!video) { ctx.fillStyle = C.text; ctx.fillText(exp.current.has(t.id) ? '▾' : '▸', 6, y + ROW_H / 2) }
-        ctx.fillStyle = color; ctx.fillText(video ? 'V1 참조영상' : actor?.name ?? '', video ? 8 : NAME_X, y + ROW_H / 2, EYE_X - 9 - (video ? 8 : NAME_X))
+        ctx.fillStyle = color; ctx.fillText(video ? 'V1 참조영상' : actor?.name ?? '', video ? 8 : NAME_X, y + ROW_H / 2, (video ? EYE_X - 8 : TRAIL_X - NAME_X) - 9)
         ctx.globalAlpha = 1
         drawEye(ctx, EYE_X, y + ROW_H / 2, t.hidden, t.hidden ? C.accent : C.line)
         drawLock(ctx, LOCK_X, y + ROW_H / 2, t.locked, t.locked ? C.accent : C.line)
+        if (!video) drawTrail(ctx, TRAIL_X, y + ROW_H / 2, t.trail ? C.accent : C.line)
       })
       if (ghost) {
         ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, RULER_H, W - LABEL_W, H - RULER_H); ctx.clip()
@@ -215,10 +337,14 @@ export default function SequenceCanvas() {
         ctx.globalAlpha = 1; ctx.strokeStyle = ghost.color; ctx.strokeRect(gx + 0.5, ghost.y + 2.5, gw - 1, ROW_H - 6)
         ctx.restore()
       }
-      drawRuler(ctx, sc, W, RULER_H, s.project.sequence, s.frame, C)
+      drawRuler(ctx, sc, W, RULER_H, s.project.sequence, s.frame, C, true)
       const px = Math.round(frameToX(sc, s.frame)) + 0.5
       if (px >= LABEL_W) { ctx.fillStyle = C.accent; ctx.fillRect(px - 0.5, RULER_H, 1, H - RULER_H) }
       ctx.fillStyle = C.line; ctx.fillRect(LABEL_W - 1, 0, 1, H)
+      const sb = sbar()
+      if (sb) drawScrollbar(ctx, W, sb, sbHover, sbDrag, C)
+      const hb = hbar()
+      if (hb) drawHScrollbar(ctx, H, hb, hbHover, hbDrag, C)
     }
     const schedule = () => { if (!raf) raf = requestAnimationFrame(draw) }
     redraw.current = schedule
@@ -236,17 +362,14 @@ export default function SequenceCanvas() {
     // ---- mouse ----
     const pos = (e: { clientX: number; clientY: number }) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top } }
     const frameAt = (x: number) => Math.max(0, xToFrame(scale(), x))
-    const track = (mv: (e: MouseEvent) => void, up: (e: MouseEvent) => void) => {
-      const end = (e: MouseEvent) => { removeEventListener('mousemove', mv); removeEventListener('mouseup', end); up(e) }
-      addEventListener('mousemove', mv); addEventListener('mouseup', end)
-    }
+    const track = trackDrag
     const rowAt = (y: number) => y < RULER_H ? -1 : layout().findIndex(r => y >= r.y && y < r.y + r.h)
-    // topmost item under (x, y) with the zone of the hit (track rows only; child rows are not draggable)
+    // topmost item under (x, y) with the zone of the hit: a lane holds its piece, a collapsed track row all of them
     const itemAt = (x: number, y: number) => {
       const r = layout()[rowAt(y)], t = r?.t
-      if (!t || r.it || y < RULER_H || x < LABEL_W) return null
+      if (!t || y < RULER_H || x < LABEL_W || (!r.it && stairs(t)) || r.edit) return null // a 수정 row is not moved or trimmed
       const sc = scale()
-      const items = sortedItems(t).reverse() // later item wins
+      const items = r.it ? t.items.filter(i => i.id === r.it!.id) : sortedItems(t).reverse() // later item wins
       const span = (i: Item) => { const x0 = frameToX(sc, i.start), x1 = frameToX(sc, i.start + itemLen(i)); return { x0, x1, edge: Math.min(EDGE, (x1 - x0) / 3) } }
       for (const it of items) { // edges of every item first, so a crossfade tail stays trimmable
         const { x0, x1, edge } = span(it)
@@ -267,8 +390,28 @@ export default function SequenceCanvas() {
         s.setFrame(frameAt(x)); track(m => s.setFrame(frameAt(pos(m).x)), () => {})
         return
       }
+      const sb = sbar()
+      if (sb && x >= W - SB_W) { pressScrollbar(sb, y, scrollY, v => { scrollY = scrollTo = v; schedule() }, on => { sbDrag = on; schedule() }, track, m => pos(m).y); return }
+      const hb = hbar()
+      if (hb && y >= H - SB_W && x >= LABEL_W) {
+        pressScrollbar(hb, x, tv.scrollF * tv.ppf, v => { markUserScroll(); tv.scrollF = v / tv.ppf; schedule() }, on => { hbDrag = on; schedule() }, track, m => pos(m).x)
+        return
+      }
       const r = layout()[row]
-      if (r?.it) { // child row (label or time area): select the item and preview it
+      if (r?.it && hasEdit(r.it) && x >= NAME_X && x < CHILD_X) { // ●: this row's side plays and exports
+        if (!s.setItemUse(r.it.id, r.edit ? null : 'original')) flash(r.t.locked ? LOCKED : DENY, row)
+        return
+      }
+      if (r?.edit && r.it) { // 수정 row (label or bar): select the piece and open 수정 비교; empty time: seek
+        const it = r.it, x0 = frameToX(scale(), it.start), x1 = frameToX(scale(), it.start + itemLen(it))
+        if (x >= LABEL_W && (x < x0 || x > x1)) { s.selectItem(null); s.setFrame(frameAt(x)); track(m => s.setFrame(frameAt(pos(m).x)), () => {}); return }
+        s.selectItem(it.id)
+        if (r.t.actorId) s.select(r.t.actorId)
+        s.openEditCompare(it.id)
+        return
+      }
+      if (r?.it && x < LABEL_W && Math.abs(x - EYE_X) <= ICON_HIT / 2) { s.setItemHidden(r.it.id, !r.it.hidden); return } // the piece's 숨기기
+      if (r?.it && x < LABEL_W) { // lane label: select the piece and preview it
         s.selectItem(r.it.id)
         if (r.t.actorId) s.select(r.t.actorId)
         s.openItemPreview(r.it.id)
@@ -278,6 +421,7 @@ export default function SequenceCanvas() {
         const t = r?.t
         if (!t) return
         if (!isVideo(t) && x < TRI_W) setExpanded(e => { const n = new Set(e); if (!n.delete(t.id)) n.add(t.id); return n })
+        else if (!isVideo(t) && Math.abs(x - TRAIL_X) <= ICON_HIT / 2) s.setTrackFlag(t.id, 'trail', !t.trail)
         else if (Math.abs(x - EYE_X) <= ICON_HIT / 2) s.setTrackFlag(t.id, 'hidden', !t.hidden)
         else if (Math.abs(x - LOCK_X) <= ICON_HIT / 2) s.setTrackFlag(t.id, 'locked', !t.locked)
         else if (t.actorId) s.select(t.actorId)
@@ -292,8 +436,8 @@ export default function SequenceCanvas() {
       const { t, it, mode } = hit
       const m = usePhysics.getState().byItem[it.id]?.metrics, ry = layout()[row].y
       if (m && t.actorId && mode === 'move' && y >= ry + 2 + (ROW_H - 5) * GRAPH && !stale(s.project, s.defs, t.actorId, it.id)) {
-        const seg = segmentAt(m.segments, xToFrame(scale(), x) - seqFrameOf(it, 0)) // red span: jump to its start
-        if (seg) { hover.stop(); s.selectItem(it.id); s.setFrame(seqFrameOf(it, seg.from)); return } // drop the pending hover scrub
+        const seg = segmentAt(m.segments, xToFrame(scale(), x) - seqFrameOf(s.project, s.defs, it, 0)) // red span: jump to its start
+        if (seg) { hover.stop(); s.selectItem(it.id); s.setFrame(Math.max(it.start, seqFrameOf(s.project, s.defs, it, seg.from))); return } // drop the pending hover scrub
       }
       s.selectItem(it.id)
       if (t.actorId) s.select(t.actorId)
@@ -303,12 +447,13 @@ export default function SequenceCanvas() {
       }, m => {
         const df = Math.round((pos(m).x - x) / tv.ppf), st = ed.getState()
         drag = null
+        if (df === 0 && r?.it) st.openItemPreview(it.id) // a click on a lane bar also previews that piece
         if (df !== 0) {
           const ok = mode === 'move' ? st.moveItem(it.id, Math.max(0, it.start + df)) : st.trimItem(it.id, mode, df)
           if (!ok) flash(t.locked ? LOCKED : DENY, row)
         }
         schedule()
-      })
+      }, () => { drag = null; schedule() })
     }
 
     const onDbl = (e: MouseEvent) => {
@@ -338,12 +483,33 @@ export default function SequenceCanvas() {
 
     const hover = hoverScrub(() => ed.getState().frame, f => { markHover(); ed.getState().setFrame(f) })
     const onMove = (e: MouseEvent) => {
-      const { x, y } = pos(e), h = itemAt(x, y)
+      const { x, y } = pos(e), over = y >= RULER_H && x >= W - SB_W && !!sbar()
+      const overH = !over && y >= H - SB_W && x >= LABEL_W && !!hbar()
+      if (over !== sbHover) { sbHover = over; schedule() }
+      if (overH !== hbHover) { hbHover = overH; schedule() }
+      if (over || overH) { canvas.style.cursor = ''; return }
+      const h = itemAt(x, y)
       canvas.style.cursor = h && h.mode !== 'move' ? 'ew-resize' : ''
+      // hover help for the track label icons
+      const r = x < LABEL_W && y >= RULER_H ? layout()[rowAt(y)] : undefined, near = (ix: number) => Math.abs(x - ix) <= ICON_HIT / 2
+      const onUse = x >= NAME_X && x < CHILD_X, useTip = (mine: boolean, side: string) => mine ? '재생·CSV에 이쪽을 씁니다' : `누르면 재생·CSV에 ${side}을 씁니다`
+      const tip = !r ? '' : r.edit && r.it ? (onUse ? useTip(r.it.use !== 'original', '수정본')
+          : `${editLabel(r.it)}\n재생·CSV: ${r.it.use === 'original' ? '원본' : '수정본'}\n누르면 수정 비교 (메인 = 원본, 오른쪽 = 수정본)`)
+        : r.it ? (hasEdit(r.it) && onUse ? useTip(r.it.use === 'original', '원본') : near(EYE_X) ? '이 조각 숨기기' : laneTip(r.t, r.it))
+        : !isVideo(r.t) && near(TRAIL_X) ? '경로 표시: 이 로봇의 골반이 지나간 바닥 경로를 메인 화면에 선으로 보여 줍니다'
+        : near(EYE_X) ? '숨기기' : near(LOCK_X) ? '잠그기' : ''
+      if (canvas.title !== tip) canvas.title = tip
       const f = hoverFrame(x, LABEL_W, scale(), e.buttons !== 0 || ed.getState().playing || renaming.current)
       if (f !== null) hover.push(Math.max(0, f))
     }
 
+    // full text of a lane label (hover): piece, time range, clip, 기본자세, physics
+    const laneTip = (t: Track, it: Item) => {
+      const s = ed.getState(), { st, old } = phys(t, it), ld = it.restPose === 'prepend' ? itemLead(s.project, s.defs, it) : null
+      return childLabel(t, it, s.project.clips[it.refId]?.name ?? '') + treeSuffix(st, old).replace(/^ · /, '\n물리 검증: ')
+        + (ld?.why === 'review' ? '\n관성 검토 필요' : '') + (it.restTail ? '\n끝 기본자세 (전이 · 정지 0.5초)' : '') +(hasEdit(it) ? `\n재생·CSV: ${it.use === 'original' ? '원본' : '수정본'}` : '')
+        + (it.id === s.itemPreview ? (s.previewEdit ? '\n수정 비교 중' : '\n클립 프리뷰에서 보는 중') : '')
+    }
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       markUserScroll()
@@ -351,9 +517,9 @@ export default function SequenceCanvas() {
         const { x } = pos(e), fAt = tv.scrollF + (x - LABEL_W) / tv.ppf
         tv.ppf = Math.min(Math.max(tv.ppf * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 0.5), 40)
         tv.scrollF = Math.max(0, fAt - (x - LABEL_W) / tv.ppf)
-      } else if (e.shiftKey) { // vertical scroll; clamped in draw
-        scrollY = Math.max(0, scrollY + (e.deltaY || e.deltaX))
-      } else tv.scrollF = Math.max(0, tv.scrollF + (e.deltaY + e.deltaX) / tv.ppf)
+      } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) { // time: Shift + wheel, or a sideways trackpad swipe
+        tv.scrollF = Math.max(0, tv.scrollF + (e.shiftKey ? e.deltaY || e.deltaX : e.deltaX) / tv.ppf)
+      } else scrollTo = Math.min(Math.max(scrollTo + (e.deltaMode === 1 ? e.deltaY * ROW_H : e.deltaY), 0), maxScroll()) // plain wheel: rows only, eased in draw (nothing moves when they fit)
       schedule()
     }
 
@@ -387,6 +553,8 @@ export default function SequenceCanvas() {
 
     canvas.addEventListener('mousedown', onDown)
     canvas.addEventListener('mousemove', onMove)
+    const onLeave = () => { if (sbHover || hbHover) { sbHover = hbHover = false; schedule() } }
+    canvas.addEventListener('mouseleave', onLeave)
     canvas.addEventListener('dblclick', onDbl)
     canvas.addEventListener('contextmenu', onContext)
     canvas.addEventListener('wheel', onWheel, { passive: false })
@@ -399,6 +567,7 @@ export default function SequenceCanvas() {
       ro.disconnect(); unsub(); unsubMedia(); unsubPhys(); hover.stop(); cancelAnimationFrame(raf); clearTimeout(timer)
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)
+      canvas.removeEventListener('mouseleave', onLeave)
       canvas.removeEventListener('dblclick', onDbl)
       canvas.removeEventListener('contextmenu', onContext)
       canvas.removeEventListener('wheel', onWheel)
@@ -436,6 +605,7 @@ export default function SequenceCanvas() {
     const t = project.sequence.tracks.find(t => t.id === c.trackId)
     if (t) void runItems((c.itemId ? [c.itemId] : sortedItems(t).map(i => i.id)).map(itemId => ({ actorId: c.actorId, itemId })))
   }
+  const ctxItem = ctx?.itemId ? project.sequence.tracks.find(t => t.id === ctx.trackId)?.items.find(i => i.id === ctx.itemId) ?? null : null
   const rows = project.sequence.tracks.filter(t => t.kind === 'motion' || (isVideo(t) && project.media.length > 0))
   return (
     <div className="tl-body">
@@ -443,20 +613,33 @@ export default function SequenceCanvas() {
       <div className="sr-only">
         {rows.map(t => {
           const name = isVideo(t) ? 'V1 참조영상' : project.actors.find(a => a.id === t.actorId)?.name ?? ''
-          const flag = (f: 'hidden' | 'locked', label: string) =>
-            <button aria-pressed={t[f]} onClick={() => getEditor().getState().setTrackFlag(t.id, f, !t[f])}>{name} {label}</button>
+          const flag = (f: 'hidden' | 'locked' | 'trail', label: string) =>
+            <button aria-pressed={!!t[f]} onClick={() => getEditor().getState().setTrackFlag(t.id, f, !t[f])}>{name} {label}</button>
           const open = !isVideo(t) && expanded.has(t.id)
           return (
             <span key={t.id}>
-              {!isVideo(t) && <button aria-expanded={open} onClick={() => toggle(t.id)}
-                onKeyDown={e => { if (e.key === ' ') e.stopPropagation() }}>{name} 클립 목록</button>}
-              {flag('hidden', '숨기기')}{flag('locked', '잠그기')}
+              {!isVideo(t) && <button aria-expanded={open} onClick={() => toggle(t.id)}>{name} 클립 목록</button>}
+              {!isVideo(t) && flag('trail', '경로 표시')}{flag('hidden', '숨기기')}{flag('locked', '잠그기')}
               {open && sortedItems(t).map(it => (
-                <button key={it.id} onClick={() => { const s = getEditor().getState(); s.selectItem(it.id); s.openItemPreview(it.id) }}
-                  onKeyDown={e => { if (e.key === ' ') e.stopPropagation() }}>
-                  {childLabel(it, project.clips[it.refId]?.name ?? '')} 클립 프리뷰
+                <button key={it.id} onClick={() => { const s = getEditor().getState(); s.selectItem(it.id); s.openItemPreview(it.id) }}>
+                  {childLabel(t, it, project.clips[it.refId]?.name ?? '')} 클립 프리뷰
                 </button>
               ))}
+              {open && sortedItems(t).map(it => (
+                <button key={`h${it.id}`} aria-pressed={!!it.hidden} onClick={() => getEditor().getState().setItemHidden(it.id, !it.hidden)}>
+                  {childLabel(t, it, project.clips[it.refId]?.name ?? '')} 숨기기
+                </button>
+              ))}
+              {open && sortedItems(t).filter(hasEdit).map(it => {
+                const l = childLabel(t, it, project.clips[it.refId]?.name ?? ''), s = () => getEditor().getState()
+                return (
+                  <span key={`e${it.id}`}>
+                    <button aria-pressed={it.use !== 'original'} onClick={() => s().setItemUse(it.id, null)}>{l} 수정본 사용</button>
+                    <button aria-pressed={it.use === 'original'} onClick={() => s().setItemUse(it.id, 'original')}>{l} 원본 사용</button>
+                    <button onClick={() => { s().selectItem(it.id); s().openEditCompare(it.id) }}>{l} 수정 비교</button>
+                  </span>
+                )
+              })}
             </span>
           )
         })}
@@ -473,6 +656,14 @@ export default function SequenceCanvas() {
             }
           }}>
           {ctx.itemId && <button role="menuitem" tabIndex={-1} onClick={() => { closeCtx(false); void runExport(ctx) }}>export하기</button>}
+          {ctxItem && hasEdit(ctxItem) && (['수정본 사용', '원본 사용'] as const).map(l => {
+            const use = l === '원본 사용' ? 'original' : null, on = (ctxItem.use ?? null) === use
+            return <button key={l} role="menuitem" tabIndex={-1} aria-disabled={on} title={on ? '지금 재생·CSV에 쓰는 쪽입니다' : undefined}
+              onClick={() => { if (on) return; closeCtx(false); if (!getEditor().getState().setItemUse(ctxItem.id, use)) seqFlash.fn?.(LOCKED, ctxItem.id) }}>{on ? '● ' : ''}{l}</button>
+          })}
+          {ctxItem && hasEdit(ctxItem) && <button role="menuitem" tabIndex={-1} onClick={() => { closeCtx(false); getEditor().getState().openEditCompare(ctxItem.id) }}>수정 비교</button>}
+          {ctxItem && hasEdit(ctxItem) && <button role="menuitem" tabIndex={-1}
+            onClick={() => { closeCtx(false); if (!getEditor().getState().clearOffset(ctxItem.id)) seqFlash.fn?.(LOCKED, ctxItem.id) }}>수정 지우기</button>}
           <button role="menuitem" tabIndex={-1} aria-disabled={noModel} title={noModel ? '미지원' : undefined}
             onClick={() => { if (noModel) return; closeCtx(false); runPhys(ctx) }}>{ctx.itemId ? '물리 검증' : '트랙 물리 검증'}</button>
         </div>

@@ -42,7 +42,7 @@ export function buildRows(p: Project, defs: RobotDefs, expanded: Set<string>): R
 }
 
 // y is relative to the top of rows[0]; returns clip frames of keys under the point (group rows: every channel key at that frame).
-export function hitKey(rows: Row[], clip: Clip, s: TimeScale, rowH: number, x: number, y: number): { channel: string; f: number }[] | null {
+export function hitKey(rows: Row[], clip: Pick<Clip, 'channels'>, s: TimeScale, rowH: number, x: number, y: number): { channel: string; f: number }[] | null {
   const row = rows[Math.floor(y / rowH)]
   if (!row || y < 0) return null
   const hits: { channel: string; f: number }[] = []

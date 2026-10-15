@@ -3,9 +3,11 @@ import { evalCurve, makeKey } from '../model/curve'
 import { simplifyCurve, simplifyTolerance } from '../model/simplify'
 import { addActor as addActorTo, emptyProject, newProject, nextClipName } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
-import { inCrossfade, resolve, sortedItems, validTrack } from '../model/sequence'
+import { inCrossfade, itemLen, resolve, sortedItems, validTrack } from '../model/sequence'
 import type { Actor, Item, Clip, Curve, Interp, Project, Tan, Track } from '../model/types'
 import { validVideoTrack, videoTrack } from '../model/video'
+import { offsetKeyCount } from '../model/itemClip'
+import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP } from '../model/restPose'
 import type { RobotKind } from '../robot/types'
 import type { PhysicsSettings } from '../physics/settings'
 
@@ -24,7 +26,17 @@ export interface EditorState {
   openComparePane(clipId: string): void; closeComparePane(clipId: string): void
   itemPreview: string | null // item id looping in the clip preview pane: not undoable, not saved, pruned when the item goes away
   openItemPreview(itemId: string): void; closeItemPreview(): void
+  /** The item preview shows the piece's 수정본 while the main view shows that piece as the original (원본 | 수정본 비교).
+   *  Falls back to the clip preview when the piece loses its 수정 층. */
+  previewEdit: boolean; openEditCompare(itemId: string): void
+  compareOverlay: boolean; setCompareOverlay(on: boolean): void // 겹쳐 보기: the 수정본 as a ghost on the main view while comparing
+  /** 원본 사용 ('original') or the 수정본 (null) for playback, CSV and physics; one undo step; false = unknown / locked / no 수정 층. */
+  setItemUse(itemId: string, use: 'original' | null): boolean
   setFrame(f: number): void; setPlaying(b: boolean): void; toggleAutoKey(): void; setView(v: 'tracks' | 'graph'): void
+  // What edits go to (editor state, not saved): 'piece' = the piece's 수정 층 (Item.offset; clip untouched, no 자동 키 needed),
+  // 'clip' = the shared clip itself (needs 자동 키). Key actions below take a clip id or, for a 수정 층, the item id.
+  layer: 'piece' | 'clip'; setLayer(l: 'piece' | 'clip'): void
+  clearOffset(itemId: string): boolean // drop the piece's whole 수정 층 (one undo step); false = none / locked
   select(actorId: string | null, channel?: string | null): void; selectKeys(keys: KeyRef[], additive: boolean): void
   setValue(actorId: string, channel: string, v: number): void
   setKey(clipId: string, channel: string, f: number, v: number): void
@@ -33,7 +45,8 @@ export interface EditorState {
   setInterp(clipId: string, keys: KeyRef[], interp: Interp): void
   setTangent(clipId: string, channel: string, f: number, side: 'in' | 'out', t: Tan, linked: boolean): void
   keyGroup(actorId: string, group: string): void
-  setTrackFlag(trackId: string, flag: 'hidden' | 'locked', on: boolean): void
+  setTrackFlag(trackId: string, flag: 'hidden' | 'locked' | 'trail', on: boolean): void // trail: 경로 표시 (display only, also on a locked track)
+  setItemHidden(itemId: string, on: boolean): void // display only, also on a locked track (like the track's 숨기기)
   setClip(clipId: string, patch: { name?: string; length?: number }): boolean
   setPlacement(actorId: string, pl: Partial<Actor['placement']>): void
   setColor(actorId: string, hex: string): void
@@ -58,9 +71,15 @@ export interface EditorState {
   splitItem(itemId: string, frame: number): boolean
   deleteItem(itemId: string): boolean
   // Flag an item so its clip preview and CSV export start from the standing pose (clips and sequence playback untouched); false = rejected.
-  setRestPose(itemId: string, on: boolean): boolean
+  // mode true = 덮어쓰기, 'prepend' = 덧붙이기, null = off.
+  setRestPose(itemId: string, mode: Item['restPose'] | null): boolean
+  setRestTail(itemId: string, on: boolean): boolean
+  /** 덧붙이기 lead-in lengths of a piece, in frames (rounded, clamped); null = back to the default / auto. One undo step. */
+  setRestLead(itemId: string, patch: { restHold?: number | null; restBlend?: number | 'auto' | null; inertia?: number | null }): boolean
   setPhysics(next: PhysicsSettings): void // project-wide physics-assist settings: one undo step
   beginGesture(): void; endGesture(): void
+  // Drop the current gesture's changes (back to the pre-gesture project, nothing on redo); no-op outside a gesture.
+  cancelGesture(): void
   fileName: string | null; dirty: boolean
   loadProject(p: Project, fileName: string | null): void; markSaved(fileName: string): void; newProjectFile(): void
   undo(): void; redo(): void
@@ -70,8 +89,31 @@ const MAX_UNDO = 200
 const ROOT = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw']
 
 // Lock rules: an actor's motion track locked; a clip is locked if ANY item referencing it sits on a locked track.
+// Put `clip` in the draft's assets, renaming it `name_2`, `name_3`… if its robot already has that name.
+function addUniqueClip(p: Project, clip: Clip) {
+  const taken = new Set(Object.values(p.clips).filter(c => c.robot === clip.robot).map(c => c.name))
+  let name = clip.name
+  for (let n = 2; taken.has(name); n++) name = `${clip.name}_${n}`
+  p.clips[clip.id] = { ...clip, name }
+}
 export const trackLocked = (p: Project, actorId: string) => p.sequence.tracks.some(t => t.kind === 'motion' && t.actorId === actorId && t.locked)
-export const clipLocked = (p: Project, clipId: string) => p.sequence.tracks.some(t => t.locked && t.items.some(i => i.refId === clipId))
+// (also takes an item id: that piece's 수정 층 is locked with its track)
+export const clipLocked = (p: Project, clipId: string) => p.sequence.tracks.some(t => t.locked && t.items.some(i => i.refId === clipId || i.id === clipId))
+
+// Curves a key action edits: a clip's channels, or an item's 수정 층 (deltas, clip frames, length of its clip). Read only.
+export function keyOwner(p: Project, id: string): { channels: Record<string, Curve>; length: number; robot: RobotKind; offset: boolean } | null {
+  const clip = p.clips[id]
+  if (clip) return { channels: clip.channels, length: clip.length, robot: clip.robot, offset: false }
+  for (const t of p.sequence.tracks) for (const it of t.items) if (it.id === id && p.clips[it.refId])
+    return { channels: it.offset ?? {}, length: p.clips[it.refId].length, robot: p.clips[it.refId].robot, offset: true }
+  return null
+}
+
+// editTarget plus the key owner for the current layer (the clip, or the item for its 수정 층).
+export function keyTarget(s: Pick<EditorState, 'project' | 'frame' | 'editing' | 'layer'>, actorId: string) {
+  const t = editTarget(s, actorId)
+  return t && { ...t, owner: s.layer === 'piece' ? t.itemId : t.clipId }
+}
 
 // Which clip and clip frame edits for `actorId` go to. Clip view: the open item (trims ignored); else the item covering the frame.
 export function editTarget(s: Pick<EditorState, 'project' | 'frame' | 'editing'>, actorId: string):
@@ -116,9 +158,11 @@ export function editLock(s: Pick<EditorState, 'project' | 'frame' | 'editing'>, 
 
 // Stage gizmo lock for the selected channel. The root gizmo moves x/y/yaw together, so any root channel uses root.x
 // (a z/roll/pitch selection still locks it on a stitch frame; splitting handles is out of scope).
-export function gizmoLock(s: Pick<EditorState, 'project' | 'frame' | 'editing' | 'sel'>): 'crossfade' | 'stitch' | null {
+export function gizmoLock(s: Pick<EditorState, 'project' | 'frame' | 'editing' | 'sel'> & Partial<Pick<EditorState, 'itemPreview' | 'previewEdit'>>): 'crossfade' | 'stitch' | 'compare' | null {
   const { actorId, channel } = s.sel
   if (!actorId || !channel || channel.startsWith('group:')) return null
+  // 원본 | 수정본 비교: the main view shows this piece as the original, so its gizmo would edit what is not shown
+  if (s.previewEdit && s.itemPreview && editTarget(s, actorId)?.itemId === s.itemPreview) return 'compare'
   return editLock(s, actorId, channel.startsWith('root') ? 'root.x' : channel)
 }
 
@@ -151,16 +195,26 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
     let undoS: Project[] = [], redoS: Project[] = []
     let gesture = false // edits inside a gesture share one undo entry
     let gestureMoved = false // the gesture has committed (pushed its undo entry, cleared redo)
+    let suspended = false // undo hit mid-gesture: the rest of that gesture's edits are dropped until endGesture
 
     // One user action = one undo entry: mutate a clone, push the old project. In a gesture only the first change pushes.
     const commit = (next: Project) => {
+      if (suspended) return
+      for (const t of next.sequence.tracks) for (const it of t.items) if (it.offset) { // no empty 수정 층 left behind
+        for (const [n, c] of Object.entries(it.offset)) if (!c.keys.length) delete it.offset[n]
+        if (!Object.keys(it.offset).length) delete it.offset
+      }
       if (!gesture || !gestureMoved) { undoS = [...undoS, get().project].slice(-MAX_UNDO); redoS = [] }
       if (gesture) gestureMoved = true
-      set({ project: freezeClips(next), editing: keepEditing(next), dirty: true, comparePanes: keepPanes(next), itemPreview: keepPreview(next) })
+      set({ project: freezeClips(next), editing: keepEditing(next), dirty: true, comparePanes: keepPanes(next), itemPreview: keepPreview(next), previewEdit: keepEdit(next) })
     }
     const keepPanes = (p: Project) => {
       const c = get().comparePanes, k = c.filter(id => id in p.clips)
       return k.length === c.length ? c : k
+    }
+    const keepEdit = (p: Project) => { // 수정본 비교 stays only while the previewed piece still has a 수정 층
+      const id = get().itemPreview, f = id ? findItem(p, id) : null
+      return get().previewEdit && !!f && offsetKeyCount(f.it) > 0
     }
     const keepPreview = (p: Project) => {
       const id = get().itemPreview
@@ -207,16 +261,24 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
     const validItems = (p: Project, t: Track) => t.kind === 'video' ? validVideoTrack(t.items, Object.fromEntries(p.media.map(m => [m.id, m]))) : validTrack(t.items)
     const refLen = (p: Project, t: Track, it: Item) => t.kind === 'video' ? p.media.find(m => m.id === it.refId)?.durationF ?? 0 : p.clips[it.refId].length
 
-    const putKey = (clip: Clip, channel: string, f: number, v: number) => {
+    // Writable curves of a key owner in the draft: a clip's channels, or an item's 수정 층 (created on demand, emptied ones dropped on commit).
+    type Owner = { channels: Record<string, Curve>; length: number; robot: RobotKind; offset: boolean }
+    const ownerOf = (p: Project, id: string): Owner | null => {
+      const clip = p.clips[id]
+      if (clip) return { channels: clip.channels, length: clip.length, robot: clip.robot, offset: false }
+      const it = findItem(p, id)?.it, c = it && p.clips[it.refId]
+      return it && c ? { channels: (it.offset ??= {}), length: c.length, robot: c.robot, offset: true } : null
+    }
+    const putKey = (clip: Owner | Clip, channel: string, f: number, v: number) => {
       const j = defs[clip.robot].joints.find(j => j.name === channel)
-      if (j) v = Math.min(Math.max(v, j.lower), j.upper)
+      if (j && !('offset' in clip && clip.offset)) v = Math.min(Math.max(v, j.lower), j.upper) // deltas: the sum is clamped when baked
       f = Math.min(Math.max(Math.round(f), 0), clip.length - 1)
       const keys = (clip.channels[channel] ??= { keys: [] }).keys
       const k = keys.find(k => k.f === f)
       if (k) k.v = v
       else { keys.push(makeKey(f, v)); keys.sort((a, b) => a.f - b.f) }
     }
-    const findKey = (clip: Clip, r: KeyRef) => clip.channels[r.channel]?.keys.find(k => k.f === r.f)
+    const findKey = (clip: Owner, r: KeyRef) => clip.channels[r.channel]?.keys.find(k => k.f === r.f)
 
     return {
       selItem: null, selectItem: selItem => set({ selItem }),
@@ -240,6 +302,15 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       setFrame: frame => set({ frame }),
       setPlaying: playing => set({ playing }),
       toggleAutoKey: () => set(s => ({ autoKey: !s.autoKey })),
+      layer: 'piece',
+      setLayer: layer => set(s => s.layer === layer ? s : { layer, sel: { ...s.sel, keys: [] } }),
+      clearOffset: itemId => tryEdit(p => {
+        const f = findItem(p, itemId)
+        if (!f || f.t.locked || !f.it.offset) return false
+        delete f.it.offset
+        set(s => ({ sel: { ...s.sel, keys: [] } }))
+        return true
+      }),
       setView: view => set({ view }),
       videoMode: 'overlay', videoOpacity: 0.5,
       setVideoMode: videoMode => set({ videoMode }),
@@ -247,9 +318,17 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       comparePanes: [],
       openComparePane: id => set(s => s.comparePanes.includes(id) || !s.project.clips[id] ? s : { comparePanes: [...s.comparePanes, id].slice(-2) }),
       closeComparePane: id => set(s => ({ comparePanes: s.comparePanes.filter(x => x !== id) })),
-      itemPreview: null,
-      openItemPreview: id => { if (findItem(get().project, id)) set({ itemPreview: id }) },
-      closeItemPreview: () => set({ itemPreview: null }),
+      itemPreview: null, previewEdit: false, compareOverlay: false,
+      setCompareOverlay: on => set({ compareOverlay: on }),
+      openItemPreview: id => { if (findItem(get().project, id)) set({ itemPreview: id, previewEdit: false }) },
+      closeItemPreview: () => set({ itemPreview: null, previewEdit: false }),
+      openEditCompare: id => { const f = findItem(get().project, id); if (f && offsetKeyCount(f.it)) set({ itemPreview: id, previewEdit: true }) },
+      setItemUse: (itemId, use) => tryEdit(p => {
+        const f = findItem(p, itemId)
+        if (!f || f.t.locked || f.t.kind !== 'motion' || (use && !offsetKeyCount(f.it))) return false
+        if (use) f.it.use = use; else delete f.it.use
+        return true
+      }),
       select: (actorId, channel = null) => {
         const e = editingItem(get())
         if (e && actorId && actorId !== e.actorId) return // other actors are ghosts in clip view
@@ -263,14 +342,20 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         return { sel: { ...s.sel, keys: [...base, ...add] } }
       }),
       setValue: (actorId, channel, v) => {
-        if (!get().autoKey) return
-        const t = editTarget(get(), actorId)
-        if (!t || editLock(get(), actorId, channel) || trackLocked(get().project, actorId)) return
-        get().setKey(t.clipId, channel, t.f, v)
+        const s = get()
+        if (s.layer === 'clip' && !s.autoKey) return
+        const t = editTarget(s, actorId)
+        if (!t || editLock(s, actorId, channel) || trackLocked(s.project, actorId)) return
+        if (s.layer === 'clip') return s.setKey(t.clipId, channel, t.f, v)
+        // 수정 층: key the difference from the clip, so this piece shows v here (joints clamped like a clip key)
+        const clip = s.project.clips[t.clipId], def = defs[clip.robot], j = def.joints.find(j => j.name === channel)
+        if (j) v = Math.min(Math.max(v, j.lower), j.upper)
+        s.setKey(t.itemId, channel, t.f, v - evalCurve(clip.channels[channel] ?? { keys: [] }, t.f, channel === 'root.z' ? def.standingHeight : 0))
       },
-      setKey: (clipId, channel, f, v) => clipLocked(get().project, clipId) ? undefined : edit(p => putKey(p.clips[clipId], channel, f, v), [{ clipId, channels: [channel] }]),
+      setKey: (clipId, channel, f, v) => clipLocked(get().project, clipId) ? undefined : edit(p => { const o = ownerOf(p, clipId); if (o) putKey(o, channel, f, v) }, [{ clipId, channels: [channel] }]),
       deleteKeys: (clipId, keys) => clipLocked(get().project, clipId) ? undefined : edit(p => {
-        const clip = p.clips[clipId]
+        const clip = ownerOf(p, clipId)
+        if (!clip) return
         for (const r of keys) {
           const c = clip.channels[r.channel]
           if (c) c.keys = c.keys.filter(k => k.f !== r.f)
@@ -281,7 +366,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         if (clipLocked(get().project, clipId)) return
         const moved: KeyRef[] = []
         edit(p => {
-          const clip = p.clips[clipId]
+          const clip = ownerOf(p, clipId)
+          if (!clip) return
           const d = clampDf(clip.length, keys, df)
           for (const channel of new Set(keys.map(k => k.channel))) {
             const c = clip.channels[channel]
@@ -299,14 +385,14 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       },
       setInterp: (clipId, keys, interp) => clipLocked(get().project, clipId) ? undefined : edit(p => {
         for (const r of keys) {
-          const k = findKey(p.clips[clipId], r)
+          const o = ownerOf(p, clipId), k = o && findKey(o, r)
           if (!k) continue
           k.interp = interp
           if (interp === 'bezier') { k.inTan.dv = 0; k.outTan.dv = 0 }
         }
       }, [{ clipId, channels: chans(keys) }]),
       setTangent: (clipId, channel, f, side, t, linked) => clipLocked(get().project, clipId) ? undefined : edit(p => {
-        const k = findKey(p.clips[clipId], { channel, f })
+        const o = ownerOf(p, clipId), k = o && findKey(o, { channel, f })
         if (!k) return
         const [mine, other] = side === 'out' ? [k.outTan, k.inTan] : [k.inTan, k.outTan]
         mine.df = t.df; mine.dv = t.dv
@@ -316,12 +402,16 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         const actor = get().project.actors.find(a => a.id === actorId)
         if (!actor) return // stale id: the actor may have been removed with its last clip
         const def = defs[actor.robot]
-        const t = editTarget(get(), actorId)
+        const t = keyTarget(get(), actorId)
         if (!t || trackLocked(get().project, actorId) || clipLocked(get().project, t.clipId)) return
         const { clipId, f } = t
         const names = group === '루트' ? ROOT : def.groups.find(g => g.name === group)?.joints
         if (!names) throw new Error(`unknown group ${group}`)
         if (names.some(n => editLock(get(), actorId, n))) return
+        if (t.owner !== clipId) { // 수정 층: key every channel at its current difference
+          edit(p => { const o = ownerOf(p, t.owner)!; for (const n of names) putKey(o, n, f, evalCurve(o.channels[n] ?? { keys: [] }, f, 0)) }, [])
+          return
+        }
         edit(p => {
           const clip = p.clips[clipId]
           const pose = evaluateClip(clip, def, f)
@@ -334,7 +424,14 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         }, [{ clipId, channels: names }])
       },
       setPhysics: next => edit(p => { p.physics = next }, []),
-      setTrackFlag: (trackId, flag, on) => edit(p => { const t = p.sequence.tracks.find(t => t.id === trackId); if (t) t[flag] = on }, []),
+      setTrackFlag: (trackId, flag, on) => edit(p => {
+        const t = p.sequence.tracks.find(t => t.id === trackId)
+        if (!t) return
+        if (flag !== 'trail') t[flag] = on
+        else if (on && t.kind === 'motion') t.trail = true
+        else delete t.trail
+      }, []),
+      setItemHidden: (itemId, on) => edit(p => { const it = findItem(p, itemId)?.it; if (it) { if (on) it.hidden = true; else delete it.hidden } }, []),
       setClip: (clipId, patch) => {
         if (clipLocked(get().project, clipId)) return false
         const name = patch.name?.trim() || undefined
@@ -356,6 +453,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
           for (const t of p.sequence.tracks) {
             let hit = false
             for (const it of t.items) if (it.refId === clipId) {
+              if (it.offset) for (const c of Object.values(it.offset)) c.keys = c.keys.filter(k => k.f <= len - 1)
               it.trimOut = it.trimOut === old ? len : Math.min(it.trimOut, len)
               it.trimIn = Math.min(it.trimIn, it.trimOut - 1)
               hit = true
@@ -382,10 +480,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         tryEdit(p => {
           const exists = p.actors.some(a => a.robot === clip.robot)
           if (!exists) Object.assign(p, addActorTo(p, clip.robot, false))
-          const taken = new Set(Object.values(p.clips).filter(c => c.robot === clip.robot).map(c => c.name))
-          let name = clip.name
-          for (let n = 2; taken.has(name); n++) name = `${clip.name}_${n}`
-          p.clips[clip.id] = { ...clip, name }
+          addUniqueClip(p, clip)
           if (exists) return true
           const actor = p.actors.at(-1)!, track = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actor.id)!
           const item = { id: crypto.randomUUID(), refId: clip.id, start: 0, trimIn: 0, trimOut: clip.length }
@@ -478,6 +573,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         const it = f.it, cut = Math.round(frame) - it.start + it.trimIn
         if (!(cut > it.trimIn && cut < it.trimOut)) return false
         const right: Item = { id: crypto.randomUUID(), refId: it.refId, start: Math.round(frame), trimIn: cut, trimOut: it.trimOut }
+        if (it.offset) right.offset = structuredClone(it.offset) // clip frames: each piece keeps the part under it
+        if (f.t.kind === 'motion') { it.restTail ??= true; right.restTail = true } // 끝 기본자세 on both pieces (user: every cut ends each piece standing); one turned off stays off
         it.trimOut = cut
         f.t.items.push(right)
         return validItems(p, f.t)
@@ -500,38 +597,69 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         }))
         return ok
       },
-      setRestPose: (itemId, on) => tryEdit(p => {
+      setRestPose: (itemId, mode) => tryEdit(p => {
         const f = findItem(p, itemId)
         if (!f || f.t.locked || f.t.kind !== 'motion') return false
-        if (on) f.it.restPose = true; else delete f.it.restPose
+        if (mode) f.it.restPose = mode; else delete f.it.restPose
+        return true
+      }),
+      setRestTail: (itemId, on) => tryEdit(p => {
+        const f = findItem(p, itemId)
+        if (!f || f.t.locked || f.t.kind !== 'motion') return false
+        f.it.restTail = on // false: turned off (a later cut keeps it off)
+        return true
+      }),
+      setRestLead: (itemId, patch) => tryEdit(p => {
+        const f = findItem(p, itemId)
+        if (!f || f.t.locked || f.t.kind !== 'motion') return false
+        const lim = { restHold: HOLD_RANGE, restBlend: BLEND_RANGE, inertia: [0, Math.min(INERTIA_CAP, f.it.trimIn)] } as const
+        for (const k of ['restHold', 'restBlend', 'inertia'] as const) {
+          const v = patch[k]
+          if (v === undefined) continue
+          if (v === null) delete f.it[k]
+          else if (v === 'auto') f.it.restBlend = 'auto'
+          else if (Number.isFinite(v)) f.it[k] = Math.min(Math.max(Math.round(v), lim[k][0]), lim[k][1])
+          else return false
+        }
         return true
       }),
       fileName: null, dirty: false,
       loadProject: (project, fileName) => {
         generation++
-        undoS = []; redoS = []; gesture = false; gestureMoved = false
-        set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] }, comparePanes: [], itemPreview: null })
+        undoS = []; redoS = []; gesture = false; gestureMoved = false; suspended = false
+        set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] }, comparePanes: [], itemPreview: null, previewEdit: false })
       },
       markSaved: fileName => set({ fileName, dirty: false }),
       newProjectFile: () => get().loadProject(emptyProject(), null),
       beginGesture: () => {
         if (gesture) return
-        gesture = true; gestureMoved = false // undo entry + redo clear wait for the first commit
+        gesture = true; gestureMoved = false; suspended = false // undo entry + redo clear wait for the first commit
       },
-      endGesture: () => { gesture = false },
+      endGesture: () => { gesture = false; suspended = false },
+      cancelGesture: () => {
+        if (!gesture) return
+        const moved = gestureMoved
+        gesture = false; gestureMoved = false
+        const prev = undoS.at(-1)
+        if (!moved || !prev) return
+        undoS = undoS.slice(0, -1)
+        set(s => ({ project: prev, editing: keepEditing(prev), dirty: true, sel: { ...s.sel, keys: [] }, comparePanes: keepPanes(prev), itemPreview: keepPreview(prev), previewEdit: keepEdit(prev) }))
+      },
       undo: () => {
-        get().endGesture()
+        // Mid-gesture (slider, gizmo, tangent drag): cancel just that gesture; its remaining edits are dropped.
+        if (gesture) { get().cancelGesture(); suspended = true; return }
+        if (suspended) return
         const prev = undoS.at(-1)
         if (!prev) return
         undoS = undoS.slice(0, -1); redoS = [...redoS, get().project]
-        set(s => ({ project: prev, editing: keepEditing(prev), dirty: true, sel: { ...s.sel, keys: [] }, comparePanes: keepPanes(prev), itemPreview: keepPreview(prev) }))
+        set(s => ({ project: prev, editing: keepEditing(prev), dirty: true, sel: { ...s.sel, keys: [] }, comparePanes: keepPanes(prev), itemPreview: keepPreview(prev), previewEdit: keepEdit(prev) }))
       },
       redo: () => {
-        get().endGesture()
+        if (gesture || suspended) return
         const next = redoS.at(-1)
         if (!next) return
         redoS = redoS.slice(0, -1); undoS = [...undoS, get().project]
-        set(s => ({ project: next, editing: keepEditing(next), dirty: true, sel: { ...s.sel, keys: [] }, comparePanes: keepPanes(next), itemPreview: keepPreview(next) }))
+        set(s => ({ project: next, editing: keepEditing(next), dirty: true, sel: { ...s.sel, keys: [] }, comparePanes: keepPanes(next), itemPreview: keepPreview(next), previewEdit: keepEdit(next) }))
       },
     }
   })

@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import { test, expect, type Download, type Page } from '@playwright/test'
 
 const menu = async (page: Page, name: string) => {
-  await page.getByRole('button', { name: '파일', exact: true }).click()
+  await page.getByRole('button', { name: '메뉴', exact: true }).click()
   await page.getByRole('menuitem', { name, exact: true }).click()
 }
 
@@ -90,14 +90,20 @@ test('headed CSV import creates the G1 actor; export reproduces the input', asyn
   expect(errors).toEqual([])
 })
 
-test('파일 menu: keyboard navigation and focus return', async ({ page }) => {
+test('메뉴 menu: keyboard navigation and focus return', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
-  const trigger = page.getByRole('button', { name: '파일', exact: true })
+  const trigger = page.getByRole('button', { name: '메뉴', exact: true })
   const items = page.getByRole('menuitem')
   const focused = () => page.evaluate(() => document.activeElement?.textContent?.replace(/Ctrl.*/, ''))
   const playing = () => page.evaluate(() => (window as any).__editor.getState().playing)
   await trigger.focus()
+  await page.keyboard.press('Space') // on the focused 메뉴 button: play/pause, the menu stays shut
+  expect(await playing()).toBe(true)
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  await page.keyboard.press('Space')
+  expect(await playing()).toBe(false)
+  await expect(trigger).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(trigger).toHaveAttribute('aria-expanded', 'true')
   await expect(items).toHaveCount(8)
@@ -109,9 +115,12 @@ test('파일 menu: keyboard navigation and focus return', async ({ page }) => {
   expect(await focused()).toBe('열기')
   await page.keyboard.press('End')
   expect(await focused()).toBe('내보내기')
-  await page.keyboard.press('Space') // activates the item, not a global play toggle
-  await expect(page.locator('dialog.exp[open]')).toHaveCount(1)
+  await page.keyboard.press('Space') // Space is always play/pause, even inside the menu
+  expect(await playing()).toBe(true)
+  await page.keyboard.press('Space')
   expect(await playing()).toBe(false)
+  await page.keyboard.press('Enter') // Enter activates the item
+  await expect(page.locator('dialog.exp[open]')).toHaveCount(1)
   await page.keyboard.press('Escape')
   await expect(page.locator('dialog.exp[open]')).toHaveCount(0)
   await trigger.focus()
