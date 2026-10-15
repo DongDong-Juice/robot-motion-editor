@@ -1,5 +1,7 @@
 # MuJoCo 물리 검증 (골반 보조력 지표) Implementation Plan
 
+> **상태 (2026-10-12):** 완료 · `master` 머지됨. 아래 체크박스는 작업 중 갱신하지 않았음 — 진행 기록은 git 이력을 볼 것.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 시퀀스 조각을 MuJoCo WASM(관절 PD 500 Hz + 골반 보조 렌치)으로 시뮬레이션해서 프레임별 "체중 대비 보조력 %"를 타임라인에 그리고, 내보내기 경고 목록에 넣는다.
