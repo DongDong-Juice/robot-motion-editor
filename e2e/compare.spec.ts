@@ -36,6 +36,12 @@ test('compare: second CSV is an asset only; 비교 opens a preview pane without 
   await expect.poll(() => pane.locator('canvas').evaluate(c => c.getBoundingClientRect().width)).toBeGreaterThan(0)
   expect(await motionTracks(page)).toBe(1)
   expect(await page.evaluate(() => { const s = (window as any).__editor.getState(); return s.project === (window as any).__p0 && s.dirty === (window as any).__d0 })).toBe(true)
+  // it plays on its own loop, whatever the sequence does (stopped here)
+  const pose = () => page.evaluate(() => { const w = (window as any), st = w.__stages, k = Object.keys(st).find(k => k !== 'main' && k !== 'preview')!
+    return ([...st[k].entries().values()][0] as any).rig.jointPivots.left_knee_joint.quaternion.toArray().join() })
+  expect(await page.evaluate(() => (window as any).__editor.getState().playing)).toBe(false)
+  const p0 = await pose()
+  await expect.poll(pose).not.toBe(p0)
   const main = page.getByRole('region', { name: '로봇 프리뷰' }).locator('canvas')
   expect(await main.evaluate(c => c.getBoundingClientRect().width)).toBeGreaterThan(0)
 

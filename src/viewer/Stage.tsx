@@ -231,10 +231,10 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       // item preview follows the main playhead: range frame lo shows at the item start, or (기본자세 덧붙이기) 1.5 s before it,
       // where the timeline draws the lead-in, so preview, lane, physics graph and CSV rows line up; clamped to the range outside it
       const it = itemId ? s.project.sequence.tracks.flatMap(t => t.items).find(i => i.id === itemId) : undefined
-      const f = !ranged ? s.frame
+      const f = !ranged ? Math.floor((performance.now() - t0) * 60 / 1000) % Math.max(clip.length, 1) // ⇄ 비교: its own loop, not the sequence (user)
         : it ? lo + Math.min(Math.max(s.frame - it.start + (itemLead(s.project, s.defs, it)?.lead ?? 0), 0), hi - lo - 1)
         : lo + Math.floor((performance.now() - t0) * 60 / 1000) % Math.max(hi - lo, 1)
-      if (ranged && f === shownF) return
+      if (f === shownF) return
       shownF = f
       const pose = clipPose(clip, s.defs[clip.robot], Math.min(Math.max(f, 0), clip.length - 1))
       e.rig.applyPose(pose)
@@ -500,7 +500,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
         if (cid) for (const e of entries.values()) e.trail.visible = shownTrail
         dirty = true
       }
-      if (ranged) applyClip()
+      if (cid) applyClip() // panes play on their own (item preview: its own playhead; ⇄ 비교: a loop)
       followCam()
       if (!dirty) return
       dirty = false
