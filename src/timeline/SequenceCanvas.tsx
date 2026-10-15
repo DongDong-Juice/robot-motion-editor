@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { trackDrag } from './drag'
 import { getEditor, useEditor } from '../store/store'
 import { itemLen, sortedItems, pieceName, pieceTag } from '../model/sequence'
-import { itemLead, itemTail, REST_BLEND, REST_HOLD } from '../model/restPose'
+import { itemLead, itemTail, previewRange, REST_BLEND, REST_HOLD } from '../model/restPose'
 import type { Item, Track } from '../model/types'
 import { offsetKeyCount } from '../model/itemClip'
 import { seqFlash, tv } from './viewState'
@@ -303,6 +303,10 @@ export default function SequenceCanvas() {
       drawRuler(ctx, sc, W, RULER_H, s.project.sequence, s.frame, C, true)
       const px = Math.round(frameToX(sc, s.frame)) + 0.5
       if (px >= LABEL_W) { ctx.fillStyle = C.accent; ctx.fillRect(px - 0.5, RULER_H, 1, H - RULER_H) }
+      if (s.itemPreview) { // the clip preview's own playhead
+        const qx = Math.round(frameToX(sc, s.previewFrame)) + 0.5
+        if (qx >= LABEL_W) { ctx.save(); ctx.strokeStyle = C.text; ctx.globalAlpha = 0.6; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(qx, RULER_H); ctx.lineTo(qx, H); ctx.stroke(); ctx.restore() }
+      }
       ctx.fillStyle = C.line; ctx.fillRect(LABEL_W - 1, 0, 1, H)
       const sb = sbar()
       if (sb) drawScrollbar(ctx, W, sb, sbHover, sbDrag, C)
@@ -366,7 +370,7 @@ export default function SequenceCanvas() {
       if (r?.it && x < LABEL_W) { // lane label: select the piece and preview it
         s.selectItem(r.it.id)
         if (r.t.actorId) s.select(r.t.actorId)
-        s.openItemPreview(r.it.id)
+        s.openItemPreview(r.it.id, true)
         return
       }
       if (x < LABEL_W) {
@@ -399,7 +403,7 @@ export default function SequenceCanvas() {
       }, m => {
         const df = Math.round((pos(m).x - x) / tv.ppf), st = ed.getState()
         drag = null
-        if (df === 0 && r?.it) st.openItemPreview(it.id) // a click on a lane bar also previews that piece
+        if (df === 0 && r?.it) st.openItemPreview(it.id, true) // a click on a lane bar also previews (and plays) that piece
         if (df !== 0) {
           const ok = mode === 'move' ? st.moveItem(it.id, Math.max(0, it.start + df)) : st.trimItem(it.id, mode, df)
           if (!ok) flash(t.locked ? LOCKED : DENY, row)
@@ -456,8 +460,8 @@ export default function SequenceCanvas() {
     const laneTip = (t: Track, it: Item) => {
       const s = ed.getState(), { st, old } = phys(t, it), ld = it.restPose === 'prepend' ? leadOf(it) : null
       return childLabel(t, it, s.project.clips[it.refId]?.name ?? '') + treeSuffix(st, old).replace(/^ · /, '\n물리 검증: ')
-        + (ld?.why === 'review' ? '\n관성 검토 필요' : '') + (it.restTail ? '\n끝 기본자세 (전이 · 정지 0.5초)' : '') +(it.noOriginal ? '\n원본 삭제됨 · 수정본만 재생·CSV' : hasEdit(it) ? `\n재생·CSV: ${it.use === 'original' ? '원본' : '수정본'}\nDelete: 원본만 지움 (수정본은 남음)` : '')
-        + (it.id === s.itemPreview ? (s.previewEdit ? '\n수정 비교 중' : '\n클립 프리뷰에서 보는 중') : '')
+        + (ld?.why === 'review' ? '\n관성 검토 필요' : '') + (it.restTail ? '\n끝 기본자세 (전이 · 정지 0.5초)' : '') + (hasEdit(it) ? `\n수정됨 · 수정 키 ${offsetKeyCount(it)}개 (클립 프리뷰에서 고침 · 우클릭: 수정 지우기)` : '')
+        + (it.id === s.itemPreview ? '\n클립 프리뷰에서 보는 중' : '')
     }
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()

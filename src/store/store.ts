@@ -8,7 +8,7 @@ import type { Actor, Item, Clip, Curve, Interp, Project, Tan, Track } from '../m
 import { validVideoTrack, videoTrack } from '../model/video'
 import { baseClip, offsetKeyCount } from '../model/itemClip'
 import { addOverRange, type Range } from '../model/rangeEdit'
-import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP } from '../model/restPose'
+import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP, previewRange } from '../model/restPose'
 import type { RobotKind } from '../robot/types'
 import type { PhysicsSettings } from '../physics/settings'
 
@@ -23,7 +23,7 @@ export const OFFSET_EASE = 15
 export type { Range } from '../model/rangeEdit'
 // 클립 편집 모드's virtual actor and piece (never in the project): the clip at 0, full length, at the stage origin
 export const CLIP_ACTOR = '__clip_actor__', CLIP_ITEM = '__clip_item__'
-type ClipEditPick = Partial<Pick<EditorState, 'clipEdit'>>
+type ClipEditPick = Partial<Pick<EditorState, 'clipEdit' | 'itemPreview' | 'previewFrame'>>
 /** The actor an id stands for: a project actor, or (클립 편집 모드) the virtual one for the open clip. */
 export function actorOf(s: Pick<EditorState, 'project'> & ClipEditPick, id: string | null): Actor | undefined {
   if (!id) return undefined
@@ -42,7 +42,10 @@ export interface EditorState {
   comparePanes: string[] // clip ids shown in preview-only compare panes (max 2): not undoable, not saved, pruned when clips go away
   openComparePane(clipId: string): void; closeComparePane(clipId: string): void
   itemPreview: string | null // item id looping in the clip preview pane: not undoable, not saved, pruned when the item goes away
-  openItemPreview(itemId: string): void; closeItemPreview(): void
+  /** The clip preview's own playhead (sequence frames, from the piece's lead-in start; independent of `frame`, user) and whether it
+   *  plays (looping over the piece). Edits of the previewed piece go to this frame. */
+  previewFrame: number; previewPlaying: boolean; setPreviewFrame(f: number): void; setPreviewPlaying(on: boolean): void
+  openItemPreview(itemId: string, play?: boolean): void; closeItemPreview(): void // its own playhead from the piece's lead-in start; play: start it
   /** The item preview shows the piece's 수정본 while the main view shows that piece as the original (원본 | 수정본 비교).
    *  Falls back to the clip preview when the piece loses its 수정 층. */
   previewEdit: boolean; openEditCompare(itemId: string): void
@@ -172,6 +175,9 @@ export function editTarget(s: Pick<EditorState, 'project' | 'frame' | 'editing'>
   }
   const track = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actorId)
   if (!track) return null
+  // the piece open in the clip preview is edited at the preview's own playhead (inside the piece: its lead-in / 끝 기본자세 clamp)
+  const pv = s.itemPreview != null && s.previewFrame != null ? track.items.find(i => i.id === s.itemPreview) : undefined
+  if (pv) return { clipId: pv.refId, f: Math.min(Math.max(Math.round(s.previewFrame!) - pv.start, 0), pv.trimOut - pv.trimIn - 1) + pv.trimIn, itemId: pv.id }
   const items = sortedItems(track)
   const cover = items.filter(i => s.frame >= i.start && s.frame < i.start + (i.trimOut - i.trimIn)).at(-1) // later item wins on overlap
   if (cover) return { clipId: cover.refId, f: s.frame - cover.start + cover.trimIn, itemId: cover.id }
@@ -449,9 +455,16 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       closeComparePane: id => set(s => ({ comparePanes: s.comparePanes.filter(x => x !== id) })),
       itemPreview: null, previewEdit: false, compareOverlay: false,
       setCompareOverlay: on => set({ compareOverlay: on }),
-      openItemPreview: id => { if (findItem(get().project, id)) set({ itemPreview: id, previewEdit: false }) },
-      closeItemPreview: () => set({ itemPreview: null, previewEdit: false }),
-      openEditCompare: id => { const f = findItem(get().project, id); if (f && offsetKeyCount(f.it) && !f.it.noOriginal) set({ itemPreview: id, previewEdit: true }) },
+      openItemPreview: (id, play) => {
+        if (!findItem(get().project, id)) return
+        const r = previewRange(get().project, defs, id) // the preview's own playhead; the main one stays (user)
+        set({ itemPreview: id, previewEdit: false, previewFrame: r ? r[0] : 0, previewPlaying: !!play && !!r })
+      },
+      closeItemPreview: () => set({ itemPreview: null, previewEdit: false, previewPlaying: false }),
+      previewFrame: 0, previewPlaying: false,
+      setPreviewFrame: f => set({ previewFrame: Math.round(f) }),
+      setPreviewPlaying: previewPlaying => set({ previewPlaying }),
+      openEditCompare: id => { const f = findItem(get().project, id); if (f && offsetKeyCount(f.it)) set({ itemPreview: id, previewEdit: true }) },
       setItemUse: (itemId, use) => tryEdit(p => {
         const f = findItem(p, itemId)
         if (!f || f.t.locked || f.t.kind !== 'motion' || (use && !offsetKeyCount(f.it))) return false

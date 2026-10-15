@@ -221,7 +221,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       e.trail.geometry = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pts, 3))
     }
     const applyClip = () => {
-      const st0 = store.getState(), s = { ...st0, project: paneProject(), frame: st0.clipEdit ? st0.clipEditReturn?.frame ?? 0 : st0.frame }, clip = shownClip(), e = entries.get(cid!)
+      const st0 = store.getState(), s = { ...st0, project: paneProject(), frame: st0.clipEdit ? st0.clipEditReturn?.frame ?? 0 : itemId ? st0.previewFrame : st0.frame }, clip = shownClip(), e = entries.get(paneKey!) // item preview: its own playhead
       if (!clip || !e) return
       // item preview follows the main playhead: range frame lo shows at the item start, or (기본자세 덧붙이기) 1.5 s before it,
       // where the timeline draws the lead-in, so preview, lane, physics graph and CSV rows line up; clamped to the range outside it

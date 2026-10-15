@@ -47,7 +47,7 @@ export default function TrackCanvas() {
       const s = ed.getState(), t = keyTarget(s, actorId)
       const item = t && targetItem(s, t.itemId)
       const own = t && keyOwner(s.project, t.owner)
-      // piece: keys sit on a 수정 층 (the piece's or the clip's): the clip's own keys stay visible, dimmed
+      // piece: keys sit on a 수정 층 (the piece's or the clip's); only those keys are drawn (user: hide the clip's own keys)
       return item && own ? { item, clip: s.project.clips[item.refId], owner: t.owner, keys: own, piece: own.offset } : null
     }
     // clip view: the time axis is clip frames, so the clip scale is the view scale

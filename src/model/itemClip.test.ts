@@ -201,6 +201,20 @@ test('the piece open in the clip preview is edited there: the main gizmo is lock
   expect(gizmoLock(s())).toBe(null)
 })
 
+test('the clip preview has its own playhead: opening (and playing) it leaves the main one; edits of that piece go to the preview frame', () => {
+  const id = items()[0].id
+  s().setFrame(70)
+  s().openItemPreview(id, true)
+  expect([s().frame, s().playing, s().previewPlaying, s().previewFrame]).toEqual([70, false, true, items()[0].start])
+  s().setPreviewFrame(20)
+  expect(editTarget(s(), actor)).toMatchObject({ itemId: id, f: 20 - items()[0].start + items()[0].trimIn })
+  s().setValue(actor, ch, 1.1)
+  expect(evaluate(s().project, defs, actor, 20).q[j()]).toBeCloseTo(1.1, 6) // keyed at the preview frame, not the main one (70)
+  s().closeItemPreview()
+  expect(s().previewPlaying).toBe(false)
+  expect(editTarget(s(), actor)!.f).toBe(70 - items()[0].start + items()[0].trimIn)
+})
+
 test('project file keeps use: original and rejects other values', () => {
   s().setValue(actor, ch, 0.9); s().setItemUse(items()[0].id, 'original')
   const back = parseProject(serializeProject(s().project), defs)

@@ -1,6 +1,7 @@
 import { editingItem, getEditor, type EditorState } from './store/store'
 import { onHandleArrow } from './layout/useLayout'
 import { sortedItems } from './model/sequence'
+import { previewRange } from './model/restPose'
 import type { Project } from './model/types'
 import { openProject, saveProject } from './projectActions'
 import { seqFlash } from './timeline/viewState'
@@ -68,6 +69,7 @@ const typing =(t: EventTarget | null) =>
 export function startTransport(): () => void {
   const ed = getEditor()
   let raf = 0, t0 = 0, f0 = 0, was = false, last = 0
+  let pt0 = 0, pf0 = 0, pwas = false, plast = 0 // the clip preview's own clock, looping over its piece
 
   const tick = () => {
     const s = ed.getState()
@@ -82,6 +84,16 @@ export function startTransport(): () => void {
       last = f
     }
     was = s.playing
+    const pr = s.previewPlaying && s.itemPreview ? previewRange(s.project, s.defs, s.itemPreview) : null
+    if (pr && pr[1] > pr[0]) {
+      const [lo, hi] = pr, now = performance.now()
+      if (!pwas || s.previewFrame !== plast || s.previewFrame < lo || s.previewFrame >= hi) { pt0 = now; pf0 = s.previewFrame >= hi || s.previewFrame < lo ? lo : s.previewFrame }
+      let f = pf0 + Math.floor((now - pt0) * 60 / 1000)
+      if (f >= hi) { pt0 = now; pf0 = lo; f = lo }
+      if (f !== s.previewFrame) s.setPreviewFrame(f)
+      plast = f
+    }
+    pwas = !!pr
     raf = requestAnimationFrame(tick)
   }
   raf = requestAnimationFrame(tick)

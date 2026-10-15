@@ -49,7 +49,7 @@ test('덧붙이기 preview lines up with its exported CSV placed at the 기본�
   // compare joint pivots: clip preview robot vs the re-imported robot on the main stage
   const diff = (f: number) => page.evaluate(async f => {
     const ed = (window as any).__editor
-    ed.getState().setFrame(f)
+    ed.getState().setFrame(f); ed.getState().setPreviewPlaying(false); ed.getState().setPreviewFrame(f) // the preview has its own playhead
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))
     const w = window as any, s = ed.getState(), a = s.project.actors[1]
     const prev = [...w.__stages.preview.entries().values()][0].rig, main = w.__stage.entries().get(a.id).rig

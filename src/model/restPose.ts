@@ -4,6 +4,7 @@ import type { Clip, Curve, Item, Key, Project } from './types'
 import type { RobotDef } from '../robot/types'
 import { autoInertia, type InertiaWhy } from './inertia'
 import { itemClip } from './itemClip'
+import { evaluateClip, type Pose } from './pose'
 import { footContact, footMat, legsOf, reachDrop, rootMat, solveLeg, STEP_FAST, STEP_OK, stepLength, stepPlan, stepSpeed } from './legIk'
 
 export const REST_HOLD = 30 // frames held at the rest pose (0.5 s); 덧붙이기 default, 덮어쓰기 max
@@ -305,4 +306,23 @@ export function leadOf(item: Item, clip: Clip, def: RobotDef): Lead {
 export function itemLead(p: Project, defs: RobotDefs, item: Item): Lead | null {
   const clip = item.restPose === 'prepend' ? itemClip(p, defs, item) : undefined // the piece as it plays (with its 수정 층)
   return clip ? leadOf(item, clip, defs[clip.robot]) : null
+}
+
+/** Sequence frames the clip preview of item `id` shows: from its lead-in start to the end of its 끝 기본자세; null for no motion item. */
+export function previewRange(p: Project, defs: RobotDefs, id: string): [number, number] | null {
+  const t = p.sequence.tracks.find(t => t.kind === 'motion' && t.items.some(i => i.id === id)), it = t?.items.find(i => i.id === id)
+  if (!it) return null
+  return [it.start - (itemLead(p, defs, it)?.lead ?? 0), it.start + (it.trimOut - it.trimIn) + (itemTail(p, defs, it)?.tail ?? 0)]
+}
+
+/** Clip-local pose of piece `it` at sequence frame `f` on its lead-in (before its start) or 끝 기본자세 (after its end), as its
+ *  preview and CSV play them; null on the piece itself, or where it has none. */
+export function leadInPose(p: Project, defs: RobotDefs, it: Item, f: number): Pose | null {
+  const end = it.start + it.trimOut - it.trimIn
+  if (f >= it.start && f < end) return null
+  const ld = itemLead(p, defs, it)
+  if (f < it.start ? !ld : !itemTail(p, defs, it)) return null
+  const base = tailedClip(p, defs, it)!, def = defs[base.robot], lo = it.trimIn - (ld?.inertia ?? 0)
+  const clip = ld ? restClipFor(base, def, lo, 0, 'prepend', ld.hold, ld.blend) : base
+  return evaluateClip(clip, def, Math.min(Math.max(lo + f - (it.start - (ld?.lead ?? 0)), 0), clip.length - 1))
 }
