@@ -72,6 +72,18 @@ test('item hidden (숨기기) round-trips; anything but true is rejected', () =>
   expect(() => parseProject(serializeProject(p), defs)).toThrow('hidden')
 })
 
+test('item restTail (끝 기본자세) and track trail (경로 표시) round-trip; bad values are rejected', () => {
+  const p = mk(), t = p.sequence.tracks.find(t => t.kind === 'motion')!, it = t.items[0]
+  it.restTail = false; t.trail = true
+  const q = parseProject(serializeProject(p), defs), qt = q.sequence.tracks.find(x => x.id === t.id)!
+  expect(qt.items[0].restTail).toBe(false)
+  expect(qt.trail).toBe(true)
+  ;(it as any).restTail = 1
+  expect(() => parseProject(serializeProject(p), defs)).toThrow('restTail')
+  it.restTail = true; (t as any).trail = false
+  expect(() => parseProject(serializeProject(p), defs)).toThrow('trail')
+})
+
 test('v2: roundtrip within 1e-6, v1 opens as v2', () => {
   const p = mk()
   const k = { f: 3, v: 0.1234567891, interp: 'bezier' as const, inTan: { df: -2, dv: -0.00000049 }, outTan: { df: 2.5, dv: 1 / 3 } }

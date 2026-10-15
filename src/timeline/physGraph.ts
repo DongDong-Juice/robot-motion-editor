@@ -6,6 +6,7 @@ import type { Segment } from '../physics/segments'
 import { frameToX, type TimeScale } from './timeScale'
 
 export const WARN_RED = '#E5484D'
+export const DIM = '#8d96a3' // secondary text (CSS --dim)
 export const PHYS_NOTE = '참고 지표 (RL 정책 결과와 다를 수 있음)'
 
 /** y of a % value in a strip [top, top+h]; 0..100 clamped, 100 at the top. */
@@ -67,9 +68,9 @@ export function drawAssist(ctx: CanvasRenderingContext2D, pct: ArrayLike<number>
     ctx.globalAlpha = a0
   }
   const wy = Math.round(pctY(warnPct, top, h)) + 0.5
-  ctx.strokeStyle = stale ? '#8d96a3' : WARN_RED; ctx.lineWidth = 1; ctx.setLineDash([2, 2])
+  ctx.strokeStyle = stale ? DIM : WARN_RED; ctx.lineWidth = 1; ctx.setLineDash([2, 2])
   ctx.beginPath(); ctx.moveTo(xa, wy); ctx.lineTo(xb, wy); ctx.stroke(); ctx.setLineDash([])
-  ctx.strokeStyle = stale ? '#8d96a3' : color; ctx.beginPath()
+  ctx.strokeStyle = stale ? DIM : color; ctx.beginPath()
   graphCols(pct, f0, sc, xa, xb).forEach(([x, p], i) => { const y = pctY(p, top, h); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y) })
   ctx.stroke(); ctx.restore()
 }

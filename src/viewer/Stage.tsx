@@ -7,7 +7,7 @@ import { COLOR } from '../model/defaults'
 import { evaluate, evaluateClip, evaluateItem, evaluateRoot, placeItemPose } from '../model/evaluate'
 import { rebasePose } from '../model/pose'
 import { itemLead, leadInPose, restClipFor, tailedClip } from '../model/restPose'
-import { baseClip, editedClip, withUse } from '../model/itemClip'
+import { baseClip, editedClip } from '../model/itemClip'
 import { nearestAngle } from '../model/rootMath'
 import { hiddenAt, stitchTransforms, worldToClipRoot } from '../model/sequence'
 import type { Clip, Project } from '../model/types'
@@ -122,8 +122,6 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       const t = s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === id)
       return !!t && (t.hidden || (!s.editing && hiddenAt(t, s.frame)))
     }
-    // 원본 | 수정본 비교: the compared piece is drawn as its original here (the 수정본 is in the preview pane, or ghosted)
-    const viewProject = (s: ReturnType<typeof store.getState>) => s.previewEdit && s.itemPreview ? withUse(s.project, s.itemPreview, 'original') : s.project
     // the actors drawn here: the project's, or (클립 편집 모드) the virtual one for the open clip
     const viewActors = (s: ReturnType<typeof store.getState>) => s.clipEdit ? [actorOf(s, CLIP_ACTOR)].filter(a => !!a) : s.project.actors
     // 클립 편집: the clip as edited (baseClip), or while 원본 보기 is held the original
@@ -133,19 +131,15 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
     }
     let overlay: { robot: string; rig: RobotRig } | null = null
     const applyOverlay = (s: ReturnType<typeof store.getState>) => {
-      // 겹쳐 보기: 수정 비교 = the 수정본 over the piece's original; 클립 편집 = the original over the clip as edited
-      const actorId = s.clipEdit ? (s.compareOverlay && !s.clipPeek ? CLIP_ACTOR : undefined)
-        : s.previewEdit && s.compareOverlay && s.itemPreview ? s.project.sequence.tracks.find(t => t.items.some(i => i.id === s.itemPreview))?.actorId : undefined
-      const a = actorId ? actorOf(s, actorId) : undefined
+      // 겹쳐 보기 (클립 편집): the original over the clip as edited
+      const a = s.clipEdit && s.compareOverlay && !s.clipPeek ? actorOf(s, CLIP_ACTOR) : undefined
       if (overlay && (!a || overlay.robot !== a.robot)) { scene.remove(overlay.rig.root); disposeObj(overlay.rig.root); overlay = null }
       if (!a || offStage(s, a.id)) return
       if (!overlay) { overlay = { robot: a.robot, rig: buildRobot(s.defs[a.robot], OVERLAY) }; overlay.rig.setGhost(true); scene.add(overlay.rig.root) }
-      if (s.clipEdit) { overlay.rig.applyPose(clipEditPose(s, true)); return }
-      const ep = withUse(s.project, s.itemPreview!, null), ei = editingItem(s), t = ei && ei.actorId === a.id ? editTarget(s, a.id) : null
-      overlay.rig.applyPose(t ? evaluateItem(ep, s.defs, t.itemId, t.f) : evaluate(ep, s.defs, a.id, s.frame))
+      overlay.rig.applyPose(clipEditPose(s, true))
     }
     const applyAll = () => {
-      const s = store.getState(), vp = viewProject(s)
+      const s = store.getState(), vp = s.project
       const ei = editingItem(s)
       for (const a of viewActors(s)) {
         const e = entries.get(a.id)

@@ -46,9 +46,6 @@ export interface EditorState {
    *  plays (looping over the piece). Edits of the previewed piece go to this frame. */
   previewFrame: number; previewPlaying: boolean; setPreviewFrame(f: number): void; setPreviewPlaying(on: boolean): void
   openItemPreview(itemId: string, play?: boolean): void; closeItemPreview(): void // its own playhead from the piece's lead-in start; play: start it
-  /** The item preview shows the piece's 수정본 while the main view shows that piece as the original (원본 | 수정본 비교).
-   *  Falls back to the clip preview when the piece loses its 수정 층. */
-  previewEdit: boolean; openEditCompare(itemId: string): void
   compareOverlay: boolean; setCompareOverlay(on: boolean): void // 겹쳐 보기: the 수정본 as a ghost on the main view while comparing
   /** 원본 사용 ('original') or the 수정본 (null) for playback, CSV and physics; one undo step; false = unknown / locked / no 수정 층. */
   setItemUse(itemId: string, use: 'original' | null): boolean
@@ -217,7 +214,7 @@ export function editLock(s: Pick<EditorState, 'project' | 'frame' | 'editing'> &
 
 // Stage gizmo lock for the selected channel. The root gizmo moves x/y/yaw together, so any root channel uses root.x
 // (a z/roll/pitch selection still locks it on a stitch frame; splitting handles is out of scope).
-export function gizmoLock(s: Pick<EditorState, 'project' | 'frame' | 'editing' | 'sel'> & Partial<Pick<EditorState, 'itemPreview' | 'previewEdit' | 'clipEdit'>>): 'crossfade' | 'stitch' | 'compare' | 'clipRoot' | null {
+export function gizmoLock(s: Pick<EditorState, 'project' | 'frame' | 'editing' | 'sel'> & Partial<Pick<EditorState, 'itemPreview' | 'clipEdit'>>): 'crossfade' | 'stitch' | 'compare' | 'clipRoot' | null {
   const { actorId, channel } = s.sel
   if (!actorId || !channel || channel.startsWith('group:')) return null
   if (s.clipEdit) return channel.startsWith('root') ? 'clipRoot' : null // 클립 편집: root by numbers only (no stage placement to move against)
@@ -276,7 +273,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       }
       if (!gesture || !gestureMoved) { undoS = [...undoS, get().project].slice(-MAX_UNDO); redoS = [] }
       if (gesture) gestureMoved = true
-      set({ project: freezeClips(next), editing: keepEditing(next), dirty: true, comparePanes: keepPanes(next), itemPreview: keepPreview(next), previewEdit: keepEdit(next), ...keepClipEdit(next) })
+      set({ project: freezeClips(next), ...follow(next) })
     }
     // the open clip edit stays while its clip exists; otherwise the fields that close it (playhead and layer restored)
     const keepClipEdit = (p: Project): Partial<EditorState> => {
@@ -287,10 +284,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       const c = get().comparePanes, k = c.filter(id => id in p.clips)
       return k.length === c.length ? c : k
     }
-    const keepEdit = (p: Project) => { // 수정본 비교 stays only while the previewed piece still has a 수정 층
-      const id = get().itemPreview, f = id ? findItem(p, id) : null
-      return get().previewEdit && !!f && offsetKeyCount(f.it) > 0
-    }
+    // the view state that follows a new project (edit, undo, redo, cancelled gesture)
+    const follow = (p: Project): Partial<EditorState> => ({ editing: keepEditing(p), dirty: true, comparePanes: keepPanes(p), itemPreview: keepPreview(p), ...keepClipEdit(p) })
     const keepPreview = (p: Project) => {
       const id = get().itemPreview
       return id && p.sequence.tracks.some(t => t.items.some(i => i.id === id)) ? id : null
@@ -453,18 +448,17 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       comparePanes: [],
       openComparePane: id => set(s => s.comparePanes.includes(id) || !s.project.clips[id] ? s : { comparePanes: [...s.comparePanes, id].slice(-2) }),
       closeComparePane: id => set(s => ({ comparePanes: s.comparePanes.filter(x => x !== id) })),
-      itemPreview: null, previewEdit: false, compareOverlay: false,
+      itemPreview: null, compareOverlay: false,
       setCompareOverlay: on => set({ compareOverlay: on }),
       openItemPreview: (id, play) => {
         if (!findItem(get().project, id)) return
         const r = previewRange(get().project, defs, id) // the preview's own playhead; the main one stays (user)
-        set({ itemPreview: id, previewEdit: false, previewFrame: r ? r[0] : 0, previewPlaying: !!play && !!r })
+        set({ itemPreview: id, previewFrame: r ? r[0] : 0, previewPlaying: !!play && !!r })
       },
-      closeItemPreview: () => set({ itemPreview: null, previewEdit: false, previewPlaying: false }),
+      closeItemPreview: () => set({ itemPreview: null, previewPlaying: false }),
       previewFrame: 0, previewPlaying: false,
       setPreviewFrame: f => set({ previewFrame: Math.round(f) }),
       setPreviewPlaying: previewPlaying => set({ previewPlaying }),
-      openEditCompare: id => { const f = findItem(get().project, id); if (f && offsetKeyCount(f.it)) set({ itemPreview: id, previewEdit: true }) },
       setItemUse: (itemId, use) => tryEdit(p => {
         const f = findItem(p, itemId)
         if (!f || f.t.locked || f.t.kind !== 'motion' || (use && !offsetKeyCount(f.it))) return false
@@ -799,7 +793,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       loadProject: (project, fileName) => {
         generation++
         undoS = []; redoS = []; gesture = false; gestureMoved = false; suspended = false
-        set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] }, comparePanes: [], itemPreview: null, previewEdit: false, clipEdit: null, clipEditReturn: null, range: null, layer: get().clipEditReturn?.layer ?? get().layer })
+        set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] }, comparePanes: [], itemPreview: null, clipEdit: null, clipEditReturn: null, range: null, layer: get().clipEditReturn?.layer ?? get().layer })
       },
       markSaved: fileName => set({ fileName, dirty: false }),
       newProjectFile: () => get().loadProject(emptyProject(), null),
@@ -817,7 +811,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         const prev = undoS.at(-1)
         if (!moved || !prev) return
         undoS = undoS.slice(0, -1)
-        set(s => ({ project: prev, editing: keepEditing(prev), dirty: true, sel: { ...s.sel, keys: [] }, comparePanes: keepPanes(prev), itemPreview: keepPreview(prev), previewEdit: keepEdit(prev), ...keepClipEdit(prev) }))
+        set(s => ({ project: prev, sel: { ...s.sel, keys: [] }, ...follow(prev) }))
       },
       undo: () => {
         // Mid-gesture (slider, gizmo, tangent drag): cancel just that gesture; its remaining edits are dropped.
@@ -826,14 +820,14 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         const prev = undoS.at(-1)
         if (!prev) return
         undoS = undoS.slice(0, -1); redoS = [...redoS, get().project]
-        set(s => ({ project: prev, editing: keepEditing(prev), dirty: true, sel: { ...s.sel, keys: [] }, comparePanes: keepPanes(prev), itemPreview: keepPreview(prev), previewEdit: keepEdit(prev), ...keepClipEdit(prev) }))
+        set(s => ({ project: prev, sel: { ...s.sel, keys: [] }, ...follow(prev) }))
       },
       redo: () => {
         if (gesture || suspended) return
         const next = redoS.at(-1)
         if (!next) return
         redoS = redoS.slice(0, -1); undoS = [...undoS, get().project]
-        set(s => ({ project: next, editing: keepEditing(next), dirty: true, sel: { ...s.sel, keys: [] }, comparePanes: keepPanes(next), itemPreview: keepPreview(next), previewEdit: keepEdit(next), ...keepClipEdit(next) }))
+        set(s => ({ project: next, sel: { ...s.sel, keys: [] }, ...follow(next) }))
       },
     }
   })

@@ -18,7 +18,7 @@ import { formatTimecode, frameToX, hoverFrame, hoverScrub, xToFrame, type TimeSc
 import { usePhysics } from '../physics/physicsStore'
 import { runItems, stale } from '../physics/runItem'
 import { withDefaults } from '../physics/settings'
-import { badge, drawAssist, segmentAt, seqFrameOf, treeSuffix, treeTag, WARN_RED } from './physGraph'
+import { badge, drawAssist, segmentAt, seqFrameOf, treeSuffix, treeTag, DIM, WARN_RED } from './physGraph'
 import { drawHScrollbar, drawScrollbar, pressScrollbar, SB_W, sbGeom } from './vscroll'
 
 const ROW_H = 28, EDGE = 6
@@ -251,7 +251,7 @@ export default function SequenceCanvas() {
           const ty = st?.metrics ? y + 9 : y + ROW_H / 2 // above the graph
           const br = Math.min(right, W - 4), bw = b && br - x >= ctx.measureText(b).width ? ctx.measureText(b).width + 8 : 0
           if (b && bw) { // badge at the bar's (visible) right end
-            ctx.fillStyle = b.startsWith('⚠') || st?.status === 'error' ? WARN_RED : old ? '#8d96a3' : C.text
+            ctx.fillStyle = b.startsWith('⚠') || st?.status === 'error' ? WARN_RED : old ? DIM : C.text
             ctx.fillText(b, br - bw + 8, ty); ctx.fillStyle = C.text
           }
           const nr = bw ? br - bw : right
@@ -276,7 +276,7 @@ export default function SequenceCanvas() {
           // the column is narrow: "#n · start" (the bar shows the clip name), a short physics tag on the right; the full text on hover
           const { st, old } = phys(t, r.it), tag = treeTag(st, old), right = EYE_X - ICON_HIT / 2 - 4, tw = tag.text ? ctx.measureText(tag.text).width + 6 : 0
           if (tag.text) {
-            ctx.save(); ctx.textAlign = 'right'; ctx.fillStyle = tag.warn ? WARN_RED : '#8d96a3'; ctx.fillText(tag.text, right, y + ROW_H / 2); ctx.restore()
+            ctx.save(); ctx.textAlign = 'right'; ctx.fillStyle = tag.warn ? WARN_RED : DIM; ctx.fillText(tag.text, right, y + ROW_H / 2); ctx.restore()
           }
           const warn = (it.id === s.itemPreview ? '▶ ' : '') + (it.restPose === 'prepend' && leadOf(it)?.why === 'review' ? '⚠ ' : '') // 관성 검토 필요, in front so it is never cut
           ctx.fillText(fit(ctx, warn + laneLabel(t, it) + (hasEdit(it) ? ' 수정' : ''), right - CHILD_X - tw), CHILD_X, y + ROW_H / 2)
