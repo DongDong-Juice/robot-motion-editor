@@ -2,7 +2,7 @@ import { loadDef } from '../test/defs'
 import { beforeEach, expect, test } from 'vitest'
 
 import { evaluate, type RobotDefs } from './evaluate'
-import { assetOwner, createEditorStore, gizmoLock, keyOwner } from '../store/store'
+import { assetOwner, createEditorStore, editTarget, gizmoLock, keyOwner } from '../store/store'
 import { exportItemCsv } from '../export/csv'
 import { parseProject, serializeProject } from './projectFile'
 import { baseClip, editedClip, itemClip, withUse } from './itemClip'
@@ -191,21 +191,14 @@ test('withUse copies only the one piece and is memoized per project', () => {
   expect(evaluate(o, defs, actor, 60).q[j()]).toBeCloseTo(0.4)
 })
 
-test('openEditCompare needs a 수정 층; it closes when the 수정 층 goes; the main gizmo is locked on that piece', () => {
+test('the piece open in the clip preview is edited there: the main gizmo is locked on it; closing the preview unlocks', () => {
   const id = items()[0].id
-  s().openEditCompare(id)
-  expect(s().previewEdit).toBe(false)
-  s().setFrame(60); s().setValue(actor, ch, 0.9)
-  s().openEditCompare(id)
-  expect(s()).toMatchObject({ itemPreview: id, previewEdit: true })
-  s().select(actor, ch)
-  expect(gizmoLock(s())).toBe('compare')
-  s().openItemPreview(id)
-  expect(s().previewEdit).toBe(false)
+  s().setFrame(60); s().select(actor, ch)
   expect(gizmoLock(s())).toBe(null)
-  s().openEditCompare(id)
-  expect(s().clearOffset(id)).toBe(true)
-  expect(s()).toMatchObject({ itemPreview: id, previewEdit: false })
+  s().openItemPreview(id)
+  expect(gizmoLock(s())).toBe('compare')
+  s().closeItemPreview()
+  expect(gizmoLock(s())).toBe(null)
 })
 
 test('project file keeps use: original and rejects other values', () => {

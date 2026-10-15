@@ -3,10 +3,10 @@ import { evalCurve, makeKey } from '../model/curve'
 import { simplifyCurve, simplifyTolerance } from '../model/simplify'
 import { addActor as addActorTo, emptyProject, newProject, nextClipName } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
-import { inCrossfade, itemLen, pieceTag, resolve, sortedItems, validTrack } from '../model/sequence'
+import { inCrossfade, itemLen, resolve, sortedItems, validTrack } from '../model/sequence'
 import type { Actor, Item, Clip, Curve, Interp, Project, Tan, Track } from '../model/types'
 import { validVideoTrack, videoTrack } from '../model/video'
-import { baseClip, editedClip, offsetKeyCount } from '../model/itemClip'
+import { baseClip, offsetKeyCount } from '../model/itemClip'
 import { addOverRange, type Range } from '../model/rangeEdit'
 import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP } from '../model/restPose'
 import type { RobotKind } from '../robot/types'
@@ -80,8 +80,7 @@ export interface EditorState {
   setPlacement(actorId: string, pl: Partial<Actor['placement']>): void
   setColor(actorId: string, hex: string): void
   addActor(robot: RobotKind): void
-  selItem: string | null; selectItem(itemId: string | null, edit?: boolean): void
-  selEdit: boolean // the selected piece was picked on its 수정 row (Delete removes the 수정본, not the piece)
+  selItem: string | null; selectItem(itemId: string | null): void
   editing: string | null; openItem(itemId: string): void; closeItem(): void
   setIn(f: number | null): void; setOut(f: number | null): void
   addMarker(f: number): void; renameMarker(index: number, name: string): void; deleteMarker(index: number): void
@@ -103,11 +102,6 @@ export interface EditorState {
   trimItem(itemId: string, side: 'in' | 'out', df: number): boolean
   splitItem(itemId: string, frame: number): boolean
   deleteItem(itemId: string): boolean
-  /** Delete one side of a piece. 'edit': its 수정본 only (the piece stays as the original; a piece without an original goes).
-   *  'piece': the piece's original; with a 수정본 it stays as a 수정본-only piece (noOriginal), without one the piece goes. */
-  removePiece(itemId: string, part: 'piece' | 'edit'): boolean
-  /** 수정 완료: the piece's 수정본 (clip + 수정 층s) baked into a new clip '<clip> #n 수정본' in the assets; the piece plays it. */
-  bakeEdit(itemId: string): boolean
   // Flag an item so its clip preview and CSV export start from the standing pose (clips and sequence playback untouched); false = rejected.
   // mode true = 덮어쓰기, 'prepend' = 덧붙이기, null = off.
   setRestPose(itemId: string, mode: Item['restPose'] | null): boolean
@@ -221,8 +215,8 @@ export function gizmoLock(s: Pick<EditorState, 'project' | 'frame' | 'editing' |
   const { actorId, channel } = s.sel
   if (!actorId || !channel || channel.startsWith('group:')) return null
   if (s.clipEdit) return channel.startsWith('root') ? 'clipRoot' : null // 클립 편집: root by numbers only (no stage placement to move against)
-  // 원본 | 수정본 비교: the main view shows this piece as the original, so its gizmo would edit what is not shown
-  if (s.previewEdit && s.itemPreview && editTarget(s, actorId)?.itemId === s.itemPreview) return 'compare'
+  // the piece open in the clip preview is edited there (user: edit in the clip preview, not on the main view)
+  if (!s.editing && s.itemPreview && editTarget(s, actorId)?.itemId === s.itemPreview) return 'compare'
   return editLock(s, actorId, channel.startsWith('root') ? 'root.x' : channel)
 }
 
@@ -391,13 +385,13 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
     const findKey = (clip: Owner, r: KeyRef) => clip.channels[r.channel]?.keys.find(k => k.f === r.f)
 
     return {
-      selItem: null, selEdit: false, selectItem: (selItem, edit) => set({ selItem, selEdit: !!selItem && !!edit }),
+      selItem: null, selectItem: selItem => set({ selItem }),
       editing: null,
       openItem: itemId => {
         const t = get().project.sequence.tracks.find(t => t.items.some(i => i.id === itemId))
         if (t?.kind !== 'motion') return
         if (get().clipEdit) get().closeClipEdit()
-        set({ editing: itemId, selItem: itemId, selEdit: false, sel: { actorId: t.actorId ?? null, channel: null, keys: [] }, range: null })
+        set({ editing: itemId, selItem: itemId, sel: { actorId: t.actorId ?? null, channel: null, keys: [] }, range: null })
       },
       closeItem: () => set(s => ({ editing: null, frame: Math.max(s.frame, 0), range: null })),
       setIn: f => edit(p => { p.sequence.inF = f; if (f !== null && p.sequence.outF !== null && p.sequence.outF <= f) p.sequence.outF = null }, []),
@@ -430,12 +424,12 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         const s = get()
         if (!s.project.clips[clipId] || s.clipEdit === clipId) return
         const ret = s.clipEditReturn ?? { frame: s.frame, layer: s.layer }
-        set({ clipEdit: clipId, clipEditReturn: ret, frame: 0, playing: false, editing: null, layer: 'asset', selItem: null, selEdit: false, sel: { actorId: CLIP_ACTOR, channel: null, keys: [] }, range: null })
+        set({ clipEdit: clipId, clipEditReturn: ret, frame: 0, playing: false, editing: null, layer: 'asset', selItem: null, sel: { actorId: CLIP_ACTOR, channel: null, keys: [] }, range: null })
       },
       closeClipEdit: () => set(s => s.clipEdit ? { clipEdit: null, clipEditReturn: null, range: null, frame: s.clipEditReturn?.frame ?? 0, layer: s.clipEditReturn?.layer ?? 'piece', playing: false, sel: { actorId: null, channel: null, keys: [] } } : s),
       clearOffset: itemId => tryEdit(p => {
         const f = findItem(p, itemId)
-        if (!f || f.t.locked || !f.it.offset || f.it.noOriginal) return false // 수정본-only: removePiece(id, 'edit') deletes it
+        if (!f || f.t.locked || !f.it.offset) return false
         delete f.it.offset; delete f.it.use
         set(s => ({ sel: { ...s.sel, keys: [] } }))
         return true
@@ -460,7 +454,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       openEditCompare: id => { const f = findItem(get().project, id); if (f && offsetKeyCount(f.it) && !f.it.noOriginal) set({ itemPreview: id, previewEdit: true }) },
       setItemUse: (itemId, use) => tryEdit(p => {
         const f = findItem(p, itemId)
-        if (!f || f.t.locked || f.t.kind !== 'motion' || (use && (!offsetKeyCount(f.it) || f.it.noOriginal))) return false
+        if (!f || f.t.locked || f.t.kind !== 'motion' || (use && !offsetKeyCount(f.it))) return false
         if (use) f.it.use = use; else delete f.it.use
         return true
       }),
@@ -738,7 +732,6 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         const right: Item = { id: crypto.randomUUID(), refId: it.refId, start: Math.round(frame), trimIn: cut, trimOut: it.trimOut }
         if (it.offset) right.offset = structuredClone(it.offset) // clip frames: each piece keeps the part under it
         if (it.use) right.use = it.use
-        if (it.noOriginal) right.noOriginal = true
         if (f.t.kind === 'motion') { it.restTail ??= true; right.restTail = true } // 끝 기본자세 on both pieces (user: every cut ends each piece standing); one turned off stays off
         it.trimOut = cut
         f.t.items.push(right)
@@ -757,44 +750,10 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
           return true
         })
         if (ok) set(s => ({
-          selItem: s.selItem === itemId ? null : s.selItem, selEdit: s.selItem === itemId ? false : s.selEdit,
+          selItem: s.selItem === itemId ? null : s.selItem,
           sel: s.sel.actorId && !s.project.actors.some(a => a.id === s.sel.actorId) ? { actorId: null, channel: null, keys: [] } : s.sel,
         }))
         return ok
-      },
-      removePiece: (itemId, part) => {
-        const it = findItem(get().project, itemId)?.it
-        if (!it) return false
-        const edited = !!offsetKeyCount(it)
-        if (part === 'edit') return !edited ? false : it.noOriginal ? get().deleteItem(itemId) : get().clearOffset(itemId)
-        if (!edited || it.noOriginal) return get().deleteItem(itemId) // nothing would be left: the piece goes
-        const ok = tryEdit(p => { // the original goes, the 수정본 stays where it is
-          const f = findItem(p, itemId)
-          if (!f || f.t.locked) return false
-          f.it.noOriginal = true; delete f.it.use
-          return true
-        })
-        if (ok) set(s => s.itemPreview === itemId && s.previewEdit ? { previewEdit: false } : s) // nothing left to compare with
-        return ok
-      },
-      bakeEdit: itemId => {
-        let made: string | null = null
-        const ok = tryEdit(p => {
-          const f = findItem(p, itemId)
-          if (!f || f.t.locked || f.t.kind !== 'motion' || !offsetKeyCount(f.it)) return false
-          const src = p.clips[f.it.refId], baked = editedClip(p, defs, f.it)
-          if (!src || !baked) return false
-          const tag = pieceTag(f.t, f.it).split(' · ')[0]
-          const clip: Clip = { ...src, id: crypto.randomUUID(), name: `${src.name}${tag ? ' ' + tag : ''} 수정본`, channels: structuredClone(baked.channels) }
-          delete clip.offset
-          addUniqueClip(p, clip)
-          f.it.refId = clip.id
-          delete f.it.offset; delete f.it.use; delete f.it.noOriginal
-          made = clip.id
-          return true
-        })
-        if (ok) set(s => ({ previewEdit: s.itemPreview === itemId ? false : s.previewEdit, sel: { ...s.sel, keys: [] } }))
-        return ok && !!made
       },
       setRestPose: (itemId, mode) => tryEdit(p => {
         const f = findItem(p, itemId)
@@ -826,7 +785,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       loadProject: (project, fileName) => {
         generation++
         undoS = []; redoS = []; gesture = false; gestureMoved = false; suspended = false
-        set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, selEdit: false, sel: { actorId: null, channel: null, keys: [] }, comparePanes: [], itemPreview: null, previewEdit: false, clipEdit: null, clipEditReturn: null, range: null, layer: get().clipEditReturn?.layer ?? get().layer })
+        set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] }, comparePanes: [], itemPreview: null, previewEdit: false, clipEdit: null, clipEditReturn: null, range: null, layer: get().clipEditReturn?.layer ?? get().layer })
       },
       markSaved: fileName => set({ fileName, dirty: false }),
       newProjectFile: () => get().loadProject(emptyProject(), null),

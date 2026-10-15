@@ -49,7 +49,7 @@ interface Entry { rig: RobotRig; trail: THREE.Line; dot: THREE.Points; ghost: bo
  * With `itemId` + `range`, an item flagged restPose plays its derived rest-pose clip instead (preview only).
  * With `range` = [from, to) clip frames, the compare robot shows that range, root re-based so frame `from` sits at the origin: with `itemId` it follows
  * the main playhead (item start = `from`), else it loops on its own 60 fps clock. */
-export default function Stage({ compareClipId: cid, range, itemId, edited, children }: { compareClipId?: string; range?: [number, number]; itemId?: string; edited?: boolean; children?: ReactNode }) {
+export default function Stage({ compareClipId: cid, range, itemId, children }: { compareClipId?: string; range?: [number, number]; itemId?: string; children?: ReactNode }) {
   const [lo, hi] = range ?? [0, 0]
   const host = useRef<HTMLDivElement>(null)
   // 로봇 따라가기: per-pane local UI state, read by the render loop through a ref
@@ -87,7 +87,12 @@ export default function Stage({ compareClipId: cid, range, itemId, edited, child
     orbit.update()
     const tc = new TransformControls(camera, renderer.domElement)
     tc.setSize(0.8)
-    if (!cid) scene.add(tc.getHelper())
+    // the clip preview edits the piece it shows: joints picked and turned here (user: edit in the clip preview); its robot is keyed
+    // by the piece's actor so selection, gizmo and setValue work as on the main view. Root: panel numbers (the pane is re-based).
+    const editPane = !!(cid && itemId && hi > lo)
+    const paneActor = editPane ? store.getState().project.sequence.tracks.find(t => t.items.some(i => i.id === itemId))?.actorId : undefined
+    const paneKey = paneActor ?? cid
+    if (!cid || editPane) scene.add(tc.getHelper())
     // dev/e2e hook
     // dev/e2e hook: __stage = main pane, __stages = every pane by key ('main' or the compare clip id)
     const hook = { camera, tc, entries: () => entries, renderer, camTarget: () => orbit.target.toArray(), overlay: () => overlay?.rig ?? null }
@@ -187,14 +192,13 @@ export default function Stage({ compareClipId: cid, range, itemId, edited, child
       const ld = it ? itemLead(project, defs, it) : null // prepend: range = [trimIn − 관성, trimOut + 정지 + 전이), the derived clip's frames
       return ld ? restClipFor(base, defs[clip.robot], lo, hi, 'prepend', ld.hold, ld.blend) : it?.restPose ? restClipFor(base, defs[clip.robot], lo, hi) : base
     }
-    // the item preview's project: as stored, or (수정본 pane) with the piece set to its 수정본
-    const paneProject = () => { const p = store.getState().project; return edited && itemId ? withUse(p, itemId, null) : p }
+    const paneProject = () => store.getState().project
     // compare pane: one rig for the clip at the origin; trail rebuilt only when the clip object changes
     const syncClip = () => {
       const { project, defs } = store.getState()
       const clip = shownClip()
       if (!clip) return
-      let e = entries.get(cid!)
+      let e = entries.get(paneKey!)
       if (!e) {
         // item preview: the piece's actor colour, like that robot on the main stage; compare pane: the robot type colour
         const actor = itemId ? project.actors.find(a => a.id === project.sequence.tracks.find(t => t.items.some(i => i.id === itemId))?.actorId) : undefined
@@ -207,7 +211,7 @@ export default function Stage({ compareClipId: cid, range, itemId, edited, child
           new THREE.PointsMaterial({ color, size: 8, sizeAttenuation: false }))
         scene.add(rig.root, trail, dot)
         e = { rig, trail, dot, ghost: false }
-        entries.set(cid!, e)
+        entries.set(paneKey!, e)
       }
       if (e.trailClips?.[0] === clip) return
       e.trailClips = [clip]
@@ -347,7 +351,7 @@ export default function Stage({ compareClipId: cid, range, itemId, edited, child
         const ax = s.defs[robot].joints.find(j => j.name === channel)!.axis
         s.setValue(actorId, channel, pivotAngle(pivot, ax))
       }
-      applyAll() // snaps back when autoKey is off or the value was clamped
+      if (editPane) { shownF = -1; applyClip() } else applyAll() // snaps back when the value was clamped
     })
     orbit.addEventListener('change', () => { dirty = true })
 
@@ -371,7 +375,7 @@ export default function Stage({ compareClipId: cid, range, itemId, edited, child
       if (best) store.getState().select(best.id, best.via)
       else store.getState().select(null)
     }
-    if (!cid) { dom.addEventListener('pointerdown', onDown); dom.addEventListener('pointerup', onUp) }
+    if (!cid || editPane) { dom.addEventListener('pointerdown', onDown); dom.addEventListener('pointerup', onUp) }
 
     const onKey = (ev: KeyboardEvent) => {
       const v = VIEWS[ev.key]
@@ -397,9 +401,14 @@ export default function Stage({ compareClipId: cid, range, itemId, edited, child
     ro.observe(el)
 
     let wasLocked = false
-    if (cid) { syncClip(); applyClip() } else { syncActors(); applyAll(); syncSelection() }
+    if (cid) { syncClip(); applyClip(); if (editPane) syncSelection() } else { syncActors(); applyAll(); syncSelection() }
     const unsub = store.subscribe((s, prev) => {
-      if (cid) { if (s.project !== prev.project) { syncClip(); shownF = -1 } applyClip(); return }
+      if (cid) {
+        if (s.project !== prev.project) { syncClip(); shownF = -1 }
+        applyClip()
+        if (editPane) { const lk = locked(); if (s.sel !== prev.sel || lk !== wasLocked) syncSelection(); wasLocked = lk }
+        return
+      }
       if (s.project !== prev.project || s.clipEdit !== prev.clipEdit) syncActors()
       applyAll()
       const key = (p: typeof s.project) => p.actors.map(a => a.id + a.robot).join() + (s.clipEdit ?? '')
@@ -410,7 +419,7 @@ export default function Stage({ compareClipId: cid, range, itemId, edited, child
 
     // tracked robot: compare/clip pane = its one robot; main = selected actor if shown, else the first shown one
     const tracked = () => {
-      if (cid) return entries.get(cid)
+      if (cid) return entries.get(paneKey!)
       const s = store.getState(), sel = s.sel.actorId && entries.get(s.sel.actorId)
       if (sel && sel.rig.root.visible) return sel
       return viewActors(s).map(a => entries.get(a.id)).find(e => e?.rig.root.visible)
@@ -463,7 +472,7 @@ export default function Stage({ compareClipId: cid, range, itemId, edited, child
         if (w.__stage === hook) delete w.__stage
       }
     }
-  }, [cid, lo, hi, itemId, edited])
+  }, [cid, lo, hi, itemId])
 
   return (
     <>

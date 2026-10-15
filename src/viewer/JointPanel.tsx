@@ -92,7 +92,6 @@ export default function JointPanel() {
         <span className="jp-f">{s.clipEdit ? '클립' : '시퀀스'} F{v.f}</span>
       </h3>
       <>
-        {!v.canEdit && <p className="jp-hint">자동 키를 켜면 원본 클립을 고칠 수 있습니다</p>}
         {outside && <p className="jp-hint warn">재생헤드를 구간 안으로 옮기세요</p>}
         <div className="jp-rows">
           {v.channels.map(c => {

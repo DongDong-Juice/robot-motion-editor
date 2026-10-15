@@ -115,22 +115,6 @@ test('restClipFor: cached by clip identity and window; rest at a, original after
   expect(evaluateClip(a, g1, 109).q[ki]).toBeCloseTo(evaluateClip(orig, g1, 109).q[ki], 9)
 })
 
-test('samplePoses: flagged item starts standing; later rows and other items match the unflagged export', () => {
-  const { st, actor } = rpSetup([10, 110]), s = () => st.getState()
-  s().splitItem('i0', 30) // second piece of k0 shares its clip with i0
-  const sibling = s().project.sequence.tracks[0].items.find(i => i.id !== 'i0' && i.refId === 'k0')!
-  const plain = samplePoses(s().project, defs, actor, 'i1', 'world'), plainSib = samplePoses(s().project, defs, actor, sibling.id, 'world')
-  const proj = s().project
-  s().setRestPose('i1', true)
-  expect(s().project.clips).toEqual(proj.clips)
-  const rest = samplePoses(s().project, defs, actor, 'i1', 'world')
-  expect(rest.length).toBe(plain.length)
-  expectRest(rest[0].q)
-  expect(rest[0].rootPos[2]).toBeCloseTo(g1.rest.z, 9)
-  for (let i = 30 + 60 + 1; i < rest.length; i++) expect(rest[i].q[ki]).toBeCloseTo(plain[i].q[ki], 6)
-  expect(samplePoses(s().project, defs, actor, sibling.id, 'world')).toEqual(plainSib)
-})
-
 test('prependRestPose: 90 frames inserted at a; standing at a, the original frame a lands at a+90, everything after shifted', () => {
   const { orig } = rpSetup([10, 110])
   const c = restClipFor(orig, g1, 10, 110, 'prepend')
@@ -178,13 +162,6 @@ test('samplePoses prepend: 90 more rows, standing first, original rows untouched
   const local = samplePoses(s().project, defs, actor, 'i1', 'local')
   expect(local[0].rootPos.slice(0, 2).map(v => +v.toFixed(12))).toEqual([0, 0])
   expect(quatYaw(local[0].rootQuat)).toBeCloseTo(0, 9)
-})
-
-test('setRestPose: modes switch in one undo step each', () => {
-  const { st } = rpSetup([10, 110]), s = () => st.getState()
-  s().setRestPose('i1', 'prepend'); expect(flag(st, 'i1')).toBe('prepend')
-  s().setRestPose('i1', true); expect(flag(st, 'i1')).toBe(true)
-  s().undo(); expect(flag(st, 'i1')).toBe('prepend')
 })
 
 test('itemPreview: open/close, pruned when the item goes away', () => {

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { pieceName } from '../model/sequence'
-import { offsetKeyCount, withUse } from '../model/itemClip'
+import { offsetKeyCount } from '../model/itemClip'
 import { getEditor, useEditor } from '../store/store'
 import type { Item, Project } from '../model/types'
 import { itemLead, itemTail, type Lead } from '../model/restPose'
@@ -73,16 +73,13 @@ function ItemPreview({ id }: { id: string }) {
     clearTimeout(timer.current); timer.current = window.setTimeout(() => setMsg(null), 3000)
   }
   const project = useEditor(s => s.project), defs = useEditor(s => s.defs)
-  const edit = useEditor(s => s.previewEdit), overlayOn = useEditor(s => s.compareOverlay)
   if (!item) return null
   const hasEdit = offsetKeyCount(item) > 0
-  // 수정본 창: the piece as clip + 수정 층 whichever side it uses, so its range and lead-in come from that 수정본
-  const shown = edit ? findItem(withUse(project, id, null), id)!.it : item
-  const ld = itemLead(edit ? withUse(project, id, null) : project, defs, shown)
-  const tail = itemTail(edit ? withUse(project, id, null) : project, defs, shown)?.tail ?? 0 // 끝 기본자세 frames after trimOut
+  // the piece as it plays (its 수정 included): range and lead-in come from it
+  const ld = itemLead(project, defs, item)
+  const tail = itemTail(project, defs, item)?.tail ?? 0 // 끝 기본자세 frames after trimOut
   const range: [number, number] = ld ? [item.trimIn - ld.inertia, item.trimOut + ld.hold + ld.blend + tail] : [item.trimIn, item.trimOut + tail]
   const s = () => getEditor().getState()
-  // 기본자세 settings belong to the piece: the same buttons on the clip preview and the 수정본 (each plays its own side)
   const restButtons = <>
     {item.restPose === true
       ? <button className="pv-btn" onClick={() => rest(null)} title={REST_TIP.off}>기본자세 해제</button>
@@ -94,28 +91,15 @@ function ItemPreview({ id }: { id: string }) {
     <>
       <div className="pane-title static">
         <button className={selected ? 'pv-title sel' : 'pv-title'} onClick={pick} title="타임라인에서 이 조각을 선택합니다 (오른쪽 패널도 이 로봇으로 바뀜)">
-          {edit ? '수정본' : '클립 프리뷰'} · {actor && <span className="pv-sw" style={{ background: actor.color }} aria-hidden="true" />}<b>{actor?.name ?? ''}</b> / {label}
+          클립 프리뷰 · {actor && <span className="pv-sw" style={{ background: actor.color }} aria-hidden="true" />}<b>{actor?.name ?? ''}</b> / {label}
         </button>
-        <button aria-label={edit ? '수정본 닫기' : '클립 프리뷰 닫기'} onClick={() => s().closeItemPreview()}>✕</button>
+        <button aria-label="클립 프리뷰 닫기" onClick={() => s().closeItemPreview()}>✕</button>
       </div>
       <div className="stage-3d">
-        {edit
-          ? <Stage compareClipId={item.refId} range={range} itemId={id} edited>
+<Stage compareClipId={item.refId} range={range} itemId={id}>{/* joints are picked and turned here (Stage: the piece's gizmo) */}
               {restButtons}
-              <button className="pv-btn" aria-pressed={overlayOn} onClick={() => s().setCompareOverlay(!overlayOn)}
-                title="메인 로봇 프리뷰에 수정본을 반투명으로 겹쳐 그립니다">겹쳐 보기</button>
-              <button className="pv-btn" onClick={() => s().openItemPreview(id)} title="수정 비교를 끝내고 이 조각의 클립 프리뷰로 돌아갑니다">클립 프리뷰로</button>
-              <button className="pv-btn" onClick={() => { if (s().bakeEdit(id)) { s().openItemPreview(id); say('수정본을 새 클립으로 만들었습니다 (목록에 추가 · 이 조각이 그 클립을 씀)') } else say('잠긴 트랙입니다') }}
-                title="수정본을 새 클립으로 굳혀 목록에 넣고, 이 조각이 그 클립을 쓰게 합니다 (원본 클립은 그대로)">수정 완료</button>
             </Stage>
-          : <Stage compareClipId={item.refId} range={range} itemId={id}>
-              {restButtons}
-              {item.noOriginal && <button className="pv-btn" onClick={() => say(s().bakeEdit(id) ? '수정본을 새 클립으로 만들었습니다 (목록에 추가 · 이 조각이 그 클립을 씀)' : '잠긴 트랙입니다')}
-                title="수정본을 새 클립으로 굳혀 목록에 넣고, 이 조각이 그 클립을 쓰게 합니다 (원본 클립은 그대로)">수정 완료</button>}
-              {hasEdit && !item.noOriginal && <button className="pv-btn" onClick={() => s().openEditCompare(id)}
-                title="메인 로봇 프리뷰에 원본, 이 자리에 수정본을 나란히 보여 줍니다">수정 비교</button>}
-            </Stage>}
-        <LeadRow id={id} item={item} ld={ld ?? itemLead(edit ? withUse(project, id, null) : project, defs, { ...shown, restPose: 'prepend' })!} on={!!ld}
+        <LeadRow id={id} item={item} ld={ld ?? itemLead(project, defs, { ...item, restPose: 'prepend' })!} on={!!ld}
           toggle={() => rest(ld ? null : 'prepend')} />
         {msg && <div className="pv-msg" role="status">{msg}</div>}
       </div>
@@ -133,6 +117,7 @@ function useMainSuffix() {
 }
 
 const sec = (f: number) => (f / 60).toFixed(2)
+
 const WHY_TIP = '관성 자동 판정: 자른 위치에서 최대 1.5초(없으면 3초) 거슬러 올라가, 두 발이 바닥을 딛고 서 있으면서 몸이 가장 덜 움직이는 지점부터 원본을 씁니다.'
 
 // One lead-in length in seconds; commits on Enter / blur, Esc reverts.

@@ -123,7 +123,7 @@ export function startTransport(): () => void {
       else if (s.editing) s.closeItem()
     }
     else if (s.clipEdit && ['i', 'o', 'm', 'c', 'delete'].includes(e.key.toLowerCase())) return // sequence keys: not in 클립 편집
-    else if (e.key === 'Delete') { if (!s.editing && s.selItem) { e.preventDefault(); if (!lockedItem(s, s.selItem)) s.removePiece(s.selItem, s.selEdit ? 'edit' : 'piece') } } // 수정 row: the 수정본 only; lane: the piece (its 수정본 stays)
+    else if (e.key === 'Delete') { if (!s.editing && s.selItem) { e.preventDefault(); if (!lockedItem(s, s.selItem)) s.deleteItem(s.selItem) } }
     else if (e.key.toLowerCase() === 'i') s.setIn(Math.max(s.frame, 0))
     else if (e.key.toLowerCase() === 'o') s.setOut(Math.max(s.frame, 0))
     else if (e.key.toLowerCase() === 'm') s.addMarker(Math.max(s.frame, 0))

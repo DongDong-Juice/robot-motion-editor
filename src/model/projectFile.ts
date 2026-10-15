@@ -134,7 +134,6 @@ export function parseProject(text: string, defs: RobotDefs): Project {
         if (t.kind === 'motion' && p.clips[it.refId].robot !== actorRobot[t.actorId]) fail(`${it_}.refId`, '클립의 로봇이 액터와 다릅니다')
         if (it.trimOut > p.clips[it.refId].length) fail(`${it_}.trimOut`, '클립 길이를 넘습니다')
         if (it.use !== undefined && it.use !== 'original') fail(`${it_}.use`)
-        if (it.noOriginal !== undefined && it.noOriginal !== true) fail(`${it_}.noOriginal`)
         if (it.offset !== undefined) { if (!isObj(it.offset)) fail(`${it_}.offset`); curves(it.offset, `${it_}.offset`, p.clips[it.refId].robot, false) }
       })
       if (!(t.kind === 'video' ? validVideoTrack(t.items, media) : validTrack(t.items))) fail(at, '항목 배치가 올바르지 않습니다 (겹침 또는 범위)')

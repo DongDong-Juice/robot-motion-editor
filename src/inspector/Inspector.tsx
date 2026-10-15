@@ -6,29 +6,14 @@ import JointPanel from '../viewer/JointPanel'
 
 const ROOT = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw']
 
-// 이 조각 수정: the edit that gives the piece its first 수정 key opens 수정 비교 (main = 원본, pane = 수정본), unless the preview
-// pane already shows another piece.
-function useAutoEditCompare() {
-  useEffect(() => getEditor().subscribe((s, prev) => {
-    if (s.layer !== 'piece' || s.project === prev.project || !s.sel.actorId) return
-    const id = editTarget(s, s.sel.actorId)?.itemId
-    const find = (p: typeof s.project) => p.sequence.tracks.flatMap(t => t.items).find(i => i.id === id)
-    const now = find(s.project), before = find(prev.project)
-    if (!now || !before || offsetKeyCount(before) || !offsetKeyCount(now)) return
-    if ((s.itemPreview && s.itemPreview !== now.id) || s.previewEdit) return
-    s.openEditCompare(now.id)
-  }), [])
-}
-
 export default function Inspector() {
-  useAutoEditCompare()
   const go2 = useEditor(s => s.project.actors.find(a => a.id === s.sel.actorId && a.robot === 'go2')?.id)
   return <>{go2 && <Go2BlockPanel key={go2} actorId={go2} />}<InspectorBody /></>
 }
 
 function InspectorBody() {
   const ed = getEditor()
-  const { project, defs, frame, sel, editing, layer, clipEdit } = useEditor(s => s)
+  const { project, defs, frame, sel, editing, clipEdit } = useEditor(s => s)
   const [lenMsg, setLenMsg] = useState(false)
   const [tol, setTol] = useState(0.001)
   const [simpMsg, setSimpMsg] = useState<{ n: number; at: number } | null>(null)
@@ -43,9 +28,8 @@ function InspectorBody() {
   const { clipId } = target
   const clip = project.clips[clipId]
   const item = targetItem({ project, editing, clipEdit }, target.itemId)!
-  const piece = layer === 'piece' && !clipMode, asset = layer === 'asset' && clipMode
   const nOffset = clipMode ? curveKeyCount(clip.offset) : offsetKeyCount(item)
-  const lockedTrack = asset ? false : trackLocked(project, actor.id) || clipLocked(project, clipId) // a clip's 수정 층 is the asset's own
+  const lockedTrack = clipMode ? false : trackLocked(project, actor.id) || clipLocked(project, clipId) // a clip's 수정 층 is the asset's own
 
   const channels = sel.channel === 'root' ? ROOT : sel.channel && !sel.channel.startsWith('group:') ? [sel.channel] : []
   const group = !sel.channel ? null
@@ -72,28 +56,13 @@ function InspectorBody() {
         <b className="insp-title">{clipMode ? `${actor.name} (클립 편집)` : actor.name}</b>
         <span className="pp-tag">{actor.robot === 'g1' ? 'G1' : 'GO2'}</span>
       </div>
-      <section className="insp-sec">
-      <h3 className="insp-sec-t">편집 대상</h3>
-      {clipMode ? <>
-      <div className="insp-row insp-layer" role="group" aria-label="편집 대상">
-        <button aria-pressed={asset} onClick={() => act.setLayer('asset')} title="원본 곡선은 그대로 두고, 이 클립에 차이를 더합니다(이 클립을 쓰는 모든 조각과 CSV 저장에 반영)">이 클립 수정</button>
-        <button aria-pressed={!asset} onClick={() => act.setLayer('clip')} title="원본 곡선 자체를 고칩니다(자동 키 필요)">원본 클립 수정</button>
+      {/* edits always go to a 수정 층 (user: only the clip being edited changes): 시퀀스 = this piece, 클립 편집 = this clip */}
+      <div className="insp-note">
+        <span className="insp-hint">{nOffset ? `${clipMode ? '이 클립' : '이 조각'}의 수정 키 ${nOffset}개` : clipMode ? '원본은 그대로 두고 이 클립에 더합니다' : '원본 클립은 그대로 두고 이 조각에만 더합니다'}</span>
+        {nOffset > 0 && (clipMode
+          ? <button onClick={() => act.clearClipOffset(clipId)} title="이 클립의 수정을 모두 지우고 원본대로 되돌립니다">수정 지우기</button>
+          : <button disabled={lockedTrack} onClick={() => act.clearOffset(item.id)} title="이 조각의 수정을 모두 지우고 원본 클립대로 되돌립니다">수정 지우기</button>)}
       </div>
-      {asset ? <div className="insp-note">
-        <span className="insp-hint">{nOffset ? `이 클립의 수정 키 ${nOffset}개` : '원본은 그대로 두고 이 클립에 더합니다'}</span>
-        {nOffset > 0 && <button onClick={() => act.clearClipOffset(clipId)} title="이 클립의 수정을 모두 지우고 원본대로 되돌립니다">수정 지우기</button>}
-      </div> : <p className="insp-hint">원본 곡선을 직접 고칩니다</p>}
-      </> : <>
-      <div className="insp-row insp-layer" role="group" aria-label="편집 대상">
-        <button aria-pressed={piece} onClick={() => act.setLayer('piece')} title="원본 클립은 그대로 두고, 이 조각에만 차이를 더합니다(재생·CSV = 원본 + 수정)">이 조각 수정</button>
-        <button aria-pressed={!piece} onClick={() => act.setLayer('clip')} title="공유 클립 자체를 고칩니다. 같은 클립을 쓰는 모든 조각이 바뀝니다(자동 키 필요)">원본 클립 수정</button>
-      </div>
-      {piece ? <div className="insp-note">
-        <span className="insp-hint">{nOffset ? `이 조각의 수정 키 ${nOffset}개` : '원본 클립은 그대로 두고 이 조각에만 더합니다'}</span>
-        {nOffset > 0 && <button disabled={lockedTrack} onClick={() => act.clearOffset(item.id)} title="이 조각의 수정을 모두 지우고 원본 클립대로 되돌립니다">수정 지우기</button>}
-      </div> : <p className="insp-hint">같은 클립을 쓰는 모든 조각이 바뀝니다</p>}
-      </>}
-      </section>
       {xfade && <p className="insp-hint" role="status">크로스페이드 구간에서는 클립 보기에서 편집하세요</p>}
       {!xfade && stitch && <p className="insp-hint" role="status">이 프레임의 루트 위치·방향은 앞 클립 끝에 맞춰집니다</p>}
       <JointPanel />

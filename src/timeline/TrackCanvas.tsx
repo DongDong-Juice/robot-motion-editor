@@ -93,16 +93,6 @@ export default function TrackCanvas() {
           const pad = Math.abs(u.dragDf) + 1, lo = xToFrame(cs, LABEL_W - KEY) - pad, hi = xToFrame(cs, W + KEY) + pad
           const frames = new Set<number>()
           for (const ch of r.channels) for (const k of keysIn(it.keys.channels[ch]?.keys ?? [], lo, hi)) frames.add(k.f)
-          if (it.piece) { // 이 조각 수정: the clip's own keys stay visible, dimmed, under the 수정 층 keys
-            const base = new Set<number>()
-            for (const ch of r.channels) for (const k of keysIn(it.clip.channels[ch]?.keys ?? [], lo, hi)) if (!frames.has(k.f)) base.add(k.f)
-            ctx.fillStyle = C.text; ctx.globalAlpha = 0.22
-            for (const f of base) {
-              const x = frameToX(cs, f), cy = y + ROW_H / 2, h = KEY / 2 - 0.5
-              ctx.beginPath(); ctx.moveTo(x, cy - h); ctx.lineTo(x + h, cy); ctx.lineTo(x, cy + h); ctx.lineTo(x - h, cy); ctx.fill()
-            }
-            ctx.globalAlpha = 1
-          }
           for (const f of frames) {
             const isSel = s.sel.actorId === r.actorId &&
               r.channels.some(ch => s.sel.keys.some(k => sameKey(k, { channel: ch, f })))

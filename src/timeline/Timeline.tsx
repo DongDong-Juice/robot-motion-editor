@@ -70,7 +70,7 @@ function ClipEditBar({ clipId, name }: { clipId: string; name: string }) {
 function TimelineHeader() {
   const playing = useEditor(s => s.playing), frame = useEditor(s => s.frame)
   const end = useEditor(s => sequenceEnd(s.project))
-  const autoKey = useEditor(s => s.autoKey), view = useEditor(s => s.view)
+  const view = useEditor(s => s.view)
   const project = useEditor(s => s.project), editing = useEditor(s => s.editing), clipEdit = useEditor(s => s.clipEdit)
   const st = getEditor().getState()
   const e = editing || clipEdit ? editingItem({ project, editing, clipEdit }) : null
@@ -89,7 +89,6 @@ function TimelineHeader() {
       <span className="tl-time"><b>{formatTimecode(frame)}</b><span className="tl-dim"> / {formatTimecode(shownEnd)}</span></span>
       <span className="tl-fps">60 fps</span>
       <span className="tl-sep" aria-hidden="true" />
-      <button className="tl-auto" aria-pressed={autoKey} onClick={st.toggleAutoKey} title="켜면 원본 클립 수정에서 값을 바꿀 때 그 프레임에 키가 자동으로 들어갑니다"><i aria-hidden="true" />자동 키</button>
       <CutControl disabled={clipView} />
       <span className="tl-seg" role="group" aria-label="클립 보기" title={clipView ? '클립 보기 방식 (Tab)' : '클립을 열면 고를 수 있습니다'}>
         <button aria-pressed={view === 'tracks'} disabled={!clipView} onClick={() => st.setView('tracks')}>트랙</button>

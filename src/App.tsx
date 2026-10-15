@@ -19,16 +19,11 @@ import CsvFpsDialog from './project/CsvFpsDialog'
 import { MENUBAR_H, layoutBounds, useLayout, type Layout } from './layout/useLayout'
 import { tv } from './timeline/viewState'
 
-function AutoKeyHint() {
-  const off = useEditor(s => s.layer === 'clip' && !s.autoKey && !!s.sel.channel && !s.sel.channel.startsWith('group:')) // 이 조각 수정 keys without 자동 키
-  return off ? <div className="stage-hint">자동 키 꺼짐: 기즈모 변경은 저장되지 않습니다</div> : null
-}
-
 export function CrossfadeHint() {
   const lock = useEditor(gizmoLock)
   return lock === 'crossfade' ? <div className="stage-hint hi">크로스페이드 구간에서는 클립 보기에서 편집하세요</div>
     : lock === 'stitch' ? <div className="stage-hint hi">이 프레임의 루트 위치·방향은 앞 클립 끝에 맞춰집니다</div>
-    : lock === 'compare' ? <div className="stage-hint hi">원본을 보는 중입니다 · 오른쪽 패널로 수정하면 수정본 창에 보입니다</div>
+    : lock === 'compare' ? <div className="stage-hint hi">이 조각은 오른쪽 클립 프리뷰에서 관절을 눌러 고치세요</div>
     : lock === 'clipRoot' ? <div className="stage-hint hi">클립 편집에서는 루트를 패널 숫자로 고치세요</div> : null
 }
 
@@ -132,7 +127,7 @@ export default function App() {
       {status === 'ready' && <CsvFpsDialog />}
       <main id="stage">
         {status === 'ready'
-          ? <StagePanes robot={<div className="stage-3d"><AutoKeyHint /><CrossfadeHint /><Stage /></div>} />
+          ? <StagePanes robot={<div className="stage-3d"><CrossfadeHint /><Stage /></div>} />
           : <div className="stage-3d">{status === 'loading' ? '로봇 불러오는 중…' : status}</div>}
       </main>
       <aside id="inspector">{status === "ready" && <Inspector />}</aside>

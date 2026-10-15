@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 
-// 조각 수정 층: the inspector edits the piece's offset by default (no 자동 키), the shared clip stays as it was.
-test('이 조각 수정: slider works without 자동 키, clip untouched; 원본 클립 수정 needs 자동 키; 수정 지우기 restores', async ({ page }) => {
+// 조각 수정 층: the inspector always edits the piece's offset (no 편집 대상 choice, no 자동 키), the shared clip stays as it was.
+test('edits go to the piece: clip untouched; no 편집 대상 / 자동 키 controls; 수정 지우기 restores', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
   const ch = 'FL_thigh_joint'
@@ -16,18 +16,14 @@ test('이 조각 수정: slider works without 자동 키, clip untouched; 원본
     return { clipKeys: p.clips[it.refId].channels[ch]?.keys.length ?? 0, offset: it.offset?.[ch]?.keys.map((k: any) => [k.f, +k.v.toFixed(4)]) ?? null }
   }, ch)
 
-  await expect(page.getByRole('button', { name: '이 조각 수정' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('button', { name: '원본 클립 수정' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '자동 키' })).toHaveCount(0)
   await expect(page.getByRole('slider', { name: `${ch} 슬라이더` })).toBeEnabled()
   const num = page.getByLabel(`${ch} 숫자`)
   await num.fill('40'); await num.press('Enter')
   await expect.poll(state).toEqual({ clipKeys: 0, offset: [[15, 0], [30, +(40 * Math.PI / 180 - 0).toFixed(4)], [45, 0]] }) // eased back around the edit
   await expect(page.getByText('이 조각의 수정 키 3개')).toBeVisible()
 
-  await page.getByRole('button', { name: '원본 클립 수정' }).click()
-  await expect(page.getByRole('slider', { name: `${ch} 슬라이더` })).toBeDisabled()
-  await expect(page.locator('.jp-hint', { hasText: '자동 키를 켜면 원본 클립을 고칠 수 있습니다' })).toBeVisible()
-
-  await page.getByRole('button', { name: '이 조각 수정' }).click()
   await page.getByRole('button', { name: '수정 지우기' }).click()
   await expect.poll(state).toEqual({ clipKeys: 0, offset: null })
 })
