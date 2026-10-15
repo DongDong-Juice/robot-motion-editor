@@ -1,5 +1,7 @@
 # 모션 편집기 M3(참조 영상) Implementation Plan
 
+> **상태 (2026-10-12):** 완료 · `master` 머지됨. 아래 체크박스는 작업 중 갱신하지 않았음 — 진행 기록은 git 이력을 볼 것.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 사람 동작 영상을 가져와 V1 트랙에 배치·트림하고, 무대 뷰어에 오버레이(투명도) 또는 분할로 띄워 재생헤드와 프레임 단위로 동기화한다.

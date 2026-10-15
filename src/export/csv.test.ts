@@ -7,8 +7,10 @@ import { makeKey } from '../model/curve'
 import { eulerToQuat, quatYaw } from '../model/rootMath'
 import { evaluate, type RobotDefs } from '../model/evaluate'
 import type { Project } from '../model/types'
-import { csvFileName, exportItemCsv, itemFrameRange, posesToCsv, samplePoses } from './csv'
+import { csvFileName, exportClipCsv, exportItemCsv, itemFrameRange, posesToCsv, samplePoses } from './csv'
 import { validatePoses } from './validate'
+import { baseClip } from '../model/itemClip'
+import { evaluateClip } from '../model/pose'
 
 const load = loadDef
 const defs: RobotDefs = { g1: load('g1'), go2: load('go2') }
@@ -42,6 +44,18 @@ test('go2 csv: 24 fields', () => {
   expect(lines[0].split(',')[11]).toBe('FL_hip_joint')
   expect(lines[1].split(',')).toHaveLength(24)
   expect(lines[1].split(',').slice(0, 3)).toEqual(['60', '1', '12'])
+})
+
+test('끝 기본자세: 전이 + 0.5 s rows after the piece, ending in the standing pose, no drift', () => {
+  const p = structuredClone(proj), it = itemOf(p, g1.id), plain = samplePoses(p, defs, g1.id, it.id, 'world')
+  it.restTail = true
+  const rows = samplePoses(p, defs, g1.id, it.id, 'world'), n = plain.length
+  expect(rows.length).toBeGreaterThanOrEqual(n + 30 + 15) // 전이 auto ≥ 15, then 정지 30
+  expect(rows.slice(0, n)).toEqual(plain) // the piece itself unchanged
+  for (const r of rows.slice(-30)) {
+    r.q.forEach((v, j) => expect(v).toBeCloseTo(defs.g1.rest.q[j], 6))
+    expect(r.rootPos[0]).toBeCloseTo(plain[n - 1].rootPos[0], 6); expect(r.rootPos[1]).toBeCloseTo(plain[n - 1].rootPos[1], 6)
+  }
 })
 
 test('itemFrameRange', () => {
@@ -96,6 +110,17 @@ test('file names: sanitize and dedupe', () => {
   expect(csvFileName(p, go2.id, itemOf(p, go2.id).id, new Set())).toBe('GO2_clip_01.csv')
 })
 
+test('file names: cut pieces of one clip are numbered by start', () => {
+  const p = structuredClone(proj)
+  const a = itemOf(p, g1.id)
+  const track = p.sequence.tracks.find(t => t.items.includes(a))!
+  const b = { ...a, id: 'piece-b', start: a.start + 500 }
+  track.items.unshift(b) // array order must not matter
+  expect(csvFileName(p, g1.id, b.id, new Set())).toBe(`G1_${p.clips[a.refId].name}_2.csv`)
+  expect(csvFileName(p, g1.id, a.id, new Set())).toBe(`G1_${p.clips[a.refId].name}_1.csv`)
+  expect(csvFileName(p, go2.id, itemOf(p, go2.id).id, new Set())).toBe('GO2_clip_01.csv')
+})
+
 test('file name uses actor name when robot shared', () => {
   const p = addActor(proj, 'g1')
   expect(csvFileName(p, p.actors[2].id, itemOf(p, p.actors[2].id).id, new Set())).toBe('G1__2_clip_02.csv')
@@ -145,11 +170,27 @@ test('exportItemCsv: same text as samplePoses+posesToCsv, name from csvFileName'
   }
 })
 
-test('exportItemCsv: restPose item starts at zero joints; warnings are returned', () => {
+test('exportItemCsv: a 기본자세 덧붙이기 item starts at the 기본자세 (차렷) joint angles; warnings are returned', () => {
   const rest = structuredClone(proj)
-  itemOf(rest, g1.id).restPose = true
+  itemOf(rest, g1.id).restPose = 'prepend'
   const first = exportItemCsv(rest, defs, g1.id, itemOf(rest, g1.id).id, 'local').text.split('\n')[1].split(',')
-  first.slice(11, 40).forEach(v => expect(Math.abs(Number(v))).toBeLessThan(1e-6))
+  first.slice(11, 40).forEach((v, i) => expect(Math.abs(Number(v) - defs.g1.rest.q[i])).toBeLessThan(1e-6))
   expect(exportItemCsv(proj, defs, g1.id, itemOf(proj, g1.id).id, 'world').warnings).toEqual(
     validatePoses(samplePoses(proj, defs, g1.id, itemOf(proj, g1.id).id, 'world'), defs.g1, itemFrameRange(itemOf(proj, g1.id)).from))
+})
+
+test('exportClipCsv (클립 편집 CSV 저장): one row per clip frame = the clip with its 수정 층, local root, <G1|GO2>_<clip>.csv', () => {
+  const p = structuredClone(proj), clip = p.clips[itemOf(p, g1.id).refId], j = defs.g1.joints.findIndex(x => x.name === 'left_knee_joint')
+  clip.name = 'my clip'
+  clip.channels['root.x'] = { keys: [makeKey(0, 2), makeKey(clip.length - 1, 3)] }
+  clip.offset = { left_knee_joint: { keys: [makeKey(10, 0.3)] } }
+  const { name, text, warnings } = exportClipCsv(p, defs, clip.id)
+  expect(name).toBe('G1_my_clip.csv')
+  expect(warnings).toEqual([])
+  const rows = text.split('\n').map(r => r.split(','))
+  expect(rows).toHaveLength(clip.length + 1)
+  expect(+rows[1][4]).toBeCloseTo(0, 6) // local root: first frame x = 0
+  expect(+rows[11][11 + j]).toBeCloseTo(evaluateClip(baseClip(p, defs, clip.id)!, defs.g1, 10).q[j], 6)
+  expect(+rows[11][11 + j]).toBeCloseTo(0.3, 6) // 수정 층 on a zero curve
+  expect(clip.channels.left_knee_joint).toBeUndefined() // the clip itself unchanged
 })

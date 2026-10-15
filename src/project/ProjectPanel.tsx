@@ -1,7 +1,8 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
-import { relinkMedia, setImportResult, useImportUi } from '../importActions'
+import { relinkMedia, setImportResult, useImportUi, importDroppedFiles } from '../importActions'
 import { mediaUrl, subscribeMedia } from '../media/registry'
 import { getEditor, useEditor } from '../store/store'
+import { curveKeyCount } from '../model/itemClip'
 import { setDragged } from '../timeline/assetDrop'
 
 function RenameInput({ name, onDone }: { name: string; onDone: (v: string | null) => void }) {
@@ -37,7 +38,7 @@ function CardMenu({ menu, items, close }: { menu: Menu; items: [string, () => vo
     else if (e.key === 'Tab') close(true)
   }
   return (
-    <div ref={ref} role="menu" aria-label="에셋" className="tl-menu" style={{ left: menu.x, top: menu.y }} onKeyDown={onKey}>
+    <div ref={ref} role="menu" aria-label="목록" className="tl-menu" style={{ left: menu.x, top: menu.y }} onKeyDown={onKey}>
       {items.map(([label, run]) => <button key={label} role="menuitem" tabIndex={-1} onClick={() => { close(false); run() }}>{label}</button>)}
     </div>
   )
@@ -45,7 +46,7 @@ function CardMenu({ menu, items, close }: { menu: Menu; items: [string, () => vo
 
 export default function ProjectPanel() {
   const ed = getEditor()
-  const project = useEditor(s => s.project)
+  const project = useEditor(s => s.project), clipEdit = useEditor(s => s.clipEdit)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [msg, setMsg] = useState(0) // timestamp of the last rejection; a new value restarts the 3 s timer
   useEffect(() => { if (!msg) return; const t = setTimeout(() => setMsg(0), 3000); return () => clearTimeout(t) }, [msg])
@@ -79,21 +80,39 @@ export default function ProjectPanel() {
     },
   })
   const sec = (f: number) => `${(f / 60).toFixed(2)}초`
+  // CSV files dragged in from the desktop: highlight the panel and import on drop (asset cards dragged out are not files)
+  const [over, setOver] = useState(false)
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files')
+  const fileDrop = {
+    onDragEnter: (e: React.DragEvent) => { if (hasFiles(e)) { e.preventDefault(); setOver(true) } },
+    onDragOver: (e: React.DragEvent) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setOver(true) } },
+    onDragLeave: (e: React.DragEvent) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false) },
+    onDrop: (e: React.DragEvent) => {
+      if (!hasFiles(e)) return
+      e.preventDefault(); setOver(false)
+      void importDroppedFiles(Array.from(e.dataTransfer.files))
+    },
+  }
 
   return (
-    <div className="pp">
-      <h2>에셋</h2>
-      {!clips.length && !project.media.length && <p className="pp-dim">파일 ▸ CSV 가져오기로 모션을 불러오세요</p>}
+    <div className={over ? 'pp drop' : 'pp'} {...fileDrop}>
+      {over && <div className="pp-drop" aria-hidden="true">CSV를 놓으면 가져옵니다</div>}
+      <h2>목록</h2>
+      {!clips.length && !project.media.length && <p className="pp-dim">메뉴 ▸ CSV 가져오기 또는 CSV 파일을 여기로 끌어다 놓으세요</p>}
       {clips.length > 0 && <h3>모션 (CSV)</h3>}
       {clips.map(c => (
-        <div key={c.id} className="pp-card" tabIndex={0} draggable={renaming !== c.id}
+        <div key={c.id} className={clipEdit === c.id ? "pp-card editing" : "pp-card"} tabIndex={0} draggable={renaming !== c.id}
           onDragStart={e => { e.dataTransfer.setData('application/x-motion-clip', c.id); e.dataTransfer.effectAllowed = 'copy'; setDragged({ kind: 'clip', id: c.id }) }}
           onDragEnd={() => setDragged(null)}
-          onDoubleClick={() => setRenaming(c.id)} {...menuProps('clip', c.id)}>
+          onDoubleClick={() => { if (renaming !== c.id) ed.getState().openClipEdit(c.id) }} {...menuProps('clip', c.id)}>
           <div className="pp-head">
             {renaming === c.id
               ? <RenameInput name={c.name} onDone={v => { if (v?.trim() && !ed.getState().setClip(c.id, { name: v })) setLmsg(performance.now()); setRenaming(null) }} />
-              : <span className="pp-name" title={c.name}>{c.name}</span>}
+              : <span className="pp-name" title={curveKeyCount(c.offset) ? `${c.name}
+수정됨 · 수정 키 ${curveKeyCount(c.offset)}개` : `${c.name}
+이름을 더블클릭하면 이름 변경`}
+                  onDoubleClick={e => { e.stopPropagation(); setRenaming(c.id) }}>
+                  {curveKeyCount(c.offset) > 0 && <span className="pp-mod" aria-label="수정됨">● </span>}{c.name}</span>}
             <span className="pp-tag">{c.robot.toUpperCase()}</span>
           </div>
           <div className="pp-box">
@@ -119,7 +138,7 @@ export default function ProjectPanel() {
         )
       })}
       {menu && <CardMenu menu={menu} close={closeMenu} items={menu.kind === 'clip'
-        ? [['이름 변경', () => setRenaming(menu.id)], ['삭제', () => del(menu.id)]]
+        ? [['클립 편집', () => ed.getState().openClipEdit(menu.id)], ['이름 변경', () => setRenaming(menu.id)], ['삭제', () => del(menu.id)]]
         : [['삭제', () => delMedia(menu.id)]]} />}
       {res && (
         <div className="pp-msg" role="status">

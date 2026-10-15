@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
+import { trackDrag } from './drag'
 import { onHandleArrow } from '../layout/useLayout'
-import { clampDf, clipLocked, editingItem, editTarget, getEditor, type KeyRef } from '../store/store'
+import { actorOf, clampDf, CLIP_ACTOR, clipLocked, editingItem, editTarget, getEditor, keyOwner, keyTarget, targetItem, type KeyRef } from '../store/store'
 import type { Interp, Sequence } from '../model/types'
 import { tv } from './viewState'
 import { buildRows, frameToX, hitKey, hoverFrame, hoverScrub, keysIn, rowKey, xToFrame, type TimeScale } from './timeScale'
 import { followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { drawRuler, LABEL_W, RULER_H } from './ruler'
+import { drawPieceBounds, drawRangeBand, minScrollF, startRangeDrag } from './rangeBand'
+import { drawScrollbar, pressScrollbar, SB_W, sbGeom } from './vscroll'
 import { usePhysics } from '../physics/physicsStore'
 import { stale } from '../physics/runItem'
 import { withDefaults } from '../physics/settings'
@@ -35,14 +38,17 @@ export default function TrackCanvas() {
     const canvas = cv.current!, ed = getEditor(), u = ui.current
     const css = getComputedStyle(document.documentElement)
     const col = (n: string) => css.getPropertyValue(n).trim()
-    const C = { bg: col('--bg'), panel: col('--panel'), line: col('--line'), text: col('--text'), accent: col('--accent') }
-    let W = 0, H = 0, raf = 0
+    const C = { bg: col('--bg'), panel: col('--panel'), line: col('--line'), text: col('--text'), accent: col('--accent'), piece: col('--piece'), rest: col('--rest'), blend: col('--blend'), inertia: col('--inertia') }
+    let W = 0, H = 0, raf = 0, sbHover = false, sbDrag = false
 
     const scale = (): TimeScale => ({ x0: LABEL_W - tv.scrollF * tv.ppf, pxPerFrame: tv.ppf })
+    // the open item, its clip and the curves keys are edited on: the clip, or (이 조각 수정) the item's 수정 층 (owner = item id)
     const itemOf = (actorId: string) => {
-      const s = ed.getState(), t = editTarget(s, actorId)
-      const item = t && s.project.sequence.tracks.flatMap(tr => tr.items).find(i => i.id === t.itemId)
-      return item ? { item, clip: s.project.clips[item.refId] } : null
+      const s = ed.getState(), t = keyTarget(s, actorId)
+      const item = t && targetItem(s, t.itemId)
+      const own = t && keyOwner(s.project, t.owner)
+      // piece: keys sit on a 수정 층 (the piece's or the clip's); only those keys are drawn (user: hide the clip's own keys)
+      return item && own ? { item, clip: s.project.clips[item.refId], owner: t.owner, keys: own, piece: own.offset } : null
     }
     // clip view: the time axis is clip frames, so the clip scale is the view scale
     const clipScale = (actorId: string): TimeScale | null => itemOf(actorId) ? scale() : null
@@ -50,11 +56,15 @@ export default function TrackCanvas() {
       const e = editingItem(ed.getState())
       return e ? e.item.start - e.item.trimIn + Math.min(Math.max(clipF, 0), e.clip.length - 1) : 0
     }
-    const rows = () => { const s = ed.getState(), a = editingItem(s)?.actorId; return buildRows(s.project, s.defs, u.expanded).filter(r => r.actorId === a) }
+    const rows = () => {
+      const s = ed.getState(), a = editingItem(s)?.actorId, v = s.clipEdit ? actorOf(s, CLIP_ACTOR) : undefined
+      return buildRows(s.project, s.defs, u.expanded, v ? [v] : undefined).filter(r => r.actorId === a)
+    }
     const band = () => { const e = editingItem(ed.getState()), m = e && usePhysics.getState().byItem[e.item.id]?.metrics; return e && m ? { e, m } : null }
     const top = () => RULER_H + (band() ? BAND : 0) // rows start here
     const rowAt = (y: number) => Math.floor((y - top() + u.scrollY) / ROW_H)
     const rowY = (i: number) => top() + i * ROW_H - u.scrollY
+    const sbar = () => sbGeom(top(), H, rows().length * ROW_H, u.scrollY) // vertical scrollbar, null when the rows fit
 
     const draw = () => {
       raf = 0
@@ -66,12 +76,14 @@ export default function TrackCanvas() {
       ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H)
       ctx.font = '11px "IBM Plex Sans KR", sans-serif'; ctx.textBaseline = 'middle'
       const rs = rows(), sc = scale(), T = top()
+      const maxY = Math.max(0, rs.length * ROW_H - (H - T))
+      if (u.scrollY > maxY) u.scrollY = maxY // groups collapsed or the panel grew
 
       ctx.save(); ctx.beginPath(); ctx.rect(0, T, W, H - T); ctx.clip()
       rs.forEach((r, i) => {
         const y = rowY(i)
         if (y + ROW_H < T || y > H) return
-        const actor = s.project.actors.find(a => a.id === r.actorId)!
+        const actor = actorOf(s, r.actorId)!
         const isActorRow = r.kind === 'group' && r.channels.length === 0
         ctx.fillStyle = isActorRow ? C.panel : C.bg; ctx.fillRect(0, y, W, ROW_H)
         ctx.fillStyle = C.line; ctx.fillRect(0, y + ROW_H - 1, W, 1)
@@ -80,13 +92,13 @@ export default function TrackCanvas() {
           // only keys in the visible frame range (widened by a key-drag preview offset)
           const pad = Math.abs(u.dragDf) + 1, lo = xToFrame(cs, LABEL_W - KEY) - pad, hi = xToFrame(cs, W + KEY) + pad
           const frames = new Set<number>()
-          for (const ch of r.channels) for (const k of keysIn(it.clip.channels[ch]?.keys ?? [], lo, hi)) frames.add(k.f)
+          for (const ch of r.channels) for (const k of keysIn(it.keys.channels[ch]?.keys ?? [], lo, hi)) frames.add(k.f)
           for (const f of frames) {
             const isSel = s.sel.actorId === r.actorId &&
               r.channels.some(ch => s.sel.keys.some(k => sameKey(k, { channel: ch, f })))
             const x = frameToX(cs, f + (isSel ? u.dragDf : 0)), cy = y + ROW_H / 2, h = KEY / 2 + 0.5
             if (x < LABEL_W - KEY || x > W + KEY) continue
-            ctx.fillStyle = isSel ? C.accent : C.text
+            ctx.fillStyle = isSel ? C.accent : it.piece ? C.piece : C.text
             ctx.beginPath()
             ctx.moveTo(x, cy - h); ctx.lineTo(x + h, cy); ctx.lineTo(x, cy + h); ctx.lineTo(x - h, cy); ctx.fill()
           }
@@ -103,22 +115,19 @@ export default function TrackCanvas() {
 
       const b = band()
       if (b) { // 보조력 band: the item's CSV frame 0 is clip frame trimIn
-        const actor = s.project.actors.find(a => a.id === b.e.actorId)!
+        const actor = actorOf(s, b.e.actorId)!
         ctx.fillStyle = C.panel; ctx.fillRect(0, RULER_H, W, BAND); ctx.fillStyle = C.line; ctx.fillRect(0, RULER_H + BAND - 1, W, 1)
         drawAssist(ctx, b.m.pct, b.m.segments, b.e.item.trimIn, sc, LABEL_W, W, RULER_H + 3, BAND - 6, actor.color,
           withDefaults(s.project.physics)[actor.robot].warnPct, stale(s.project, s.defs, b.e.actorId!, b.e.item.id))
         ctx.fillStyle = C.text; ctx.fillText('보조력', 6, RULER_H + BAND / 2)
       }
       const e = editingItem(s)
-      if (e) { // dim the trimmed-away part of the clip
-        ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, RULER_H, W - LABEL_W, H - RULER_H); ctx.clip()
-        ctx.fillStyle = 'rgba(0,0,0,0.4)'
-        const xa = frameToX(sc, e.item.trimIn), xb = frameToX(sc, e.item.trimOut)
-        ctx.fillRect(LABEL_W, RULER_H, xa - LABEL_W, H - RULER_H); ctx.fillRect(xb, RULER_H, W - xb, H - RULER_H)
-        ctx.restore()
+      if (e) { // only the piece's frames (and its lead-in / 끝 기본자세): the rest of the clip blank
+        drawPieceBounds(ctx, sc, e.item, RULER_H, H, LABEL_W, W, C)
       }
       const pa = e?.actorId ?? s.sel.actorId, tg = pa ? editTarget(s, pa) : null, cf = tg?.f ?? 0
-      drawRuler(ctx, sc, W, RULER_H, NO_SEQ, cf, C)
+      drawRuler(ctx, sc, W, RULER_H, NO_SEQ, cf, C, true)
+      if (s.range) drawRangeBand(ctx, sc, s.range, 0, H, LABEL_W, W, C.accent)
 
       if (u.box) {
         const b = u.box
@@ -128,6 +137,8 @@ export default function TrackCanvas() {
       const px = Math.round(frameToX(sc, cf)) + 0.5
       if (px >= LABEL_W) { ctx.fillStyle = C.accent; ctx.fillRect(px - 0.5, 0, 1, H) }
       ctx.fillStyle = C.line; ctx.fillRect(LABEL_W - 1, 0, 1, H)
+      const sb = sbar()
+      if (sb) drawScrollbar(ctx, W, sb, sbHover, sbDrag, C)
     }
     const schedule = () => { if (!raf) raf = requestAnimationFrame(draw) }
 
@@ -140,14 +151,12 @@ export default function TrackCanvas() {
     resetFollow()
     const ro = new ResizeObserver(resize); ro.observe(canvas); resize()
     const unsub = ed.subscribe(schedule), unsubPhys = usePhysics.subscribe(schedule)
+    document.fonts?.addEventListener('loadingdone', schedule) // labels drawn in the fallback font before IBM Plex arrived
 
     // ---- mouse ----
     const pos = (e: MouseEvent) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top } }
     const frameAtX = (x: number) => toSeq(xToFrame(scale(), x))
-    const drag = (mv: (e: MouseEvent) => void, up: (e: MouseEvent) => void) => {
-      const end = (e: MouseEvent) => { removeEventListener('mousemove', mv); removeEventListener('mouseup', end); up(e) }
-      addEventListener('mousemove', mv); addEventListener('mouseup', end)
-    }
+    const drag = trackDrag
 
     // key under the cursor, with the owning actor's clip
     const keyAt = (x: number, y: number) => {
@@ -155,8 +164,8 @@ export default function TrackCanvas() {
       if (!r || y < top() || x < LABEL_W) return null
       const cs = clipScale(r.actorId), it = itemOf(r.actorId)
       if (!cs || !it) return null
-      const hit = hitKey([r], it.clip, cs, ROW_H, x, ROW_H / 2)
-      return hit && { actorId: r.actorId, clipId: it.clip.id, hit, channel: r.kind === 'channel' ? r.channels[0] : null }
+      const hit = hitKey([r], it.keys, cs, ROW_H, x, ROW_H / 2)
+      return hit && { actorId: r.actorId, clipId: it.owner, hit, channel: r.kind === 'channel' ? r.channels[0] : null }
     }
     const selected = (hit: KeyRef[]) => hit.every(h => ed.getState().sel.keys.some(q => sameKey(q, h)))
 
@@ -164,11 +173,14 @@ export default function TrackCanvas() {
       if (e.button !== 0) return
       setMenu(null); canvas.focus()
       const { x, y } = pos(e), s = ed.getState()
+      if (y < RULER_H && startRangeDrag(e, x, scale, m => pos(m).x, drag)) return // Shift+drag on the ruler: 구간
       if (y < top()) { // ruler (and 보조력 band) scrub
         s.setFrame(frameAtX(x))
         drag(m => s.setFrame(frameAtX(pos(m).x)), () => {})
         return
       }
+      const sb = sbar()
+      if (sb && x >= W - SB_W) { pressScrollbar(sb, y, u.scrollY, v => { u.scrollY = v; schedule() }, on => { sbDrag = on; schedule() }, drag, m => pos(m).y); return }
       if (x < LABEL_W) { // label column
         const r = rows()[rowAt(y)]
         if (!r) return
@@ -187,13 +199,13 @@ export default function TrackCanvas() {
           else s.selectKeys(k.hit, true)
         } else if (!selected(k.hit)) s.selectKeys(k.hit, false)
         if (clipLocked(ed.getState().project, k.clipId)) return // selection works; moving is blocked (Timeline shows the message)
-        const clipLen = ed.getState().project.clips[k.clipId].length
+        const clipLen = keyOwner(ed.getState().project, k.clipId)!.length
         drag(m => { u.dragDf = clampDf(clipLen, ed.getState().sel.keys, (pos(m).x - x) / tv.ppf); schedule() }, m => {
           const df = Math.round((pos(m).x - x) / tv.ppf), st = ed.getState()
           u.dragDf = 0
           if (df !== 0 && st.sel.keys.length) st.moveKeys(k.clipId, st.sel.keys, df)
           schedule()
-        })
+        }, () => { u.dragDf = 0; schedule() })
         return
       }
       // empty: click = setFrame, drag = box select
@@ -217,7 +229,7 @@ export default function TrackCanvas() {
         for (let i = Math.max(r0, 0); i <= r1 && i < rs.length; i++) {
           const r = rs[i], cs = clipScale(r.actorId), it = itemOf(r.actorId)
           if (!cs || !it || (actorId && r.actorId !== actorId)) continue
-          for (const ch of r.channels) for (const key of it.clip.channels[ch]?.keys ?? []) {
+          for (const ch of r.channels) for (const key of it.keys.channels[ch]?.keys ?? []) {
             const kx = frameToX(cs, key.f)
             if (kx >= bx0 && kx <= bx1 && kx >= LABEL_W) { actorId = r.actorId; found.push({ channel: ch, f: key.f }) }
           }
@@ -226,11 +238,14 @@ export default function TrackCanvas() {
         if (actorId && st.sel.actorId !== actorId) st.select(actorId)
         st.selectKeys(found, additive)
         schedule()
-      })
+      }, () => { u.box = null; schedule() })
     }
 
     const hover = hoverScrub(() => ed.getState().frame, f => { markHover(); ed.getState().setFrame(f) })
     const onMove = (e: MouseEvent) => {
+      const { x, y } = pos(e), over = y >= top() && x >= W - SB_W && !!sbar()
+      if (over !== sbHover) { sbHover = over; schedule() }
+      if (over) return
       const f = hoverFrame(pos(e).x, LABEL_W, scale(), e.buttons !== 0 || ed.getState().playing || menuOpen.current || !editingItem(ed.getState()))
       if (f !== null) hover.push(toSeq(f))
     }
@@ -241,11 +256,11 @@ export default function TrackCanvas() {
       if (e.ctrlKey) {
         const { x } = pos(e), fAt = tv.scrollF + (x - LABEL_W) / tv.ppf
         tv.ppf = Math.min(Math.max(tv.ppf * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 0.5), 40)
-        tv.scrollF = Math.max(0, fAt - (x - LABEL_W) / tv.ppf)
-      } else if (e.shiftKey) { // vertical scroll
+        tv.scrollF = Math.max(minScrollF(), fAt - (x - LABEL_W) / tv.ppf)
+      } else if (e.shiftKey || pos(e).x < LABEL_W || pos(e).x >= W - SB_W) { // vertical scroll (Shift, or over the labels / scrollbar)
         const max = Math.max(0, rows().length * ROW_H - (H - top()))
         u.scrollY = Math.min(Math.max(u.scrollY + (e.deltaY || e.deltaX), 0), max)
-      } else tv.scrollF = Math.max(0, tv.scrollF + (e.deltaY + e.deltaX) / tv.ppf)
+      } else tv.scrollF = Math.max(minScrollF(), tv.scrollF + (e.deltaY + e.deltaX) / tv.ppf)
       schedule()
     }
 
@@ -266,15 +281,15 @@ export default function TrackCanvas() {
       if (t instanceof HTMLElement && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return
       const s = ed.getState()
       if (s.view !== 'tracks' || !s.sel.actorId || e.altKey) return
-      const target = editTarget(s, s.sel.actorId)
+      const target = keyTarget(s, s.sel.actorId)
       if (!target) return
-      const { clipId, f } = target
+      const { owner: clipId, f } = target
       const keys = s.sel.keys, mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase()
       const frozen = clipLocked(s.project, clipId)
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (keys.length && !frozen) { e.preventDefault(); s.deleteKeys(clipId, keys) }
       } else if (mod && k === 'c') {
-        const clip = s.project.clips[clipId]
+        const clip = keyOwner(s.project, clipId)!
         const items = keys.flatMap(r => {
           const key = clip.channels[r.channel]?.keys.find(q => q.f === r.f)
           return key ? [{ channel: r.channel, f: key.f, v: key.v, interp: key.interp }] : []
@@ -298,13 +313,16 @@ export default function TrackCanvas() {
 
     canvas.addEventListener('mousedown', onDown)
     canvas.addEventListener('mousemove', onMove)
+    const onLeave = () => { if (sbHover) { sbHover = false; schedule() } }
+    canvas.addEventListener('mouseleave', onLeave)
     canvas.addEventListener('wheel', onWheel, { passive: false })
     canvas.addEventListener('contextmenu', onContext)
     window.addEventListener('keydown', onKey)
     return () => {
-      ro.disconnect(); unsub(); unsubPhys(); cancelAnimationFrame(raf); hover.stop()
+      ro.disconnect(); document.fonts?.removeEventListener('loadingdone', schedule); unsub(); unsubPhys(); cancelAnimationFrame(raf); hover.stop()
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)
+      canvas.removeEventListener('mouseleave', onLeave)
       canvas.removeEventListener('wheel', onWheel)
       canvas.removeEventListener('contextmenu', onContext)
       window.removeEventListener('keydown', onKey)
@@ -322,8 +340,8 @@ export default function TrackCanvas() {
 
   const apply = (interp: Interp) => {
     const s = getEditor().getState()
-    const t = s.sel.actorId && s.sel.keys.length ? editTarget(s, s.sel.actorId) : null
-    if (t) s.setInterp(t.clipId, s.sel.keys, interp)
+    const t = s.sel.actorId && s.sel.keys.length ? keyTarget(s, s.sel.actorId) : null
+    if (t) s.setInterp(t.owner, s.sel.keys, interp)
     setMenu(null)
   }
   return (

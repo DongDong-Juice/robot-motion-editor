@@ -29,6 +29,7 @@ export interface RobotDef {
   joints: JointDef[]
   fixedJoints: Omit<JointDef, 'lower' | 'upper' | 'velocity'>[]
   meshes: Record<string, MeshData>
-  standingHeight: number
+  standingHeight: number // root z with every joint at 0 and the lowest mesh point on the floor
+  rest: { q: number[]; z: number } // 기본자세 (차렷): joint angles in `joints` order and the root z that puts it on the floor
   groups: { name: string; joints: string[] }[]
 }

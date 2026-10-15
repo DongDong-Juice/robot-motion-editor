@@ -1,6 +1,7 @@
 import { evaluate, type Pose, type RobotDefs } from '../model/evaluate'
-import { rebasePose } from '../model/pose'
-import { withRestPose } from '../model/restPose'
+import { evaluateClip, placePose, rebasePose } from '../model/pose'
+import { baseClip, itemClip } from '../model/itemClip'
+import { itemLead, itemTail, restClipFor, tailedClip } from '../model/restPose'
 import type { Quat } from '../model/rootMath'
 import type { Item, Project } from '../model/types'
 import type { RobotDef, RobotKind } from '../robot/types'
@@ -25,13 +26,33 @@ export function normalizedPose(src: Pose, prev?: Pose): Pose {
   return { rootPos: [...src.rootPos], rootQuat: q, q: [...src.q] }
 }
 
+// CSV rows added before the item's first frame (기본자세 덧붙이기: 정지 + 전이 + 관성); CSV row k is sequence frame from − restLead + k.
+export const restLead = (p: Project, defs: RobotDefs, item: Item) => itemLead(p, defs, item)?.lead ?? 0
+// CSV rows added after the item's last frame (끝 기본자세: 전이 + 정지).
+export const restTailRows = (p: Project, defs: RobotDefs, item: Item) => itemTail(p, defs, item)?.tail ?? 0
+
 export function samplePoses(p: Project, defs: RobotDefs, actorId: string, itemId: string, mode: RootMode): Pose[] {
   const item = findItem(p, itemId), { from, to } = itemFrameRange(item)
-  if (item.restPose) p = withRestPose(p, defs, itemId) // the stored project is never touched
-  const out: Pose[] = []
-  for (let f = from; f < to; f++) {
-    out.push(normalizedPose(evaluate(p, defs, actorId, f), out[out.length - 1]))
+  const raw: Pose[] = []
+  for (let f = from; f < to; f++) raw.push(evaluate(p, defs, actorId, f))
+  const ld = itemLead(p, defs, item)
+  if (ld && raw.length) {
+    // the inserted frames come from the derived clip (정지 + 전이 at trimIn − 관성, then the original 관성 frames), placed so
+    // the clip frame trimIn lands on the item's first world pose
+    const clip = itemClip(p, defs, item)!, def = defs[clip.robot], a = item.trimIn - ld.inertia
+    const rest = restClipFor(clip, def, a, item.trimOut, 'prepend', ld.hold, ld.blend)
+    const origin = evaluateClip(clip, def, item.trimIn)
+    raw.unshift(...Array.from({ length: ld.lead }, (_, k) => placePose(rebasePose(evaluateClip(rest, def, a + k), origin), raw[0])))
   }
+  const tl = itemTail(p, defs, item)
+  if (tl && raw.length) {
+    // 끝 기본자세: the tail frames of the derived clip (전이 then 정지 after trimOut − 1), placed so that frame lands on the
+    // item's last world pose
+    const clip = tailedClip(p, defs, item)!, def = defs[clip.robot], end = evaluateClip(clip, def, item.trimOut - 1), last = raw[raw.length - 1]
+    raw.push(...Array.from({ length: tl.tail }, (_, k) => placePose(rebasePose(evaluateClip(clip, def, item.trimOut + k), end), last)))
+  }
+  const out: Pose[] = []
+  for (const r of raw) out.push(normalizedPose(r, out[out.length - 1]))
   // Pre-multiplying by a constant quat keeps the sign continuity established above.
   if (mode === 'local' && out.length) return out.map(o => rebasePose(o, out[0]))
   return out
@@ -56,10 +77,15 @@ export const posesToCsv = (poses: Pose[], def: RobotDef): string =>
 export function csvFileName(p: Project, actorId: string, itemId: string, taken: Set<string>): string {
   const actor = p.actors.find(a => a.id === actorId)
   if (!actor) throw new Error(`unknown actor ${actorId}`)
-  const clip = p.clips[findItem(p, itemId).refId]
+  const item = findItem(p, itemId)
+  const clip = p.clips[item.refId]
   const shared = p.actors.filter(a => a.robot === actor.robot).length > 1
   const clean = (s: string) => s.replace(/[/\\:*?"<>|#\s]/g, '_')
-  const base = `${clean(shared ? actor.name : LABEL[actor.robot])}_${clean(clip?.name ?? 'clip')}`
+  // Cut pieces share one clip: number them by start (1-based) on this actor's tracks so each piece keeps its own name.
+  const pieces = p.sequence.tracks.filter(t => t.actorId === actorId).flatMap(t => t.items)
+    .filter(it => it.refId === item.refId).sort((a, b) => a.start - b.start)
+  const piece = pieces.length > 1 ? `_${pieces.indexOf(item) + 1}` : ''
+  const base = `${clean(shared ? actor.name : LABEL[actor.robot])}_${clean(clip?.name ?? 'clip')}${piece}`
   let name = `${base}.csv`
   for (let n = 2; taken.has(name); n++) name = `${base}_${n}.csv`
   taken.add(name)
@@ -72,5 +98,17 @@ export function exportItemCsv(p: Project, defs: RobotDefs, actorId: string, item
   const robot = p.actors.find(a => a.id === actorId)?.robot
   if (!robot) throw new Error(`unknown actor ${actorId}`)
   const poses = samplePoses(p, defs, actorId, itemId, mode)
-  return { name: csvFileName(p, actorId, itemId, taken), text: posesToCsv(poses, defs[robot]), warnings: validatePoses(poses, defs[robot], itemFrameRange(findItem(p, itemId)).from) }
+  return { name: csvFileName(p, actorId, itemId, taken), text: posesToCsv(poses, defs[robot]), warnings: validatePoses(poses, defs[robot], itemFrameRange(findItem(p, itemId)).from - restLead(p, defs, findItem(p, itemId))) }
+}
+
+/** 클립 편집 모드 `CSV 저장`: the clip as an asset (baseClip = original + 클립 수정 층), every frame, local root (first frame at the
+ * origin facing +x), no lead-in or tail. Name `<G1|GO2>_<clip>.csv`. The warnings use clip frames. */
+export function exportClipCsv(p: Project, defs: RobotDefs, clipId: string): { name: string; text: string; warnings: Warning[] } {
+  const clip = baseClip(p, defs, clipId)
+  if (!clip) throw new Error(`unknown clip ${clipId}`)
+  const def = defs[clip.robot], out: Pose[] = []
+  for (let f = 0; f < clip.length; f++) out.push(normalizedPose(evaluateClip(clip, def, f), out[out.length - 1]))
+  const poses = out.length ? out.map(o => rebasePose(o, out[0])) : out
+  const name = `${LABEL[clip.robot]}_${clip.name.replace(/[/\:*?"<>|#\s]/g, '_')}.csv`
+  return { name, text: posesToCsv(poses, def), warnings: validatePoses(poses, def, 0) }
 }

@@ -40,3 +40,12 @@ test('g1 groups cover all joints exactly once', () => {
   expect(d.groups.flatMap(g => g.joints).sort()).toEqual(d.joints.map(j => j.name).sort())
   expect(d.groups.map(g => g.name)).toEqual(['왼다리', '오른다리', '허리', '왼팔', '오른팔'])
 })
+
+test('기본자세: inside the URDF limits; G1 legs straight (same height as all-zero), GO2 crouched lower', () => {
+  for (const d of [loadG1(), loadGo2()]) {
+    expect(d.rest.q).toHaveLength(d.joints.length)
+    d.joints.forEach((j, i) => { expect(d.rest.q[i]).toBeGreaterThanOrEqual(j.lower); expect(d.rest.q[i]).toBeLessThanOrEqual(j.upper) })
+  }
+  expect(loadG1().rest.z).toBeCloseTo(loadG1().standingHeight, 3)
+  expect(loadGo2().rest.z).toBeGreaterThan(0.2); expect(loadGo2().rest.z).toBeLessThan(loadGo2().standingHeight)
+})

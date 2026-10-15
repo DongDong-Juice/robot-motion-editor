@@ -41,7 +41,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
   const running = open && !skip && checked.some(({ item }) => ['queued', 'running'].includes(phys[item.id]?.status))
 
   const warnings = useMemo(() => open ? checked.flatMap(({ actor, item }) =>
-    [...exportItemCsv(project, defs, actor.id, item.id, 'world').warnings, ...(skip ? [] : physicsWarnings(item, phys[item.id]))]
+    [...exportItemCsv(project, defs, actor.id, item.id, 'world').warnings, ...(skip ? [] : physicsWarnings(project, defs, item, phys[item.id]))]
       .map(w => ({ ...w, actorId: actor.id, actorName: actor.name }))) : [],
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [project, defs, off, open, skip, phys])

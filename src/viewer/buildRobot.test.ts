@@ -28,3 +28,11 @@ test('pelvis and arm meshes map to joints', () => {
   expect(rig.linkToJoint.get(rig.root.getObjectByName('pelvis')!)).toBe('root')
   expect(rig.linkToJoint.get(rig.root.getObjectByName('left_elbow_link')!)).toBe('left_elbow_joint')
 })
+test('기본자세 (차렷): G1 hands hang below the elbows, by the thighs', () => {
+  const rig = buildRobot(g1, '#fff'); rig.applyPose({ rootPos: [0, 0, 0], rootQuat: [0, 0, 0, 1], q: [...g1.rest.q] })
+  for (const side of ['left', 'right']) {
+    const elbow = worldPos(rig, `${side}_elbow_link`), hand = worldPos(rig, `${side}_rubber_hand`)
+    expect(elbow.z - hand.z).toBeGreaterThan(0.15) // forearm points down
+    expect(Math.abs(hand.x - elbow.x)).toBeLessThan(0.06) // not reaching forward
+  }
+})

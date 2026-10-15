@@ -1,5 +1,7 @@
 # 모션 편집기 M1(코어) Implementation Plan
 
+> **상태 (2026-10-12):** 완료 · `master` 머지됨. 아래 체크박스는 작업 중 갱신하지 않았음 — 진행 기록은 git 이력을 볼 것.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** G1·GO2를 한 무대에 올려 액터당 클립 1개를 키프레임·그래프로 편집하고, 클립 단위 Unitree 형식 CSV(60fps)로 내보내는 웹 편집기.

@@ -17,7 +17,7 @@ test('drop: card onto a track appends after the overlapped item; empty area make
     [60, 0, 29, Math.round(i * 1000 / 60), (0.01 * i).toFixed(6), '0.000000', '0.790000', '0', '0', '0', '1',
       ...joints.map((_, j) => (0.02 * Math.sin(i / 9 + j)).toFixed(6))].join(',') + ',')].join('\n') + '\n')
   for (const [name, n] of [['a', 120], ['b', 60]] as const) {
-    await page.getByRole('button', { name: '파일', exact: true }).click()
+    await page.getByRole('button', { name: '메뉴', exact: true }).click()
     const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('menuitem', { name: 'CSV 가져오기', exact: true }).click()])
     await fc.setFiles([{ name: `${name}.csv`, mimeType: 'text/csv', buffer: csv(n) }])
     await expect(page.getByText('클립 1개를 가져왔습니다')).toBeVisible()

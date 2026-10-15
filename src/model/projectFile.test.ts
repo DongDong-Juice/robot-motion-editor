@@ -29,15 +29,47 @@ test('roundtrip preserves project', () => {
   expect(parseProject(serializeProject(p), defs)).toEqual(p)
 })
 
-test('item restPose round-trips; non-true is rejected; an old unknown clip owner is kept and ignored', () => {
+test('item restPose round-trips; an old 덮어쓰기 (true) opens as off; others rejected; an old unknown clip owner is kept and ignored', () => {
   const p = mk(), it = p.sequence.tracks.flatMap(t => t.items)[0], c = Object.values(p.clips)[0]
-  it.restPose = true
-  expect(parseProject(serializeProject(p), defs).sequence.tracks.flatMap(t => t.items)[0].restPose).toBe(true)
+  ;(it as any).restPose = true
+  expect(parseProject(serializeProject(p), defs).sequence.tracks.flatMap(t => t.items)[0].restPose).toBeUndefined()
+  it.restPose = 'prepend'
+  expect(parseProject(serializeProject(p), defs).sequence.tracks.flatMap(t => t.items)[0].restPose).toBe('prepend')
   ;(it as any).restPose = false
   expect(() => parseProject(serializeProject(p), defs)).toThrow('restPose')
   delete it.restPose
   ;(c as any).owner = 'gone'
   expect(Object.keys(parseProject(serializeProject(p), defs).clips)).toEqual(Object.keys(p.clips))
+})
+
+test('item lead-in lengths (정지·전이·관성) round-trip; bad values are rejected', () => {
+  const p = mk(), it = p.sequence.tracks.flatMap(t => t.items)[0], first = (q: typeof p) => q.sequence.tracks.flatMap(t => t.items)[0]
+  Object.assign(it, { restPose: 'prepend', restHold: 12, restBlend: 'auto', inertia: 0 })
+  expect(first(parseProject(serializeProject(p), defs))).toMatchObject({ restHold: 12, restBlend: 'auto', inertia: 0 })
+  it.restBlend = 45
+  expect(first(parseProject(serializeProject(p), defs)).restBlend).toBe(45)
+  for (const [k, v] of [['restHold', -1], ['restBlend', -1], ['restBlend', 'fast'], ['inertia', 1.5]] as const) {
+    const q = structuredClone(p); Object.assign(first(q), { [k]: v })
+    expect(() => parseProject(serializeProject(q), defs)).toThrow(k)
+  }
+})
+
+test('clip 수정 층 (Clip.offset) round-trips; an unknown channel is rejected', () => {
+  const p = mk(), c = Object.values(p.clips)[0]
+  c.offset = { left_knee_joint: { keys: [makeKey(3, 0.25), makeKey(9, -0.1)] } }
+  const q = parseProject(serializeProject(p), defs)
+  expect(q.clips[c.id].offset!.left_knee_joint.keys.map(k => [k.f, +k.v.toFixed(6)])).toEqual([[3, 0.25], [9, -0.1]])
+  expect(q.clips[c.id].channels).toEqual(c.channels)
+  c.offset = { not_a_joint: { keys: [makeKey(0, 1)] } }
+  expect(() => parseProject(serializeProject(p), defs)).toThrow('offset')
+})
+
+test('item hidden (숨기기) round-trips; anything but true is rejected', () => {
+  const p = mk(), it = p.sequence.tracks.flatMap(t => t.items)[0]
+  it.hidden = true
+  expect(parseProject(serializeProject(p), defs).sequence.tracks.flatMap(t => t.items)[0].hidden).toBe(true)
+  ;(it as any).hidden = false
+  expect(() => parseProject(serializeProject(p), defs)).toThrow('hidden')
 })
 
 test('v2: roundtrip within 1e-6, v1 opens as v2', () => {
