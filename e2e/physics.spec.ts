@@ -14,7 +14,7 @@ test('physics assist: run → stale on edit/settings → export re-runs and warn
   const csv = Buffer.from([head, ...Array.from({ length: 120 }, (_, i) =>
     [60, 0, 29, Math.round(i * 1000 / 60), (0.01 * i).toFixed(6), '0.000000', '0.790000', '0', '0', '0', '1',
       ...joints.map((_, j) => (0.02 * Math.sin(i / 9 + j)).toFixed(6))].join(',') + ',')].join('\n') + '\n')
-  await page.getByRole('button', { name: '파일', exact: true }).click()
+  await page.getByRole('button', { name: '메뉴', exact: true }).click()
   const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('menuitem', { name: 'CSV 가져오기', exact: true }).click()])
   await fc.setFiles([{ name: 'a.csv', mimeType: 'text/csv', buffer: csv }])
   await expect.poll(() => page.evaluate(() => (window as any).__editor.getState().project.sequence.tracks.some((t: any) => t.items.length))).toBe(true)
@@ -40,7 +40,7 @@ test('physics assist: run → stale on edit/settings → export re-runs and warn
   await expect.poll(async () => (await phys()).stale).toBe(true)
 
   const setWarn = async (v: string) => {
-    await page.getByRole('button', { name: '파일', exact: true }).click()
+    await page.getByRole('button', { name: '메뉴', exact: true }).click()
     await page.getByRole('menuitem', { name: '물리 설정…', exact: true }).click()
     const dlg = page.getByRole('dialog')
     await dlg.getByRole('spinbutton', { name: '경고 기준' }).fill(v)
@@ -50,7 +50,7 @@ test('physics assist: run → stale on edit/settings → export re-runs and warn
   await setWarn('10') // 물리 설정 경고 기준 10%
 
   // export dialog re-runs the check and lists 물리 보조력 warnings
-  await page.getByRole('button', { name: '파일', exact: true }).click()
+  await page.getByRole('button', { name: '메뉴', exact: true }).click()
   await page.getByRole('menuitem', { name: /내보내기/ }).first().click()
   const exp = page.getByRole('dialog', { name: '내보내기' })
   await expect(exp.getByRole('list', { name: '경고' })).toContainText('물리 보조력', { timeout: 90_000 })

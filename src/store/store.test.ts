@@ -7,6 +7,7 @@ import { makeKey } from '../model/curve'
 import { withDefaults } from '../physics/settings'
 import { emptyProject } from '../model/defaults'
 import type { Clip } from '../model/types'
+import { parseProject, serializeProject } from '../model/projectFile'
 
 const load = loadDef
 const defs: RobotDefs = { g1: load('g1'), go2: load('go2') }
@@ -61,7 +62,7 @@ test('setValue with autoKey off does not create key', () => {
 })
 
 test('setValue with autoKey keys at current clip frame', () => {
-  s().toggleAutoKey(); s().setFrame(7); s().setValue(actor, ch, 1)
+  s().setLayer('clip'); s().toggleAutoKey(); s().setFrame(7); s().setValue(actor, ch, 1)
   expect(keyAt(ch, 7).v).toBe(1)
   expect(editTarget(s(), actor)).toEqual({ clipId: c, f: 7, itemId: item0().id })
   s().setFrame(500)
@@ -105,14 +106,14 @@ test('setInterp ease resets tangents, linear keeps them', () => {
 test('keyGroup keys every joint of group in one undo entry', () => {
   const arm = defs.g1.groups.find(g => g.name === '왼팔')!
   expect(arm.joints).toHaveLength(7)
-  s().setFrame(3); s().keyGroup(actor, '왼팔')
+  s().setLayer('clip'); s().setFrame(3); s().keyGroup(actor, '왼팔')
   for (const j of arm.joints) expect(keyAt(j, 3)).toBeDefined()
   s().undo()
   expect(Object.keys(s().project.clips[c].channels)).toHaveLength(0)
 })
 
 test('keyGroup 루트 keys 6 root channels with standing height', () => {
-  s().keyGroup(actor, '루트')
+  s().setLayer('clip'); s().keyGroup(actor, '루트')
   expect(Object.keys(s().project.clips[c].channels).sort()).toEqual(
     ['root.pitch', 'root.roll', 'root.x', 'root.y', 'root.yaw', 'root.z'])
   expect(keyAt('root.z', 0).v).toBeCloseTo(defs.g1.standingHeight)
@@ -153,7 +154,7 @@ test('deleteKeys prunes selection; undo/redo clear key selection', () => {
 })
 
 test('gesture: many setValue = one undo entry; edits after endGesture push again', () => {
-  s().toggleAutoKey()
+  s().setLayer('clip'); s().toggleAutoKey()
   const before = s().project
   s().beginGesture()
   for (let i = 1; i <= 5; i++) s().setValue(actor, ch, i * 0.1)
@@ -276,16 +277,63 @@ test('trimItem out shortens', () => {
   expect(item0().trimOut).toBe(100)
 })
 
+test('setItemHidden: one undo step, also on a locked track; clips untouched', () => {
+  const id = item0().id, clips = s().project.clips
+  s().setTrackFlag(s().project.sequence.tracks.find(t => t.actorId === actor)!.id, 'locked', true)
+  s().setItemHidden(id, true)
+  expect(item0().hidden).toBe(true)
+  expect(s().project.clips).toEqual(clips)
+  s().setItemHidden(id, false)
+  expect(item0().hidden).toBeUndefined()
+  s().undo(); expect(item0().hidden).toBe(true)
+})
+
+test('track 경로 표시: per track, off by default, one undo step, also on a locked track, saved', () => {
+  const t = () => s().project.sequence.tracks.find(t => t.actorId === actor)!
+  expect(t().trail).toBeUndefined()
+  s().setTrackFlag(t().id, 'locked', true)
+  s().setTrackFlag(t().id, 'trail', true)
+  expect(t().trail).toBe(true)
+  const back = parseProject(serializeProject(s().project), defs)
+  expect(back.sequence.tracks.find(x => x.actorId === actor)!.trail).toBe(true)
+  s().setTrackFlag(t().id, 'trail', false)
+  expect('trail' in t()).toBe(false)
+  s().undo(); expect(t().trail).toBe(true)
+  const bad = JSON.parse(serializeProject(s().project))
+  bad.sequence.tracks.find((x: any) => x.actorId === actor).trail = 1
+  expect(() => parseProject(JSON.stringify(bad), defs)).toThrow()
+})
+
 test('splitItem makes two items sharing the clip', () => {
   const id = item0().id
   expect(s().splitItem(id, 50)).toBe(true)
   const its = trackItems(actor)
   expect(its.map(i => [i.start, i.trimIn, i.trimOut])).toEqual([[0, 0, 50], [50, 50, 120]])
   expect(its[0].refId).toBe(its[1].refId)
+  expect(its.every(i => i.restPose === 'prepend')).toBe(true) // a cut turns 기본자세 덧붙이기 on for both pieces (user)
   expect(its[0].id).toBe(id)
   expect(its[1].id).not.toBe(id)
   expect(s().splitItem(id, 0)).toBe(false)
   expect(s().splitItem(id, 50)).toBe(false)
+})
+
+test('a cut sets 끝 기본자세 on both pieces; cutting #2 adds it to #3 only; undo, toggle, save', () => {
+  const id = item0().id
+  expect(item0().restTail).toBeUndefined()
+  expect(s().splitItem(id, 50)).toBe(true)
+  expect(trackItems(actor).map(i => i.restTail)).toEqual([true, true])
+  const second = trackItems(actor)[1].id
+  s().setRestTail(second, false)
+  expect(s().splitItem(second, 80)).toBe(true) // #2 → #2 + #3: #3 gets it, #2 keeps what it had
+  expect(trackItems(actor).map(i => i.restTail)).toEqual([true, false, true]) // turned off stays off
+  s().undo(); s().undo(); s().undo()
+  expect(trackItems(actor).map(i => i.restTail)).toEqual([undefined])
+  s().splitItem(id, 50)
+  const back = parseProject(serializeProject(s().project), defs)
+  expect(back.sequence.tracks.find(t => t.actorId === actor)!.items.map(i => i.restTail)).toEqual([true, true])
+  const bad = JSON.parse(serializeProject(s().project))
+  bad.sequence.tracks.find((x: any) => x.actorId === actor).items[0].restTail = 1
+  expect(() => parseProject(JSON.stringify(bad), defs)).toThrow()
 })
 
 test('deleteClip refuses clip in use, allows unused', () => {
@@ -334,7 +382,7 @@ test('editTarget in clip view ignores trims', () => {
   s().trimItem(id, 'in', 30)
   s().openItem(id); s().setFrame(0)
   expect(editTarget(s(), actor)).toEqual({ clipId: c, f: 0, itemId: id })
-  s().toggleAutoKey(); s().setValue(actor, ch, 0.4)
+  s().setLayer('clip'); s().toggleAutoKey(); s().setValue(actor, ch, 0.4)
   expect(keyAt(ch, 0).v).toBeCloseTo(0.4)
   expect(s().sel.actorId).toBe(actor)
 })
@@ -352,7 +400,7 @@ test('editTarget sequence view: later item on overlap', () => {
 test('editTarget null without items; setValue ignored', () => {
   s().deleteItem(item0().id)
   expect(editTarget(s(), actor)).toBeNull()
-  s().toggleAutoKey(); s().setValue(actor, ch, 1); s().keyGroup(actor, '루트')
+  s().setLayer('clip'); s().toggleAutoKey(); s().setValue(actor, ch, 1); s().keyGroup(actor, '루트')
   expect(curve(ch).keys).toHaveLength(0)
 })
 
@@ -488,7 +536,7 @@ test('setClip: shrinking below a trim clamps the item', () => {
 
 // --- gestures (M5) ---
 test('undo during a gesture ends it first; endGesture then pops nothing', () => {
-  s().toggleAutoKey()
+  s().setLayer('clip'); s().toggleAutoKey()
   s().setKey(c, ch, 3, 1)
   const afterKey = s().project
   s().beginGesture(); s().setValue(actor, ch, 0.4)
@@ -499,13 +547,54 @@ test('undo during a gesture ends it first; endGesture then pops nothing', () => 
   expect(curve(ch).keys).toHaveLength(0)
 })
 
+test('undo mid-gesture cancels only that gesture and drops its later edits until endGesture', () => {
+  s().setLayer('clip'); s().toggleAutoKey()
+  s().setKey(c, ch, 3, 1)
+  const afterKey = s().project
+  s().beginGesture(); s().setValue(actor, ch, 0.4)
+  s().undo()
+  expect(s().project).toBe(afterKey)
+  s().setValue(actor, ch, 0.6); s().setValue(actor, ch, 0.7) // the slider is still held
+  expect(s().project).toBe(afterKey)
+  s().undo(); s().redo() // ignored while the gesture is held
+  expect(s().project).toBe(afterKey)
+  s().endGesture()
+  s().redo() // the cancelled gesture is not redoable
+  expect(s().project).toBe(afterKey)
+  s().setValue(actor, ch, 0.2) // edits work again
+  expect(keyAt(ch, 0).v).toBeCloseTo(0.2)
+})
+
+test('undo before the gesture changes anything keeps earlier history', () => {
+  s().setKey(c, ch, 3, 1)
+  const afterKey = s().project
+  s().beginGesture(); s().undo(); s().endGesture()
+  expect(s().project).toBe(afterKey)
+  s().undo()
+  expect(curve(ch).keys).toHaveLength(0)
+})
+
+test('cancelGesture: back to the pre-gesture project, no-op outside a gesture', () => {
+  s().setLayer('clip'); s().toggleAutoKey()
+  const before = s().project
+  s().cancelGesture()
+  expect(s().project).toBe(before)
+  s().beginGesture(); s().setValue(actor, ch, 0.3); s().setValue(actor, ch, 0.5)
+  s().cancelGesture()
+  expect(s().project).toBe(before)
+  s().setValue(actor, ch, 0.1) // not suspended: plain edits commit
+  expect(keyAt(ch, 0).v).toBeCloseTo(0.1)
+  s().undo()
+  expect(s().project).toBe(before)
+})
+
 test('beginGesture keeps redo until the gesture changes the project', () => {
   s().setKey(c, ch, 3, 1); s().undo()
   s().beginGesture(); s().endGesture()
   s().redo()
   expect(keyAt(ch, 3).v).toBe(1)
   s().undo()
-  s().toggleAutoKey()
+  s().setLayer('clip'); s().toggleAutoKey()
   s().beginGesture(); s().setValue(actor, ch, 0.2); s().endGesture()
   const p = s().project
   s().redo()
@@ -538,7 +627,7 @@ test('gizmoLock: root on the first frame of a stitched item', () => {
 
 test('setValue/keyGroup rejected in crossfade (sequence view), allowed in clip view', () => {
   expect(s().addItem(actor, c, 100)).toBe(true)
-  s().toggleAutoKey(); s().setFrame(110)
+  s().setLayer('clip'); s().toggleAutoKey(); s().setFrame(110)
   expect(editLock(s(), actor, ch)).toBe('crossfade')
   const before = s().project
   s().setValue(actor, ch, 0.5); s().keyGroup(actor, '왼팔'); s().keyGroup(actor, '루트')
@@ -550,7 +639,7 @@ test('setValue/keyGroup rejected in crossfade (sequence view), allowed in clip v
 
 test('setValue/keyGroup on stitch frame: root x/y/yaw rejected, z allowed', () => {
   expect(s().addItem(actor, c, 120)).toBe(true)
-  s().toggleAutoKey(); s().setFrame(120)
+  s().setLayer('clip'); s().toggleAutoKey(); s().setFrame(120)
   expect(editLock(s(), actor, 'root.z')).toBe(null)
   const before = s().project
   s().setValue(actor, 'root.x', 0.3); s().keyGroup(actor, '루트')
@@ -759,4 +848,71 @@ test('setPhysics is one undoable, dirty edit', () => {
   expect(s().dirty).toBe(true)
   s().undo()
   expect(s().project.physics).toBeUndefined()
+})
+
+// ---- appendClip ----
+const blockClip = (len: number, name = 'Stretch'): Clip => ({ id: crypto.randomUUID(), name, robot: 'go2', length: len, channels: {} })
+const go2Setup = (items: { start: number; trimIn: number; trimOut: number }[]) => {
+  const p = structuredClone(s().project)
+  const go2 = p.actors.find(a => a.robot === 'go2')!
+  const t = p.sequence.tracks.find(t => t.actorId === go2.id)!
+  const ref = t.items[0]?.refId ?? Object.values(p.clips).find(c => c.robot === 'go2')!.id
+  t.items = items.map(i => ({ id: crypto.randomUUID(), refId: ref, ...i }))
+  s().loadProject(p, null)
+  return go2.id
+}
+const itemById = (id: string) => s().project.sequence.tracks.flatMap(t => t.items).find(i => i.id === id)
+
+test('appendClip places at track end (max start+len, not last pushed), one undo', () => {
+  const go2 = go2Setup([{ start: 100, trimIn: 10, trimOut: 60 }, { start: 0, trimIn: 0, trimOut: 50 }])
+  const clip = blockClip(30)
+  const id = s().appendClip(go2, clip)!
+  expect(itemById(id)).toMatchObject({ refId: clip.id, start: 150, trimIn: 0, trimOut: 30 })
+  s().undo()
+  expect(s().project.clips[clip.id]).toBeUndefined()
+  expect(itemById(id)).toBeUndefined()
+})
+
+test('appendClip twice → back to back', () => {
+  const go2 = go2Setup([{ start: 0, trimIn: 0, trimOut: 50 }])
+  const a = s().appendClip(go2, blockClip(30))!, b = s().appendClip(go2, blockClip(20))!
+  expect(itemById(a)!.start).toBe(50)
+  expect(itemById(b)!.start).toBe(80)
+})
+
+test('appendClip on empty track starts at 0', () => {
+  const go2 = go2Setup([])
+  expect(itemById(s().appendClip(go2, blockClip(30))!)!.start).toBe(0)
+})
+
+test('appendClip rejects locked track and robot mismatch', () => {
+  const go2 = go2Setup([])
+  const before = s().project
+  expect(s().appendClip(actor, blockClip(30))).toBeNull() // actor = G1
+  const t = s().project.sequence.tracks.find(t => t.actorId === go2)!
+  s().setTrackFlag(t.id, 'locked', true)
+  const locked = s().project
+  expect(s().appendClip(go2, blockClip(30))).toBeNull()
+  expect(s().project).toBe(locked)
+  expect(before.clips).toEqual(locked.clips)
+})
+
+test('appendClip(null) makes a new GO2 actor with the clip at 0, one undo', () => {
+  const n = s().project.actors.length
+  const id = s().appendClip(null, blockClip(30))!
+  const p = s().project, a = p.actors.at(-1)!, t = p.sequence.tracks.find(t => t.actorId === a.id)!
+  expect(p.actors.length).toBe(n + 1)
+  expect(a.robot).toBe('go2')
+  expect(t.items).toEqual([expect.objectContaining({ id, start: 0, trimIn: 0, trimOut: 30 })])
+  expect(s().appendClip(a.id, blockClip(20))).not.toBeNull()
+  expect(s().project.sequence.tracks.find(t => t.actorId === a.id)!.items.map(i => i.start)).toEqual([0, 30])
+  s().undo(); s().undo()
+  expect(s().project.actors.length).toBe(n)
+})
+
+test('appendClip dedupes name', () => {
+  const go2 = go2Setup([])
+  const a = s().appendClip(go2, blockClip(10))!, b = s().appendClip(go2, blockClip(10))!
+  const name = (id: string) => s().project.clips[itemById(id)!.refId].name
+  expect([name(a), name(b)]).toEqual(['Stretch', 'Stretch_2'])
 })

@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { test, expect, type Download, type Page } from '@playwright/test'
 
 const menu = async (page: Page, name: string) => {
-  await page.getByRole('button', { name: '파일', exact: true }).click()
+  await page.getByRole('button', { name: '메뉴', exact: true }).click()
   await page.getByRole('menuitem', { name, exact: true }).click()
 }
 

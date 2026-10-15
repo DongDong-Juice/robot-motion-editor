@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 
 const menu = async (page: Page, name: string) => {
-  await page.getByRole('button', { name: '파일', exact: true }).click()
+  await page.getByRole('button', { name: '메뉴', exact: true }).click()
   await page.getByRole('menuitem', { name, exact: true }).click()
 }
 
@@ -54,8 +54,8 @@ test('compare: second CSV is an asset only; 비교 opens a preview pane without 
   await expect(page.locator('.pp-msg', { hasText: '시퀀스에서 쓰는 클립은 삭제할 수 없습니다' })).toBeVisible()
   await page.locator('.pp-card').first().focus()
   await page.keyboard.press('Shift+F10')
-  await expect(page.getByRole('menu', { name: '에셋' })).toBeVisible()
+  await expect(page.getByRole('menu', { name: '목록' })).toBeVisible()
   await page.keyboard.press('Escape')
-  await expect(page.getByRole('menu', { name: '에셋' })).toHaveCount(0)
+  await expect(page.getByRole('menu', { name: '목록' })).toHaveCount(0)
   expect(errors).toEqual([])
 })

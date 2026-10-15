@@ -3,7 +3,7 @@ import { test, expect, type Download, type Page } from '@playwright/test'
 import { unzip } from './unzip'
 
 const menu = async (page: Page, name: string) => {
-  await page.getByRole('button', { name: '파일', exact: true }).click()
+  await page.getByRole('button', { name: '메뉴', exact: true }).click()
   await page.getByRole('menuitem', { name, exact: true }).click()
 }
 
@@ -45,7 +45,8 @@ test('import CSV, place two items with crossfade, export all', async ({ page }) 
   const files = unzip(fs.readFileSync((await downloads[0].path())!))
   expect(files).toHaveLength(3)
   const lines = (t: string) => t.trim().split('\n')
-  const imp = files.find(f => f.name === 'G1_walk_g1.csv')!
+  expect(files.map(f => f.name)).toEqual(expect.arrayContaining(['G1_walk_g1_1.csv', 'G1_walk_g1_2.csv'])) // two placements of one clip
+  const imp = files.find(f => f.name === 'G1_walk_g1_1.csv')!
   expect(imp).toBeTruthy()
   expect(lines(imp.text)).toHaveLength(61)
   expect(lines(imp.text)[0].split(',')).toHaveLength(41)

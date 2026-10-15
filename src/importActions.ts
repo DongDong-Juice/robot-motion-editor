@@ -16,8 +16,24 @@ const why = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 export async function importCsvFiles() {
   setImportResult(null)
-  const files = await openTextFiles('.csv', true)
-  if (!files.length) return
+  await importCsvTexts(await openTextFiles('.csv', true))
+}
+
+/** Files dropped on the 목록 panel: CSVs go through the same import; anything else is listed as skipped. */
+export async function importDroppedFiles(list: File[]) {
+  setImportResult(null)
+  const csv = list.filter(f => /\.csv$/i.test(f.name)), other = list.filter(f => !csv.includes(f))
+  const skipped = other.map(f => `${f.name}: CSV 파일만 끌어다 놓을 수 있습니다`)
+  if (!csv.length) { setImportResult({ lines: skipped }); return }
+  const files: { name: string; text: string }[] = []
+  for (const f of csv) {
+    try { files.push({ name: f.name, text: await f.text() }) } catch (e) { skipped.push(`${f.name}: ${why(e)}`) }
+  }
+  await importCsvTexts(files, skipped)
+}
+
+async function importCsvTexts(files: { name: string; text: string }[], skipped: string[] = []) {
+  if (!files.length) { if (skipped.length) setImportResult({ lines: skipped }); return }
   let fps: Fps = 60 // unused when every file is headed
   if (files.some(f => !isHeadedCsv(f.text))) {
     const v = await askFps()
@@ -26,7 +42,7 @@ export async function importCsvFiles() {
   }
   const ed = getEditor()
   let n = 0
-  const fails: string[] = []
+  const fails: string[] = [...skipped]
   ed.getState().beginGesture() // one undo entry for the whole batch
   for (const f of files) {
     try {

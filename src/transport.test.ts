@@ -2,7 +2,7 @@ import { loadDef } from './test/defs'
 import { expect, test } from 'vitest'
 
 import { createEditorStore } from './store/store'
-import { splitAtPlayhead, splitTarget } from './transport'
+import { cutAtFrame, splitAtPlayhead, splitTarget } from './transport'
 
 const load = loadDef
 
@@ -57,4 +57,16 @@ test('after a split the right piece is selected', () => {
   const right = items.find(i => i.id !== a1)!
   expect(right.start).toBe(50)
   expect(s().selItem).toBe(right.id)
+})
+
+test('자르기 button: cuts at a typed frame, moves the playhead there; says why when it cannot', () => {
+  const { st, s, a, a1, track } = setup()
+  s().select(a); s().setFrame(10)
+  expect(splitTarget(s(), 60)).toBe(a1) // the frame overrides the playhead
+  expect(cutAtFrame(st, 100000)).toBe('그 프레임에 자를 조각이 없습니다')
+  expect(cutAtFrame(st, 60)).toBe(null)
+  expect(s().frame).toBe(60)
+  expect(track(a).items.map(i => i.start).sort((x, y) => x - y)).toEqual([0, 60])
+  s().openItem(a1)
+  expect(cutAtFrame(st, 30)).toBe('시퀀스에서만 자를 수 있습니다')
 })

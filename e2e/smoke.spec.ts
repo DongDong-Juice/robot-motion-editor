@@ -3,7 +3,7 @@ import { test, expect, type Download, type Page } from '@playwright/test'
 import { unzip } from './unzip'
 
 const menu = async (page: Page, name: string) => {
-  await page.getByRole('button', { name: '파일', exact: true }).click()
+  await page.getByRole('button', { name: '메뉴', exact: true }).click()
   await page.getByRole('menuitem', { name, exact: true }).click()
 }
 

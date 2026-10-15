@@ -1,7 +1,9 @@
 import { expect, test } from 'vitest'
-import { badge, graphCols, pctY, segmentAt, seqFrameOf, treeSuffix } from './physGraph'
+import { badge, graphCols, pctY, segmentAt, seqFrameOf, treeSuffix, treeTag } from './physGraph'
 import type { ItemPhys } from '../physics/physicsStore'
 import type { Metrics } from '../physics/sim'
+import { loadDef } from '../test/defs'
+import type { Project } from '../model/types'
 
 const item = { id: 'i', refId: 'c', start: 100, trimIn: 30, trimOut: 90 }
 const metrics = (o: Partial<Metrics>) => ({ meanPct: 31.4, maxPct: 86.6, segments: [], ...o }) as unknown as Metrics
@@ -35,9 +37,15 @@ test('segmentAt finds the segment holding CSV frame k (inclusive)', () => {
 })
 
 test('seqFrameOf: CSV frame 0 is itemFrameRange(item).from (= item.start, rest pose or not)', () => {
-  expect(seqFrameOf(item, 0)).toBe(100)
-  expect(seqFrameOf(item, 12)).toBe(112)
-  expect(seqFrameOf({ ...item, restPose: true }, 12)).toBe(112)
+  const defs = { g1: loadDef('g1'), go2: loadDef('go2') }
+  const p = { clips: { c: { id: 'c', name: 'c', robot: 'g1', length: 200, channels: {} } } } as unknown as Project
+  const at = (it: object, k: number) => seqFrameOf(p, defs, { ...item, ...it }, k)
+  expect(at({}, 0)).toBe(100)
+  expect(at({}, 12)).toBe(112)
+  expect(at({ restPose: true }, 12)).toBe(112)
+  expect(at({ restPose: 'prepend', inertia: 0 }, 90)).toBe(100) // 기본자세 덧붙이기: 정지 30 + 전이 60 CSV rows before the item
+  expect(at({ restPose: 'prepend', inertia: 0 }, 0)).toBe(10)
+  expect(at({ restPose: 'prepend', restHold: 12, restBlend: 30, inertia: 20 }, 62)).toBe(100) // + 관성 rows
 })
 
 test('badge text', () => {
@@ -50,6 +58,10 @@ test('badge text', () => {
 })
 
 test('tree suffix', () => {
+  expect(treeTag(undefined, false)).toEqual({ text: '', warn: false })
+  expect(treeTag(done(), false)).toEqual({ text: '87%', warn: false })
+  expect(treeTag(done({ segments: [{}, {}, {}] as Metrics['segments'] }), false)).toEqual({ text: '⚠3', warn: true })
+  expect(treeTag(done(), true)).toEqual({ text: '오래됨', warn: false })
   expect(treeSuffix(undefined, false)).toBe('')
   expect(treeSuffix(done(), false)).toBe(' · 최대 87%')
   expect(treeSuffix(done({ segments: [{}, {}, {}] as Metrics['segments'] }), false)).toBe(' · 최대 87% ⚠3')

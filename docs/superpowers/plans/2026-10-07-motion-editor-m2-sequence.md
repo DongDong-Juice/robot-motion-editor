@@ -1,5 +1,7 @@
 # 모션 편집기 M2(시퀀스) Implementation Plan
 
+> **상태 (2026-10-12):** 완료 · `master` 머지됨. 아래 체크박스는 작업 중 갱신하지 않았음 — 진행 기록은 git 이력을 볼 것.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 액터 트랙에 여러 클립을 배치·트림·자르기·크로스페이드하고, 클립을 더블클릭해 중첩 클립 보기에서 키를 편집하며, 마커·In/Out, Unitree CSV 가져오기, 프로젝트 저장/열기를 지원한다.

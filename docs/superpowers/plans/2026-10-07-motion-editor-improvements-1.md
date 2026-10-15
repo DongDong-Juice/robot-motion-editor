@@ -1,5 +1,7 @@
 # 모션 편집기 개선 1 Implementation Plan
 
+> **상태 (2026-10-12):** 완료 · `master` 머지됨. 아래 체크박스는 작업 중 갱신하지 않았음 — 진행 기록은 git 이력을 볼 것.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 저장 파일 축소(v2), 키 줄이기, 크로스페이드 구간 인스펙터 잠금, 트랙 숨김·잠금, 패널 크기 조절.
