@@ -420,7 +420,12 @@ export default function SequenceCanvas() {
         return
       }
       const hit = itemAt(x, y)
-      if (hit && !isVideo(hit.t)) s.openItem(hit.it.id)
+      if (hit && !isVideo(hit.t)) { // the piece becomes the main, editable view; the clip view's window shows just its frames
+        s.closeItemPreview(); s.openItem(hit.it.id)
+        if (s.frame < hit.it.start || s.frame >= hit.it.start + itemLen(hit.it)) s.setFrame(hit.it.start)
+        const [lo, hi] = previewRange(s.project, s.defs, hit.it.id) ?? [hit.it.start, hit.it.start + itemLen(hit.it)] // with its lead-in / 끝 기본자세
+        tv.ppf = Math.min(Math.max((W - LABEL_W - SB_W) / Math.max(hi - lo, 1), 0.5), 40); tv.scrollF = lo - hit.it.start + hit.it.trimIn
+      }
     }
 
     const onContext = (e: MouseEvent) => {

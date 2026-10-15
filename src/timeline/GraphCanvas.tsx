@@ -9,7 +9,7 @@ import { fitView, handlePoints, valueToY, velocityViolations, yToValue, type Val
 import { frameToX, hoverFrame, hoverScrub, ROOT_CHANNELS, type TimeScale } from './timeScale'
 import { followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { drawRuler, LABEL_W, RULER_H } from './ruler'
-import { drawRangeBand, startRangeDrag } from './rangeBand'
+import { drawPieceBounds, drawRangeBand, minScrollF, startRangeDrag } from './rangeBand'
 import { tv } from './viewState'
 
 const KEY = 6, HANDLE_R = 2.5, RED = '#E5484D'
@@ -27,7 +27,7 @@ export default function GraphCanvas() {
     const canvas = cv.current!, ed = getEditor()
     const css = getComputedStyle(document.documentElement)
     const col = (n: string) => css.getPropertyValue(n).trim()
-    const C = { bg: col('--bg'), panel: col('--panel'), line: col('--line'), text: col('--text'), accent: col('--accent'), piece: col('--piece') }
+    const C = { bg: col('--bg'), panel: col('--panel'), line: col('--line'), text: col('--text'), accent: col('--accent'), piece: col('--piece'), rest: col('--rest'), blend: col('--blend'), inertia: col('--inertia') }
     let W = 0, H = 0, raf = 0, fitted = false
     let vs: ValueScale = { y0: 200, pxPerUnit: 100 }
     let drag: Drag | null = null
@@ -190,10 +190,8 @@ export default function GraphCanvas() {
         })
       }
       const e = editingItem(ed.getState())
-      if (e) { // dim the trimmed-away part of the clip
-        ctx.fillStyle = 'rgba(0,0,0,0.4)'
-        const xa = Math.max(LABEL_W, frameToX(sc, e.item.trimIn)), xb = Math.min(W, frameToX(sc, e.item.trimOut))
-        ctx.fillRect(LABEL_W, RULER_H, xa - LABEL_W, H - RULER_H); if (xb < W) ctx.fillRect(xb, RULER_H, W - xb, H - RULER_H)
+      if (e) { // only the piece's frames (and its lead-in / 끝 기본자세): the rest of the clip blank
+        drawPieceBounds(ctx, sc, e.item, RULER_H, H, LABEL_W, W, C)
       }
       const sel = e?.actorId ?? ed.getState().sel.actorId, cf = (sel && editTarget(ed.getState(), sel)?.f) || 0
       drawRuler(ctx, sc, W, RULER_H, NO_SEQ, cf, C, true)
@@ -292,9 +290,9 @@ export default function GraphCanvas() {
       if (e.ctrlKey) {
         const { x } = pos(e), fAt = tv.scrollF + (x - LABEL_W) / tv.ppf
         tv.ppf = Math.min(Math.max(tv.ppf * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 0.5), 40)
-        tv.scrollF = Math.max(0, fAt - (x - LABEL_W) / tv.ppf)
+        tv.scrollF = Math.max(minScrollF(), fAt - (x - LABEL_W) / tv.ppf)
       } else if (e.shiftKey) vs = { ...vs, y0: vs.y0 - (e.deltaY || e.deltaX) } // pan values
-      else tv.scrollF = Math.max(0, tv.scrollF + (e.deltaY + e.deltaX) / tv.ppf)
+      else tv.scrollF = Math.max(minScrollF(), tv.scrollF + (e.deltaY + e.deltaX) / tv.ppf)
       schedule()
     }
 

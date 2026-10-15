@@ -23,6 +23,7 @@ test('tree: a cut opens the piece rows, click a child row → clip preview; 덧�
   const seq = page.locator('.seq-canvas')
   await page.evaluate(() => (window as any).__editor.getState().setFrame(40))
   await seq.focus(); await page.keyboard.press('c')
+  await page.evaluate(() => { const s = (window as any).__editor.getState(); for (const t of s.project.sequence.tracks) for (const i of t.items) if (i.restPose) s.setRestPose(i.id, null) }) // start with 덧붙이기 off (a cut turns it on)
   expect(await items(page)).toBe(2)
 
   const box = (await seq.boundingBox())!

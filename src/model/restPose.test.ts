@@ -3,7 +3,7 @@ import { expect, test } from 'vitest'
 import { evalCurve, makeKey } from './curve'
 import { newProject } from './defaults'
 import { evaluate, evaluateClip, type RobotDefs } from './evaluate'
-import { autoBlend, leadOf, prependRestPose, REST_BLEND, REST_HOLD, restClipFor } from './restPose'
+import { autoBlend, itemLead, itemTail, leadInPose, leadOf, prependRestPose, REST_BLEND, REST_HOLD, restClipFor } from './restPose'
 import { autoInertia, motionEnergy } from './inertia'
 import { footMat, legsOf, rootMat } from './legIk'
 import { samplePoses } from '../export/csv'
@@ -103,7 +103,7 @@ test('the flag never changes sequence evaluation (timeline plays the original); 
   const { st, track } = setup([[0, 0, 60], [60, 0, 60], [200, 0, 60]]), s = () => st.getState()
   expect(s().splitItem('i0', 30)).toBe(true)
   expect(track().items.map(i => [i.id === 'i0' || i.id === 'i1' || i.id === 'i2' ? i.id : 'new', i.start, i.restPose ?? null]))
-    .toEqual([['i0', 0, null], ['i1', 60, null], ['i2', 200, null], ['new', 30, null]])
+    .toEqual([['i0', 0, 'prepend'], ['i1', 60, null], ['i2', 200, null], ['new', 30, 'prepend']])
 })
 
 test('restClipFor: cached by clip identity and window; rest at a, original after the blend; input untouched', () => {
@@ -278,4 +278,16 @@ test('전이: the feet never slide — each stays planted or is lifted and set d
   end.forEach((m, i) => expect(Math.hypot(m[3] - start[i][3], m[7] - start[i][7])).toBeGreaterThan(0.02))
   const rr = prependRestPose(c, g1, 0, 30, 0) // 전이 0: a snap, legs untouched
   expect(rr.length).toBe(c.length + 30)
+})
+
+test('clip view of a 덧붙이기 piece: leadInPose plays its lead-in (차렷 first), none on the piece; the play range covers the lead-in', async () => {
+  const { st } = rpSetup([10, 110]), s = () => st.getState()
+  s().setRestPose('i1', 'prepend')
+  const it = s().project.sequence.tracks.flatMap(t => t.items).find(i => i.id === 'i1')!
+  const lead = itemLead(s().project, defs, it)!.lead
+  expectRest(leadInPose(s().project, defs, it, it.start - lead)!.q) // the first lead-in frame stands
+  expect(leadInPose(s().project, defs, it, it.start)).toBeNull() // the piece itself plays its own frames
+  const { playRange } = await import('../transport')
+  s().openItem('i1')
+  expect(playRange(s())).toEqual([it.start - lead, it.start + it.trimOut - it.trimIn + (itemTail(s().project, defs, it)?.tail ?? 0)])
 })

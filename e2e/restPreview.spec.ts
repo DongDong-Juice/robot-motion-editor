@@ -20,6 +20,7 @@ test('덧붙이기 preview lines up with its exported CSV placed at the 기본�
   await expect.poll(() => page.evaluate(() => (window as any).__editor.getState().project.sequence.tracks.some((t: any) => t.items.length))).toBe(true)
   await page.evaluate(() => (window as any).__editor.getState().setFrame(150))
   await page.locator('.seq-canvas').focus(); await page.keyboard.press('c')
+  await page.evaluate(() => { const s = (window as any).__editor.getState(); for (const t of s.project.sequence.tracks) for (const i of t.items) if (i.restPose) s.setRestPose(i.id, null) }) // start with 덧붙이기 off (a cut turns it on)
   await page.getByRole('button', { name: /클립 프리뷰$/ }).nth(1).dispatchEvent('click')
   const pane = page.getByRole('region', { name: '클립 프리뷰' })
   await pane.getByRole('switch', { name: '기본자세 덧붙이기' }).click()

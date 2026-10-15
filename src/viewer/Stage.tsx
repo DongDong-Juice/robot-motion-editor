@@ -4,9 +4,9 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { evalCurve } from '../model/curve'
 import { COLOR } from '../model/defaults'
-import { evaluate, evaluateClip, evaluateItem, evaluateRoot } from '../model/evaluate'
+import { evaluate, evaluateClip, evaluateItem, evaluateRoot, placeItemPose } from '../model/evaluate'
 import { rebasePose } from '../model/pose'
-import { itemLead, restClipFor, tailedClip } from '../model/restPose'
+import { itemLead, leadInPose, restClipFor, tailedClip } from '../model/restPose'
 import { baseClip, editedClip, withUse } from '../model/itemClip'
 import { nearestAngle } from '../model/rootMath'
 import { hiddenAt, stitchTransforms, worldToClipRoot } from '../model/sequence'
@@ -164,7 +164,8 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
         const ghost = !!ei && ei.actorId !== a.id
         if (e.ghost !== ghost) { e.ghost = ghost; e.rig.setGhost(ghost) }
         const t = ei && !ghost ? editTarget(s, a.id) : null
-        const pose = t ? evaluateItem(vp, s.defs, t.itemId, t.f) : evaluate(vp, s.defs, a.id, s.frame)
+        const lead = t && s.editing ? leadInPose(vp, s.defs, ei!.item, s.frame) : null // clip view on the piece's 기본자세 · 전이 · 관성 / 끝 기본자세
+        const pose = lead ? placeItemPose(vp, s.defs, ei!.item.id, lead) : t ? evaluateItem(vp, s.defs, t.itemId, t.f) : evaluate(vp, s.defs, a.id, s.frame)
         e.rig.applyPose(pose)
         e.dot.position.set(pose.rootPos[0], pose.rootPos[1], 0.002)
       }
@@ -280,7 +281,15 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
     const locked = () => {
       const s = store.getState(), id = s.sel.actorId
       const t = id ? editTarget(s, id) : null
-      return gizmoLock(s) !== null || (!!id && (offStage(s, id) || trackLocked(s.project, id) || (!!t && clipLocked(s.project, t.clipId))))
+      if (editPane) { // joints of this piece only, while the playhead is in it (crossfade / locked track: no gizmo as on the main view)
+        const g = gizmoLock(s)
+        const pi = s.project.sequence.tracks.flatMap(t => t.items).find(i => i.id === itemId)
+        const off = !pi || s.previewFrame < pi.start || s.previewFrame >= pi.start + pi.trimOut - pi.trimIn
+        return off || id !== paneActor || !s.sel.channel || s.sel.channel.startsWith('root') || t?.itemId !== itemId || (g !== null && g !== 'compare')
+          || trackLocked(s.project, id!) || clipLocked(s.project, t.clipId)
+      }
+      const ei = editingItem(s), offPiece = !!ei && !s.clipEdit && (s.frame < ei.item.start || s.frame >= ei.item.start + ei.item.trimOut - ei.item.trimIn)
+      return offPiece || gizmoLock(s) !== null || (!!id && (offStage(s, id) || trackLocked(s.project, id) || (!!t && clipLocked(s.project, t.clipId))))
     }
     const syncSelection = () => {
       const s = store.getState()

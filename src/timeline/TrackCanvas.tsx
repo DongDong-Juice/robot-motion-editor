@@ -7,7 +7,7 @@ import { tv } from './viewState'
 import { buildRows, frameToX, hitKey, hoverFrame, hoverScrub, keysIn, rowKey, xToFrame, type TimeScale } from './timeScale'
 import { followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { drawRuler, LABEL_W, RULER_H } from './ruler'
-import { drawRangeBand, startRangeDrag } from './rangeBand'
+import { drawPieceBounds, drawRangeBand, minScrollF, startRangeDrag } from './rangeBand'
 import { drawScrollbar, pressScrollbar, SB_W, sbGeom } from './vscroll'
 import { usePhysics } from '../physics/physicsStore'
 import { stale } from '../physics/runItem'
@@ -38,7 +38,7 @@ export default function TrackCanvas() {
     const canvas = cv.current!, ed = getEditor(), u = ui.current
     const css = getComputedStyle(document.documentElement)
     const col = (n: string) => css.getPropertyValue(n).trim()
-    const C = { bg: col('--bg'), panel: col('--panel'), line: col('--line'), text: col('--text'), accent: col('--accent'), piece: col('--piece') }
+    const C = { bg: col('--bg'), panel: col('--panel'), line: col('--line'), text: col('--text'), accent: col('--accent'), piece: col('--piece'), rest: col('--rest'), blend: col('--blend'), inertia: col('--inertia') }
     let W = 0, H = 0, raf = 0, sbHover = false, sbDrag = false
 
     const scale = (): TimeScale => ({ x0: LABEL_W - tv.scrollF * tv.ppf, pxPerFrame: tv.ppf })
@@ -122,12 +122,8 @@ export default function TrackCanvas() {
         ctx.fillStyle = C.text; ctx.fillText('보조력', 6, RULER_H + BAND / 2)
       }
       const e = editingItem(s)
-      if (e) { // dim the trimmed-away part of the clip
-        ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, RULER_H, W - LABEL_W, H - RULER_H); ctx.clip()
-        ctx.fillStyle = 'rgba(0,0,0,0.4)'
-        const xa = frameToX(sc, e.item.trimIn), xb = frameToX(sc, e.item.trimOut)
-        ctx.fillRect(LABEL_W, RULER_H, xa - LABEL_W, H - RULER_H); ctx.fillRect(xb, RULER_H, W - xb, H - RULER_H)
-        ctx.restore()
+      if (e) { // only the piece's frames (and its lead-in / 끝 기본자세): the rest of the clip blank
+        drawPieceBounds(ctx, sc, e.item, RULER_H, H, LABEL_W, W, C)
       }
       const pa = e?.actorId ?? s.sel.actorId, tg = pa ? editTarget(s, pa) : null, cf = tg?.f ?? 0
       drawRuler(ctx, sc, W, RULER_H, NO_SEQ, cf, C, true)
@@ -260,11 +256,11 @@ export default function TrackCanvas() {
       if (e.ctrlKey) {
         const { x } = pos(e), fAt = tv.scrollF + (x - LABEL_W) / tv.ppf
         tv.ppf = Math.min(Math.max(tv.ppf * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 0.5), 40)
-        tv.scrollF = Math.max(0, fAt - (x - LABEL_W) / tv.ppf)
+        tv.scrollF = Math.max(minScrollF(), fAt - (x - LABEL_W) / tv.ppf)
       } else if (e.shiftKey || pos(e).x < LABEL_W || pos(e).x >= W - SB_W) { // vertical scroll (Shift, or over the labels / scrollbar)
         const max = Math.max(0, rows().length * ROW_H - (H - top()))
         u.scrollY = Math.min(Math.max(u.scrollY + (e.deltaY || e.deltaX), 0), max)
-      } else tv.scrollF = Math.max(0, tv.scrollF + (e.deltaY + e.deltaX) / tv.ppf)
+      } else tv.scrollF = Math.max(minScrollF(), tv.scrollF + (e.deltaY + e.deltaX) / tv.ppf)
       schedule()
     }
 

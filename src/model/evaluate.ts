@@ -52,6 +52,11 @@ export function evaluateItem(p: Project, defs: RobotDefs, itemId: string, clipFr
   const clip = item && itemClip(p, defs, item)
   if (!track || !item || !actor || !clip) throw new Error(`unknown item ${itemId}`)
   const cf = Math.min(Math.max(clipFrame, 0), clip.length - 1)
-  const pose = applyXf(evaluateClip(clip, defs[actor.robot], cf), stitchTransforms(p, defs, track).get(itemId)!)
-  return applyXf(pose, actor.placement)
+  return placeItemPose(p, defs, itemId, evaluateClip(clip, defs[actor.robot], cf))
+}
+
+/** A clip-local pose of item `itemId` placed on the stage: its stitch transform, then its actor's placement. */
+export function placeItemPose(p: Project, defs: RobotDefs, itemId: string, pose: Pose): Pose {
+  const track = p.sequence.tracks.find(t => t.items.some(i => i.id === itemId))!, actor = p.actors.find(a => a.id === track.actorId)!
+  return applyXf(applyXf(pose, stitchTransforms(p, defs, track).get(itemId)!), actor.placement)
 }

@@ -310,7 +310,7 @@ test('splitItem makes two items sharing the clip', () => {
   const its = trackItems(actor)
   expect(its.map(i => [i.start, i.trimIn, i.trimOut])).toEqual([[0, 0, 50], [50, 50, 120]])
   expect(its[0].refId).toBe(its[1].refId)
-  expect(its.every(i => i.restPose === undefined)).toBe(true) // a cut sets no 기본자세 (the clip preview does)
+  expect(its.every(i => i.restPose === 'prepend')).toBe(true) // a cut turns 기본자세 덧붙이기 on for both pieces (user)
   expect(its[0].id).toBe(id)
   expect(its[1].id).not.toBe(id)
   expect(s().splitItem(id, 0)).toBe(false)

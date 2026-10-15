@@ -24,6 +24,7 @@ test('right-click an item bar or tree child row → export하기 saves exactly t
   await expect.poll(() => page.evaluate(() => (window as any).__editor.getState().project.sequence.tracks.some((t: any) => t.items.length))).toBe(true)
   await page.evaluate(() => (window as any).__editor.getState().setFrame(60))
   await seq.focus(); await page.keyboard.press('c')
+  await page.evaluate(() => { const s = (window as any).__editor.getState(); for (const t of s.project.sequence.tracks) for (const i of t.items) if (i.restPose) s.setRestPose(i.id, null) }) // start with 덧붙이기 off (a cut turns it on)
   await expect.poll(() => page.evaluate(() => (window as any).__editor.getState().project.sequence.tracks.find((t: any) => t.kind === 'motion').items.length)).toBe(2)
 
   await expect(page.getByRole('button', { name: /클립 목록$/ })).toHaveAttribute('aria-expanded', 'true') // the cut opens the piece lanes (next render)

@@ -746,6 +746,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         if (it.offset) right.offset = structuredClone(it.offset) // clip frames: each piece keeps the part under it
         if (it.use) right.use = it.use
         if (f.t.kind === 'motion') { it.restTail ??= true; right.restTail = true } // 끝 기본자세 on both pieces (user: every cut ends each piece standing); one turned off stays off
+        if (f.t.kind === 'motion') { it.restPose = 'prepend'; right.restPose = 'prepend' } // 기본자세 덧붙이기 on both pieces by default (user)
         it.trimOut = cut
         f.t.items.push(right)
         return validItems(p, f.t)

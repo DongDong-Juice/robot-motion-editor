@@ -56,7 +56,9 @@ export default function JointPanel() {
   const set = (c: string, x: number) => act.setValue(v.actor.id, c, x)
   const clipView = !!(s.editing || s.clipEdit), r = clipView ? s.range : null
   const outside = !!r && (v.f < r.a || v.f > r.b)
-  const blocked = (c: string) => !v.canEdit || v.locked(c) || outside
+  // clip view on the piece's lead-in / 끝 기본자세: those frames are not the piece's own
+  const offPiece = !!s.editing && !s.clipEdit && (s.frame < v.item.start || s.frame >= v.item.start + v.item.trimOut - v.item.trimIn)
+  const blocked = (c: string) => !v.canEdit || v.locked(c) || outside || offPiece
   const curve = v.curves[sel]
   const keyHere = curve?.keys.find(k => k.f === v.f), atKey = !!keyHere
   // the piece open in the clip preview is edited on the preview's own playhead (kept on the piece, paused)
@@ -95,6 +97,7 @@ export default function JointPanel() {
       </h3>
       <>
         {outside && <p className="jp-hint warn">재생헤드를 구간 안으로 옮기세요</p>}
+        {offPiece && <p className="jp-hint warn">기본자세·전이·관성 구간입니다 · 조각 안에서 고치세요</p>}
         <div className="jp-rows">
           {v.channels.map(c => {
             const { joint, v: x, lo, hi } = v.value(c), d = deg && isAngle(c, joint)

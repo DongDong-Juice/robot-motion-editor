@@ -13,10 +13,11 @@ export function sequenceEnd(p: Project): number {
   return end
 }
 
-// Playback / arrow-key range [lo, hi): the open clip in clip view, In..Out in sequence view if both set, else 0..end.
-export function playRange(s: Pick<EditorState, 'project' | 'editing'> & Partial<Pick<EditorState, 'clipEdit'>>): [number, number] {
+// Playback / arrow-key range [lo, hi): in clip view the open piece with its lead-in and 끝 기본자세, In..Out in sequence view if both
+// set, else 0..end.
+export function playRange(s: Pick<EditorState, 'project' | 'editing'> & Partial<Pick<EditorState, 'clipEdit' | 'defs'>>): [number, number] {
   const e = editingItem(s)
-  if (e) { const lo = e.item.start - e.item.trimIn; return [lo, lo + e.clip.length] }
+  if (e) return (!s.clipEdit && s.defs && previewRange(s.project, s.defs, e.item.id)) || [e.item.start, e.item.start + e.item.trimOut - e.item.trimIn]
   const { inF, outF } = s.project.sequence
   return inF !== null && outF !== null ? [inF, outF] : [0, sequenceEnd(s.project)]
 }
