@@ -4,7 +4,7 @@ import { getEditor, useEditor } from '../store/store'
 import { itemLen, sortedItems, pieceName, pieceTag } from '../model/sequence'
 import { itemLead, itemTail, REST_BLEND, REST_HOLD } from '../model/restPose'
 import type { Item, Track } from '../model/types'
-import { offsetKeyCount, withUse } from '../model/itemClip'
+import { offsetKeyCount } from '../model/itemClip'
 import { seqFlash, tv } from './viewState'
 import { followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { sequenceEnd } from '../transport'
@@ -52,7 +52,6 @@ function drawLock(ctx: CanvasRenderingContext2D, cx: number, cy: number, on: boo
 }
 const isVideo = (t: Track) => t.kind === 'video'
 // "<start>–<end> · <clip name>" of a child row (sequence frames); time first since split pieces share a clip name
-const OVERWRITE = REST_HOLD + REST_BLEND // 덮어쓰기 replaces up to the first 1.5 s
 const restTag = (it: Item) => it.restPose === 'prepend' ? '기본자세 덧붙임' : '기본자세'
 const childLabel = (t: Track, it: Item, name: string) => `${pieceTag(t, it).split(' · ')[0]}${pieceTag(t, it) ? ' · ' : ''}${formatTimecode(it.start)}–${formatTimecode(it.start + itemLen(it))} · ${name}${it.restPose ? ` · ${restTag(it)}` : ''}`
 // short lane label: "#n · m:ss" of the piece start ("m:ss" alone for a clip's only piece); exact times are in the hover text
@@ -154,17 +153,8 @@ export default function SequenceCanvas() {
     // lead-in / tail lengths walk the whole clip (foot contact, motion amount): during a slider or gizmo drag the lanes keep the
     // lengths from the drag start and catch up when it ends
     const leads = new Map<string, ReturnType<typeof itemLead>>(), tails = new Map<string, ReturnType<typeof itemTail>>()
-    // `side`: from the original or the 수정본 (each row draws its own; the settings are the piece's, shared); none = the side in use
-    type Side = 'original' | 'edit' | undefined
-    const sided = (it: Item, side: Side) => { const s = ed.getState(); if (!side) return { p: s.project, it }
-      const use = side === 'original' ? 'original' as const : null, n = { ...it }; if (use) n.use = use; else delete n.use
-      return { p: withUse(s.project, it.id, use), it: n } }
-    const leadOf = (it: Item, side?: Side) => { const s = ed.getState(), k = `${it.id}:${side ?? ''}`
-      if (!s.inGesture || !leads.has(k)) { const v = sided(it, side); leads.set(k, itemLead(v.p, s.defs, v.it)) } return leads.get(k)! }
-    const tailOf = (it: Item, side?: Side) => { const s = ed.getState(), k = `${it.id}:${side ?? ''}`
-      if (!s.inGesture || !tails.has(k)) { const v = sided(it, side); tails.set(k, itemTail(v.p, s.defs, v.it)) } return tails.get(k)! }
-    // a lane of a piece with a 수정본 shows the original (its 수정 row the 수정본); a 수정본-only lane and a collapsed row: the side in use
-    const laneSide = (it: Item, lane: boolean): Side => lane && offsetKeyCount(it) > 0 && !it.noOriginal ? 'original' : undefined
+    const leadOf = (it: Item) => { const s = ed.getState(); if (!s.inGesture || !leads.has(it.id)) leads.set(it.id, itemLead(s.project, s.defs, it)); return leads.get(it.id)! }
+    const tailOf = (it: Item) => { const s = ed.getState(); if (!s.inGesture || !tails.has(it.id)) tails.set(it.id, itemTail(s.project, s.defs, it)); return tails.get(it.id)! }
     seqFlash.fn = (text, itemId) => flash(text, layout().findIndex(r => !r.it && r.t.items.some(i => i.id === itemId)))
 
     const draw = () => {
@@ -192,18 +182,6 @@ export default function SequenceCanvas() {
       if (scrollY > maxY) scrollY = maxY
       if (scrollY !== scrollTo) { scrollY = Math.abs(scrollTo - scrollY) < 0.5 ? scrollTo : scrollY + (scrollTo - scrollY) * 0.35; schedule() }
       const rows = layout()
-      // 기본자세 blocks of one piece on a lane row at y (덮어쓰기: the first 1.5 s; 덧붙이기: 기본자세 · 전이 · 관성 before the bar;
-      // 끝 기본자세: 전이 · 기본자세 after it), each labelled where the word fits. Used by the 수정 row (the lanes draw theirs in bars()).
-      const restBlocks = (it: Item, ld: ReturnType<typeof itemLead>, tl: ReturnType<typeof itemTail>, y: number, ga: number) => {
-        const x = frameToX(sc, it.start), w = itemLen(it) * tv.ppf, by = y + 2, bh = ROW_H - 5, spans: [string, number, number][] = []
-        const put = (label: string, c: string, x0: number, n: number) => { ctx.fillStyle = c; ctx.fillRect(x0, by, n * tv.ppf, bh); spans.push([label, x0, x0 + n * tv.ppf]); return x0 + n * tv.ppf }
-        ctx.globalAlpha = 0.55 * ga
-        if (it.restPose === true) put('기본자세', C.rest, x, Math.min(OVERWRITE, itemLen(it)))
-        else if (it.restPose === 'prepend' && ld) { let xs = x - ld.lead * tv.ppf; xs = put('기본자세', C.rest, xs, ld.hold); xs = put('전이', C.blend, xs, ld.blend); put('관성', C.inertia, xs, ld.inertia) }
-        if (tl) put('기본자세', C.rest, put('전이', C.blend, x + w, tl.blend), tl.hold)
-        ctx.globalAlpha = ga; ctx.fillStyle = C.text
-        for (const [t, a0, a1] of spans) { const a = Math.max(a0, LABEL_W); if (a1 - a >= ctx.measureText(t).width + 8) ctx.fillText(t, a + 4, y + ROW_H / 2) }
-      }
       // Bars of `items` in one row at y: fill, 기본자세 section, outline, assist graph, crossfade hatch over `xfade`, labels.
       const bars = (t: Track, items: Item[], y: number, color: string, lane: boolean, xfade: [number, number][]) => {
         const video = isVideo(t), actor = s.project.actors.find(a => a.id === t.actorId)
@@ -214,11 +192,10 @@ export default function SequenceCanvas() {
           const x = frameToX(sc, it.start), w = itemLen(it) * tv.ppf, by = y + 2, bh = ROW_H - 5
           if (video) { ctx.fillStyle = C.panel; ctx.fillRect(x, by, w, bh) }
           else { ctx.fillStyle = color; ctx.globalAlpha = 0.18 * ga; ctx.fillRect(x, by, w, bh); ctx.globalAlpha = ga }
-          if (it.restPose) { // 기본자세 section in its own colour: 덮어쓰기 = the first 1.5 s; 덧붙이기 = the lead-in played before the piece
+          const ld = it.restPose ? leadOf(it) : null
+          if (ld) { // 기본자세 덧붙이기: the lead-in played before the piece
             ctx.fillStyle = C.rest; ctx.globalAlpha = 0.55 * ga
-            const ld = leadOf(it, laneSide(it, lane))
-            if (!ld) ctx.fillRect(x, by, Math.min(OVERWRITE, itemLen(it)) * tv.ppf, bh)
-            else { // 기본자세 (정지) · 전이 · 관성 (original frames), each in its own colour; one row: a strip, so the piece before stays visible
+            { // 기본자세 (정지) · 전이 · 관성 (original frames), each in its own colour; one row: a strip, so the piece before stays visible
               let xs = x - ld.lead * tv.ppf
               for (const [n, c] of [[ld.hold, C.rest], [ld.blend, C.blend], [ld.inertia, C.inertia]] as const) {
                 ctx.fillStyle = c; ctx.fillRect(xs, by, n * tv.ppf, lane ? bh : 4); xs += n * tv.ppf
@@ -255,9 +232,8 @@ export default function SequenceCanvas() {
         ctx.fillStyle = C.text
         for (const it of items) {
           // 기본자세 section label: only where the whole word fits inside the coloured block (덧붙이기 only in a lane)
-          const ld = it.restPose === 'prepend' ? leadOf(it, laneSide(it, lane)) : null
-          const rb = it.restPose === true ? [frameToX(sc, it.start), Math.min(OVERWRITE, itemLen(it)) * tv.ppf]
-            : ld && lane ? [frameToX(sc, it.start) - ld.lead * tv.ppf, ld.hold * tv.ppf] : null
+          const ld = it.restPose === 'prepend' ? leadOf(it) : null
+          const rb = ld && lane ? [frameToX(sc, it.start) - ld.lead * tv.ppf, ld.hold * tv.ppf] : null
           const tag = (text: string, x0: number, x1: number) => { // a section label, only where the whole word fits inside its block
             const a = Math.max(x0, LABEL_W)
             if (x1 - a >= ctx.measureText(text).width + 8) ctx.fillText(text, a + 4, y + ROW_H / 2)
@@ -270,7 +246,7 @@ export default function SequenceCanvas() {
           }
           const tl = lane ? tailOf(it) : null
           if (tl) { const e0 = frameToX(sc, it.start + itemLen(it)), e1 = e0 + tl.blend * tv.ppf; tag('전이', e0, e1); tag('기본자세', e1, e1 + tl.hold * tv.ppf) }
-          const x = Math.max(frameToX(sc, it.start) + (it.restPose === true && rb ? rb[1] : 0), LABEL_W) + 4, right = frameToX(sc, it.start + itemLen(it)) - 4 // 덮어쓰기: the name after the block
+          const x = Math.max(frameToX(sc, it.start), LABEL_W) + 4, right = frameToX(sc, it.start + itemLen(it)) - 4
           const { st, old } = video ? { st: undefined, old: false } : phys(t, it), b = badge(st, old)
           const ty = st?.metrics ? y + 9 : y + ROW_H / 2 // above the graph
           const br = Math.min(right, W - 4), bw = b && br - x >= ctx.measureText(b).width ? ctx.measureText(b).width + 8 : 0

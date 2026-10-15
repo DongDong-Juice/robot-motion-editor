@@ -270,8 +270,8 @@ const project = {
         // walk cut in the middle: two pieces of one clip (CSV names G1_walk_1 / _2); the first has 기본자세 덧붙이기 (its CSV gets a 90-row lead-in)
         { id: 'item-walk-1', refId: 'clip-walk', start: 0, trimIn: 0, trimOut: cut, restPose: 'prepend' },
         { id: 'item-walk-2', refId: 'clip-walk', start: cut, trimIn: cut, trimOut: wl },
-        // wave overlaps the second walk piece by 20 frames (crossfade) and overwrites its first 1.5 s with the rest pose
-        { id: 'item-wave', refId: 'clip-wave', start: wl - 20, trimIn: 0, trimOut: wv, restPose: true },
+        // wave overlaps the second walk piece by 20 frames (crossfade)
+        { id: 'item-wave', refId: 'clip-wave', start: wl - 20, trimIn: 0, trimOut: wv },
       ] },
       { id: 'track-go2', kind: 'motion', actorId: 'actor-go2', hidden: false, locked: false, items: [
         { id: 'item-trot', refId: 'clip-trot', start: 0, trimIn: 0, trimOut: trot.frames.length },

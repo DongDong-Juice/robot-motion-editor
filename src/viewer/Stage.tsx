@@ -46,7 +46,7 @@ const OVERLAY = '#6ED3A3' // 겹쳐 보기 ghost: the 조각 수정 층 colour (
 interface Entry { rig: RobotRig; trail: THREE.Line; dot: THREE.Points; ghost: boolean; trailKey?: string; trailClips?: (Clip | undefined)[] }
 
 /** One 3D view. `compareClipId` = a view-only compare pane: one robot at the origin driven by that clip from sequence frame 0 (no gizmo, picking or actors). Omitted = the main pane (every actor).
- * With `itemId` + `range`, an item flagged restPose plays its derived rest-pose clip instead (preview only).
+ * With `itemId` + `range`, an item with 기본자세 덧붙이기 plays its lead-in clip instead (preview only).
  * With `range` = [from, to) clip frames, the compare robot shows that range, root re-based so frame `from` sits at the origin: with `itemId` it follows
  * the main playhead (item start = `from`), else it loops on its own 60 fps clock. */
 export default function Stage({ compareClipId: cid, range, itemId, children }: { compareClipId?: string; range?: [number, number]; itemId?: string; children?: ReactNode }) {
@@ -190,7 +190,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       const it = project.sequence.tracks.flatMap(t => t.items).find(i => i.id === itemId)
       const base = (it && tailedClip(project, defs, it)) || clip // with its 끝 기본자세 after trimOut
       const ld = it ? itemLead(project, defs, it) : null // prepend: range = [trimIn − 관성, trimOut + 정지 + 전이), the derived clip's frames
-      return ld ? restClipFor(base, defs[clip.robot], lo, hi, 'prepend', ld.hold, ld.blend) : it?.restPose ? restClipFor(base, defs[clip.robot], lo, hi) : base
+      return ld ? restClipFor(base, defs[clip.robot], lo, hi, 'prepend', ld.hold, ld.blend) : base
     }
     const paneProject = () => store.getState().project
     // compare pane: one rig for the clip at the origin; trail rebuilt only when the clip object changes

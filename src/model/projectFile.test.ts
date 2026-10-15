@@ -29,10 +29,10 @@ test('roundtrip preserves project', () => {
   expect(parseProject(serializeProject(p), defs)).toEqual(p)
 })
 
-test('item restPose round-trips; non-true is rejected; an old unknown clip owner is kept and ignored', () => {
+test('item restPose round-trips; an old 덮어쓰기 (true) opens as off; others rejected; an old unknown clip owner is kept and ignored', () => {
   const p = mk(), it = p.sequence.tracks.flatMap(t => t.items)[0], c = Object.values(p.clips)[0]
-  it.restPose = true
-  expect(parseProject(serializeProject(p), defs).sequence.tracks.flatMap(t => t.items)[0].restPose).toBe(true)
+  ;(it as any).restPose = true
+  expect(parseProject(serializeProject(p), defs).sequence.tracks.flatMap(t => t.items)[0].restPose).toBeUndefined()
   it.restPose = 'prepend'
   expect(parseProject(serializeProject(p), defs).sequence.tracks.flatMap(t => t.items)[0].restPose).toBe('prepend')
   ;(it as any).restPose = false

@@ -1,7 +1,7 @@
 import { evaluate, type Pose, type RobotDefs } from '../model/evaluate'
 import { evaluateClip, placePose, rebasePose } from '../model/pose'
 import { baseClip, itemClip } from '../model/itemClip'
-import { itemLead, itemTail, restClipFor, tailedClip, withRestPose } from '../model/restPose'
+import { itemLead, itemTail, restClipFor, tailedClip } from '../model/restPose'
 import type { Quat } from '../model/rootMath'
 import type { Item, Project } from '../model/types'
 import type { RobotDef, RobotKind } from '../robot/types'
@@ -33,7 +33,6 @@ export const restTailRows = (p: Project, defs: RobotDefs, item: Item) => itemTai
 
 export function samplePoses(p: Project, defs: RobotDefs, actorId: string, itemId: string, mode: RootMode): Pose[] {
   const item = findItem(p, itemId), { from, to } = itemFrameRange(item)
-  if (item.restPose === true) p = withRestPose(p, defs, itemId) // the stored project is never touched
   const raw: Pose[] = []
   for (let f = from; f < to; f++) raw.push(evaluate(p, defs, actorId, f))
   const ld = itemLead(p, defs, item)

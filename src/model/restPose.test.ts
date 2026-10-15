@@ -71,8 +71,8 @@ const flag = (st: ReturnType<typeof setup>['st'], id: string) => st.getState().p
 
 test('setRestPose: toggles the flag only, one undo each, clips untouched', () => {
   const { st } = rpSetup([10, 110]), s = () => st.getState(), before = s().project
-  expect(s().setRestPose('i1', true)).toBe(true)
-  expect(flag(st, 'i1')).toBe(true); expect(flag(st, 'i0')).toBeUndefined()
+  expect(s().setRestPose('i1', 'prepend')).toBe(true)
+  expect(flag(st, 'i1')).toBe('prepend'); expect(flag(st, 'i0')).toBeUndefined()
   expect(s().project.clips).toEqual(before.clips); expect(s().dirty).toBe(true)
   s().undo(); expect(s().project).toBe(before); expect(flag(st, 'i1')).toBeUndefined()
   s().redo(); expect(s().setRestPose('i1', null)).toBe(true)
@@ -83,17 +83,17 @@ test('setRestPose: locked, unknown and video items rejected', () => {
   const l = rpSetup([10, 110]), s = () => l.st.getState()
   s().setTrackFlag(l.track().id, 'locked', true)
   const q = s().project
-  expect(s().setRestPose('i1', true)).toBe(false)
+  expect(s().setRestPose('i1', 'prepend')).toBe(false)
   expect(s().project).toBe(q)
   s().setTrackFlag(l.track().id, 'locked', false)
-  expect(s().setRestPose('nope', true)).toBe(false)
+  expect(s().setRestPose('nope', 'prepend')).toBe(false)
   const m = s().addMedia('v', 100)
   expect(s().addVideoItem(m, 0)).toBe(true)
-  expect(s().setRestPose(s().project.sequence.tracks.find(t => t.kind === 'video')!.items[0].id, true)).toBe(false)
+  expect(s().setRestPose(s().project.sequence.tracks.find(t => t.kind === 'video')!.items[0].id, 'prepend')).toBe(false)
 })
 
-test('the flag never changes sequence evaluation (timeline plays the original); a cut moves nothing, flags nothing', () => {
-  for (const mode of [true, 'prepend'] as const) {
+test('the flag never changes sequence evaluation (timeline plays the original); a cut moves nothing and turns 덧붙이기 on for both pieces', () => {
+  for (const mode of ['prepend'] as const) {
     const { st, actor } = rpSetup([10, 110]), s = () => st.getState()
     const frames = [0, 59, 60, 61, 70, 100, 119, 150, 200], at = () => frames.map(f => evaluate(s().project, defs, actor, f))
     const before = at()

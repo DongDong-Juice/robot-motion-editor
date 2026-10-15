@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 const items = (page: import('@playwright/test').Page) => page.evaluate(() =>
   ((window as any).__editor.getState().project.sequence.tracks.find((t: any) => t.kind === 'motion')?.items.length ?? 0) as number) // 0 until the import lands
 
-test('tree: a cut opens the piece rows, click a child row → clip preview; 덮어쓰기/덧붙이기 only flag the item', async ({ page }) => {
+test('tree: a cut opens the piece rows, click a child row → clip preview; 덧붙이기 only flags the item', async ({ page }) => {
   await page.addInitScript(() => { delete (window as any).showOpenFilePicker; delete (window as any).showDirectoryPicker })
   const errors: string[] = []
   page.on('pageerror', e => errors.push(String(e)))
@@ -53,10 +53,10 @@ test('tree: a cut opens the piece rows, click a child row → clip preview; 덮�
     return exportItemCsv(st.project, st.defs, tr.actorId, tr.items[1].id, 'local').text.split('\n').length
   })
   const plainRows = await rows()
-  const sw = pane.getByRole('switch', { name: '기본자세 덧붙이기' }) // 덧붙이기: the switch in the lead-in box; 덮어쓰기: a button
-  for (const [button, flag, extra] of [['기본자세 덮어쓰기', true, 0], ['기본자세 덧붙이기', 'prepend', 90]] as const) {
-    if (flag === true) { await pane.getByRole('button', { name: button }).click(); await expect(pane.getByRole('button', { name: '기본자세 해제' })).toBeVisible() }
-    else { await sw.click(); await expect(sw).toHaveAttribute('aria-checked', 'true') }
+  const sw = pane.getByRole('switch', { name: '기본자세 덧붙이기' }) // the switch in the lead-in box (덮어쓰기 was removed)
+  await expect(pane.getByRole('button', { name: '기본자세 덮어쓰기' })).toHaveCount(0)
+  for (const [button, flag, extra] of [['기본자세 덧붙이기', 'prepend', 90]] as const) {
+    await sw.click(); await expect(sw).toHaveAttribute('aria-checked', 'true')
     await expect(pane.getByRole('status')).toContainText(`${button}를 켰습니다`)
     const after = await snap()
     expect(after.clips).toBe(before.clips) // no clip added or baked
@@ -64,8 +64,7 @@ test('tree: a cut opens the piece rows, click a child row → clip preview; 덮�
     expect(after.pose).toBe(before.pose) // sequence evaluation at the item start is unchanged
     expect(after.lead).toBeGreaterThanOrEqual(extra)
     expect(await rows()).toBe(plainRows + after.lead) // 덧붙이기 adds its lead-in (정지 + 전이 + 관성, ≥ 1.5 s) to that piece's CSV
-    if (flag === true) await pane.getByRole('button', { name: '기본자세 해제' }).click(); else await sw.click()
-    await expect(pane.getByRole('button', { name: '기본자세 덮어쓰기' })).toBeVisible()
+    await sw.click()
     await expect(sw).toHaveAttribute('aria-checked', 'false')
     expect((await snap()).flag).toBeNull()
   }

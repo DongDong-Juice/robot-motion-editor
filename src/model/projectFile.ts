@@ -118,6 +118,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
         const it_ = `${at}.items.${j}`
         if (!isObj(it) || !str(it.id) || !int(it.start) || !int(it.trimIn) || !int(it.trimOut)) fail(it_)
         if (it.restPose !== undefined && it.restPose !== true && it.restPose !== 'prepend') fail(`${it_}.restPose`)
+        if (it.restPose === true) delete it.restPose // 기본자세 덮어쓰기 was removed: an old file opens with it off
         if (it.hidden !== undefined && it.hidden !== true) fail(`${it_}.hidden`)
         if (it.restTail !== undefined && typeof it.restTail !== 'boolean') fail(`${it_}.restTail`)
         if (it.restHold !== undefined && !(int(it.restHold) && it.restHold >= 0)) fail(`${it_}.restHold`)

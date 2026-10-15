@@ -39,7 +39,6 @@ const findItem = (p: Project, id: string) => {
 // Hover help for the 기본자세 buttons (shown as the native tooltip).
 const REST_TIP = {
   prepend: '조각 앞에 기본자세(차렷)에서 시작하는 리드인을 추가합니다.\n원래 모션은 그대로 두고 CSV가 리드인만큼 길어집니다.\n기본자세(차렷으로 정지, 기본 0.5초) → 전이(기본 1초) → 관성(자른 위치 앞 원본, 자동 판정) 순서이고, 켠 뒤 아래 설정 줄에서 조각마다 바꿀 수 있습니다.\n클립 프리뷰와 이 조각의 CSV에만 적용되고, 메인 타임라인은 원본 그대로입니다.',
-  overwrite: '조각의 앞 1.5초를 기본자세(차렷)로 바꿉니다.\nCSV 길이는 그대로지만 원래 모션의 앞 1.5초가 사라집니다.\n0.5초 서 있다가 1초 동안 모션으로 넘어갑니다.\n클립 프리뷰와 이 조각의 CSV에만 적용되고, 메인 타임라인은 원본 그대로입니다.',
   off: '이 조각의 기본자세를 끕니다. CSV는 원래 모션 그대로 내보냅니다.',
 }
 
@@ -62,7 +61,7 @@ function ItemPreview({ id }: { id: string }) {
     const s = getEditor().getState(), ok = s.setRestPose(id, mode)
     setMsg(!ok ? (findItem(s.project, id)?.t.locked ? '잠긴 트랙입니다' : '기본자세를 바꿀 수 없습니다')
       : mode === 'prepend' ? `기본자세 덧붙이기를 켰습니다 (앞에 ${sec(leadNow())}초 추가 · 프리뷰·내보내기에만 적용)`
-      : mode ? '기본자세 덮어쓰기를 켰습니다 (앞 1.5초를 바꿈 · 프리뷰·내보내기에만 적용)' : '기본자세를 껐습니다')
+      : '기본자세를 껐습니다')
     clearTimeout(timer.current); timer.current = window.setTimeout(() => setMsg(null), 3000)
   }
   const say = (text: string) => { setMsg(text); clearTimeout(timer.current); timer.current = window.setTimeout(() => setMsg(null), 3000) }
@@ -81,9 +80,6 @@ function ItemPreview({ id }: { id: string }) {
   const range: [number, number] = ld ? [item.trimIn - ld.inertia, item.trimOut + ld.hold + ld.blend + tail] : [item.trimIn, item.trimOut + tail]
   const s = () => getEditor().getState()
   const restButtons = <>
-    {item.restPose === true
-      ? <button className="pv-btn" onClick={() => rest(null)} title={REST_TIP.off}>기본자세 해제</button>
-      : <button className="pv-btn" onClick={() => rest(true)} title={REST_TIP.overwrite}>기본자세 덮어쓰기</button>}
     <button className="pv-btn" aria-pressed={!!item.restTail} onClick={() => restTail(!item.restTail)}
       title="조각 끝에 전이 후 기본자세 0.5초를 덧붙입니다 (자르면 자동으로 켜짐 · 프리뷰·내보내기에만 적용)">끝 기본자세</button>
   </>

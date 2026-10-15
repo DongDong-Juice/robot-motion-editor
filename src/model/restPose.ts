@@ -226,7 +226,7 @@ export function tailedClip(p: Project, defs: RobotDefs, item: Item): Clip | unde
   return clip && tl ? tailClipFor(clip, defs[clip.robot], item.trimIn, item.trimOut, tl.hold, tl.blend) : clip
 }
 
-export type RestMode = NonNullable<Item['restPose']>
+export type RestMode = true | 'prepend' // true: overwrite [a, b) (no UI since 덮어쓰기 was removed; kept for the bake tests)
 
 // Memoized bake: the same clip object, window and mode give the same derived clip (preview redraws every frame).
 // Overwrite bakes [a, b); prepend inserts hold + blend frames before a (b unused).

@@ -103,7 +103,7 @@ export interface EditorState {
   splitItem(itemId: string, frame: number): boolean
   deleteItem(itemId: string): boolean
   // Flag an item so its clip preview and CSV export start from the standing pose (clips and sequence playback untouched); false = rejected.
-  // mode true = 덮어쓰기, 'prepend' = 덧붙이기, null = off.
+  // mode 'prepend' = 덧붙이기, null = off (덮어쓰기 was removed).
   setRestPose(itemId: string, mode: Item['restPose'] | null): boolean
   setRestTail(itemId: string, on: boolean): boolean
   /** 덧붙이기 lead-in lengths of a piece, in frames (rounded, clamped); null = back to the default / auto. One undo step. */

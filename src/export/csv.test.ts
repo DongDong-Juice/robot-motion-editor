@@ -170,9 +170,9 @@ test('exportItemCsv: same text as samplePoses+posesToCsv, name from csvFileName'
   }
 })
 
-test('exportItemCsv: restPose item starts at the 기본자세 (차렷) joint angles; warnings are returned', () => {
+test('exportItemCsv: a 기본자세 덧붙이기 item starts at the 기본자세 (차렷) joint angles; warnings are returned', () => {
   const rest = structuredClone(proj)
-  itemOf(rest, g1.id).restPose = true
+  itemOf(rest, g1.id).restPose = 'prepend'
   const first = exportItemCsv(rest, defs, g1.id, itemOf(rest, g1.id).id, 'local').text.split('\n')[1].split(',')
   first.slice(11, 40).forEach((v, i) => expect(Math.abs(Number(v) - defs.g1.rest.q[i])).toBeLessThan(1e-6))
   expect(exportItemCsv(proj, defs, g1.id, itemOf(proj, g1.id).id, 'world').warnings).toEqual(
