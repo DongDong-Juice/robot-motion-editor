@@ -82,6 +82,10 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
     const renderer = new THREE.WebGLRenderer({ antialias: true })
     renderer.setPixelRatio(window.devicePixelRatio)
     el.appendChild(renderer.domElement)
+    // joint gizmo label: angle now, change since the drag began, limits (user: show how the angle is being turned)
+    const tag = document.createElement('div')
+    tag.className = 'gz-tag'; tag.hidden = true; el.appendChild(tag)
+    let dragFrom: number | null = null
     const orbit = new OrbitControls(camera, renderer.domElement)
     orbit.target.copy(target)
     orbit.update()
@@ -345,8 +349,51 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       if (e.value) store.getState().beginGesture()
       else store.getState().endGesture()
       if (e.value && store.getState().sel.channel?.startsWith('root')) last = rootValues().map(v => v[1])
+      dragFrom = e.value ? jointAngle()?.a ?? null : null
     })
     tc.addEventListener('change', () => { dirty = true })
+    const jointAngle = () => { // the gizmo's joint and its angle now, or null (root / no gizmo)
+      const s = store.getState(), ch = s.sel.channel, o = tc.object, actor = s.sel.actorId ? actorOf(s, s.sel.actorId) : undefined
+      const j = o && ch && actor ? s.defs[actor.robot].joints.find(j => j.name === ch) : undefined
+      return j && o ? { j, o, a: pivotAngle(o, j.axis) } : null
+    }
+    const tagPos = new THREE.Vector3()
+    // rings around the joint gizmo (user: like Blender's rotate gizmo): X red, Y green, Z blue in the joint's frame, the axis it
+    // turns on bright and the others faint (drawn only: TransformControls handles the one real axis), a white ring facing the camera
+    const ringMat = (color: string) => new THREE.MeshBasicMaterial({ color, transparent: true, depthTest: false, depthWrite: false })
+    const torus = (r: number, color: string) => { const m = new THREE.Mesh(new THREE.TorusGeometry(r, 0.012, 6, 72), ringMat(color)); m.renderOrder = 998; return m }
+    const axisRings = new THREE.Group(), viewRing = torus(0.62, '#ffffff')
+    const rings = [torus(0.5, '#E5484D'), torus(0.5, '#6CC24A'), torus(0.5, '#4C8DF6')] // normals X, Y, Z
+    rings[0].rotation.y = Math.PI / 2; rings[1].rotation.x = Math.PI / 2
+    axisRings.add(...rings); axisRings.visible = viewRing.visible = false
+    ;(viewRing.material as THREE.MeshBasicMaterial).opacity = 0.55
+    if (!cid || editPane) scene.add(axisRings, viewRing)
+    const ringQ = new THREE.Quaternion()
+    let ringPx = 0
+    const updateRings = () => {
+      const g = jointAngle()
+      axisRings.visible = viewRing.visible = !!g
+      if (!g) return
+      g.o.getWorldPosition(tagPos); g.o.getWorldQuaternion(ringQ)
+      // same on-screen size as TransformControls' rotate rings (its scale rule: factor * size / 4)
+      const s = tagPos.distanceTo(camera.position) * Math.min(1.9 * Math.tan(Math.PI * camera.fov / 360) / camera.zoom, 7) * 0.8 / 4
+      axisRings.position.copy(tagPos); axisRings.quaternion.copy(ringQ); axisRings.scale.setScalar(s)
+      viewRing.position.copy(tagPos); viewRing.quaternion.copy(camera.quaternion); viewRing.scale.setScalar(s)
+      const ax = g.j.axis.map(Math.abs), on = ax.indexOf(Math.max(...ax))
+      rings.forEach((r, i) => { (r.material as THREE.MeshBasicMaterial).opacity = i === on ? 0.9 : 0.35 })
+      ringPx = 0.62 * s / (tagPos.distanceTo(camera.position) * Math.tan(Math.PI * camera.fov / 360)) * el.clientHeight / 2 // white ring radius on screen
+    }
+    const updateTag = () => {
+      const g = jointAngle()
+      if (!g) { tag.hidden = true; return }
+      const deg = store.getState().degrees, f = (v: number) => deg ? `${(v * 180 / Math.PI).toFixed(1)}°` : v.toFixed(3)
+      const d = dragFrom === null ? '' : ` (${g.a - dragFrom >= 0 ? '+' : '−'}${f(Math.abs(g.a - dragFrom))})`
+      tag.textContent = `${g.j.name.replace(/_joint$/, '')} ${f(g.a)}${d} · 범위 ${f(g.j.lower)} ~ ${f(g.j.upper)}`
+      tag.classList.toggle('near', g.a - g.j.lower < 0.1 * (g.j.upper - g.j.lower) || g.j.upper - g.a < 0.1 * (g.j.upper - g.j.lower))
+      g.o.getWorldPosition(tagPos).project(camera)
+      tag.style.left = `${(tagPos.x + 1) / 2 * el.clientWidth + ringPx}px`; // just outside the white ring tag.style.top = `${(1 - tagPos.y) / 2 * el.clientHeight}px`
+      tag.hidden = false
+    }
     tc.addEventListener('objectChange', () => {
       const s = store.getState(), { actorId, channel } = s.sel
       if (!actorId || !channel) return
@@ -457,7 +504,9 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       followCam()
       if (!dirty) return
       dirty = false
+      updateRings()
       renderer.render(scene, camera)
+      updateTag()
     }
     loop()
 
@@ -469,12 +518,12 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       el.removeEventListener('keydown', onKey)
       for (const e of entries.values()) disposeEntry(e)
       if (overlay) disposeObj(overlay.rig.root)
-      disposeObj(grid)
+      disposeObj(grid); disposeObj(axisRings); disposeObj(viewRing)
       tc.dispose(); orbit.dispose()
       // dispose() alone keeps the WebGL context alive until GC; release it now so opening/closing
       // preview panes never hits the browser's context limit (which kills the oldest pane's context)
       renderer.forceContextLoss(); renderer.dispose()
-      el.removeChild(dom)
+      el.removeChild(dom); el.removeChild(tag)
       if (import.meta.env.DEV) {
         const w = window as any
         if (w.__stages?.[hookKey] === hook) delete w.__stages[hookKey]
@@ -485,7 +534,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
 
   return (
     <>
-      <div ref={host} tabIndex={0} style={{ width: '100%', height: '100%', outline: 'none' }} />
+      <div ref={host} tabIndex={0} style={{ width: '100%', height: '100%', outline: 'none', position: 'relative' }} />
       <div className="pv-tools">
         <button className="pv-btn" aria-pressed={follow} onClick={() => setFollow(f => !f)}>로봇 따라가기</button>
         {cid && <button className="pv-btn" aria-pressed={trail} onClick={() => setTrail(v => !v)} title="로봇 골반이 지나간 바닥 경로를 선으로 보여 줍니다">경로 표시</button>}
