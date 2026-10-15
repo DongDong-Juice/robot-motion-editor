@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { trackDrag } from './drag'
 import { onHandleArrow } from '../layout/useLayout'
-import { clampDf, clipLocked, editingItem, editTarget, getEditor, keyOwner, keyTarget, type KeyRef } from '../store/store'
+import { actorOf, clampDf, CLIP_ACTOR, clipLocked, editingItem, editTarget, getEditor, keyOwner, keyTarget, targetItem, type KeyRef } from '../store/store'
 import type { Interp, Sequence } from '../model/types'
 import { tv } from './viewState'
 import { buildRows, frameToX, hitKey, hoverFrame, hoverScrub, keysIn, rowKey, xToFrame, type TimeScale } from './timeScale'
 import { followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { drawRuler, LABEL_W, RULER_H } from './ruler'
+import { drawRangeBand, startRangeDrag } from './rangeBand'
 import { drawScrollbar, pressScrollbar, SB_W, sbGeom } from './vscroll'
 import { usePhysics } from '../physics/physicsStore'
 import { stale } from '../physics/runItem'
@@ -44,9 +45,10 @@ export default function TrackCanvas() {
     // the open item, its clip and the curves keys are edited on: the clip, or (이 조각 수정) the item's 수정 층 (owner = item id)
     const itemOf = (actorId: string) => {
       const s = ed.getState(), t = keyTarget(s, actorId)
-      const item = t && s.project.sequence.tracks.flatMap(tr => tr.items).find(i => i.id === t.itemId)
+      const item = t && targetItem(s, t.itemId)
       const own = t && keyOwner(s.project, t.owner)
-      return item && own ? { item, clip: s.project.clips[item.refId], owner: t.owner, keys: own, piece: t.owner === item.id } : null
+      // piece: keys sit on a 수정 층 (the piece's or the clip's): the clip's own keys stay visible, dimmed
+      return item && own ? { item, clip: s.project.clips[item.refId], owner: t.owner, keys: own, piece: own.offset } : null
     }
     // clip view: the time axis is clip frames, so the clip scale is the view scale
     const clipScale = (actorId: string): TimeScale | null => itemOf(actorId) ? scale() : null
@@ -54,7 +56,10 @@ export default function TrackCanvas() {
       const e = editingItem(ed.getState())
       return e ? e.item.start - e.item.trimIn + Math.min(Math.max(clipF, 0), e.clip.length - 1) : 0
     }
-    const rows = () => { const s = ed.getState(), a = editingItem(s)?.actorId; return buildRows(s.project, s.defs, u.expanded).filter(r => r.actorId === a) }
+    const rows = () => {
+      const s = ed.getState(), a = editingItem(s)?.actorId, v = s.clipEdit ? actorOf(s, CLIP_ACTOR) : undefined
+      return buildRows(s.project, s.defs, u.expanded, v ? [v] : undefined).filter(r => r.actorId === a)
+    }
     const band = () => { const e = editingItem(ed.getState()), m = e && usePhysics.getState().byItem[e.item.id]?.metrics; return e && m ? { e, m } : null }
     const top = () => RULER_H + (band() ? BAND : 0) // rows start here
     const rowAt = (y: number) => Math.floor((y - top() + u.scrollY) / ROW_H)
@@ -78,7 +83,7 @@ export default function TrackCanvas() {
       rs.forEach((r, i) => {
         const y = rowY(i)
         if (y + ROW_H < T || y > H) return
-        const actor = s.project.actors.find(a => a.id === r.actorId)!
+        const actor = actorOf(s, r.actorId)!
         const isActorRow = r.kind === 'group' && r.channels.length === 0
         ctx.fillStyle = isActorRow ? C.panel : C.bg; ctx.fillRect(0, y, W, ROW_H)
         ctx.fillStyle = C.line; ctx.fillRect(0, y + ROW_H - 1, W, 1)
@@ -120,7 +125,7 @@ export default function TrackCanvas() {
 
       const b = band()
       if (b) { // 보조력 band: the item's CSV frame 0 is clip frame trimIn
-        const actor = s.project.actors.find(a => a.id === b.e.actorId)!
+        const actor = actorOf(s, b.e.actorId)!
         ctx.fillStyle = C.panel; ctx.fillRect(0, RULER_H, W, BAND); ctx.fillStyle = C.line; ctx.fillRect(0, RULER_H + BAND - 1, W, 1)
         drawAssist(ctx, b.m.pct, b.m.segments, b.e.item.trimIn, sc, LABEL_W, W, RULER_H + 3, BAND - 6, actor.color,
           withDefaults(s.project.physics)[actor.robot].warnPct, stale(s.project, s.defs, b.e.actorId!, b.e.item.id))
@@ -135,7 +140,8 @@ export default function TrackCanvas() {
         ctx.restore()
       }
       const pa = e?.actorId ?? s.sel.actorId, tg = pa ? editTarget(s, pa) : null, cf = tg?.f ?? 0
-      drawRuler(ctx, sc, W, RULER_H, NO_SEQ, cf, C)
+      drawRuler(ctx, sc, W, RULER_H, NO_SEQ, cf, C, true)
+      if (s.range) drawRangeBand(ctx, sc, s.range, 0, H, LABEL_W, W, C.accent)
 
       if (u.box) {
         const b = u.box
@@ -159,6 +165,7 @@ export default function TrackCanvas() {
     resetFollow()
     const ro = new ResizeObserver(resize); ro.observe(canvas); resize()
     const unsub = ed.subscribe(schedule), unsubPhys = usePhysics.subscribe(schedule)
+    document.fonts?.addEventListener('loadingdone', schedule) // labels drawn in the fallback font before IBM Plex arrived
 
     // ---- mouse ----
     const pos = (e: MouseEvent) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top } }
@@ -180,6 +187,7 @@ export default function TrackCanvas() {
       if (e.button !== 0) return
       setMenu(null); canvas.focus()
       const { x, y } = pos(e), s = ed.getState()
+      if (y < RULER_H && startRangeDrag(e, x, scale, m => pos(m).x, drag)) return // Shift+drag on the ruler: 구간
       if (y < top()) { // ruler (and 보조력 band) scrub
         s.setFrame(frameAtX(x))
         drag(m => s.setFrame(frameAtX(pos(m).x)), () => {})
@@ -325,7 +333,7 @@ export default function TrackCanvas() {
     canvas.addEventListener('contextmenu', onContext)
     window.addEventListener('keydown', onKey)
     return () => {
-      ro.disconnect(); unsub(); unsubPhys(); cancelAnimationFrame(raf); hover.stop()
+      ro.disconnect(); document.fonts?.removeEventListener('loadingdone', schedule); unsub(); unsubPhys(); cancelAnimationFrame(raf); hover.stop()
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('mouseleave', onLeave)

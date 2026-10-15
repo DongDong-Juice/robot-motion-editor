@@ -32,12 +32,26 @@ const cache = new WeakMap<Record<string, Curve>, WeakMap<Clip, Clip>>()
 /** The clip a motion item plays: its clip, plus the item's 수정 층 when it has one (unless set to 원본 사용). undefined for an
  * unknown clip. Playback, CSV, physics and the lead-in all use this, so what plays is what exports. */
 export function itemClip(p: Project, defs: RobotDefs, it: Item): Clip | undefined {
-  return it.use === 'original' ? p.clips[it.refId] : editedClip(p, defs, it)
+  return it.use === 'original' ? baseClip(p, defs, it.refId) : editedClip(p, defs, it)
 }
 
-/** The piece's 수정본 (clip + 수정 층) whichever side it uses: what the editors (inspector, graph, gizmo) and the 수정본 pane show. */
+export const curveKeyCount = (o: Record<string, Curve> | undefined) => Object.values(o ?? {}).reduce((n, c) => n + c.keys.length, 0)
+
+// Memo per clip object: an edit of the clip (or its 수정 층) makes a new clip object, so the bake is redone only then.
+const baseCache = new WeakMap<Clip, Clip>()
+/** The clip as an asset: its channels plus its 클립 수정 층 (Clip.offset, joints clamped), the result without `offset`. The original
+ * object when there is no 수정 층. Every piece plays this under its own 수정 층; the clip edit mode shows and saves it. */
+export function baseClip(p: Project, defs: RobotDefs, clipId: string): Clip | undefined {
+  const clip = p.clips[clipId]
+  if (!clip || !curveKeyCount(clip.offset)) return clip
+  let r = baseCache.get(clip)
+  if (!r) { const { offset, ...plain } = bakeOffset(clip, defs[clip.robot], clip.offset!); void offset; baseCache.set(clip, r = plain) }
+  return r
+}
+
+/** The piece's 수정본 (baseClip + its 수정 층) whichever side it uses: what the editors (inspector, graph, gizmo) and the 수정본 pane show. */
 export function editedClip(p: Project, defs: RobotDefs, it: Item): Clip | undefined {
-  const clip = p.clips[it.refId]
+  const clip = baseClip(p, defs, it.refId)
   if (!clip || !it.offset || !offsetKeyCount(it)) return clip
   let m = cache.get(it.offset)
   if (!m) cache.set(it.offset, m = new WeakMap())

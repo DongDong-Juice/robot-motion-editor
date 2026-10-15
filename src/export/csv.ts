@@ -1,6 +1,6 @@
 import { evaluate, type Pose, type RobotDefs } from '../model/evaluate'
 import { evaluateClip, placePose, rebasePose } from '../model/pose'
-import { itemClip } from '../model/itemClip'
+import { baseClip, itemClip } from '../model/itemClip'
 import { itemLead, itemTail, restClipFor, tailedClip, withRestPose } from '../model/restPose'
 import type { Quat } from '../model/rootMath'
 import type { Item, Project } from '../model/types'
@@ -100,4 +100,16 @@ export function exportItemCsv(p: Project, defs: RobotDefs, actorId: string, item
   if (!robot) throw new Error(`unknown actor ${actorId}`)
   const poses = samplePoses(p, defs, actorId, itemId, mode)
   return { name: csvFileName(p, actorId, itemId, taken), text: posesToCsv(poses, defs[robot]), warnings: validatePoses(poses, defs[robot], itemFrameRange(findItem(p, itemId)).from - restLead(p, defs, findItem(p, itemId))) }
+}
+
+/** 클립 편집 모드 `CSV 저장`: the clip as an asset (baseClip = original + 클립 수정 층), every frame, local root (first frame at the
+ * origin facing +x), no lead-in or tail. Name `<G1|GO2>_<clip>.csv`. The warnings use clip frames. */
+export function exportClipCsv(p: Project, defs: RobotDefs, clipId: string): { name: string; text: string; warnings: Warning[] } {
+  const clip = baseClip(p, defs, clipId)
+  if (!clip) throw new Error(`unknown clip ${clipId}`)
+  const def = defs[clip.robot], out: Pose[] = []
+  for (let f = 0; f < clip.length; f++) out.push(normalizedPose(evaluateClip(clip, def, f), out[out.length - 1]))
+  const poses = out.length ? out.map(o => rebasePose(o, out[0])) : out
+  const name = `${LABEL[clip.robot]}_${clip.name.replace(/[/\:*?"<>|#\s]/g, '_')}.csv`
+  return { name, text: posesToCsv(poses, def), warnings: validatePoses(poses, def, 0) }
 }

@@ -2,10 +2,10 @@ import { loadDef } from '../test/defs'
 import { beforeEach, expect, test } from 'vitest'
 
 import { evaluate, type RobotDefs } from './evaluate'
-import { createEditorStore, gizmoLock, keyOwner } from '../store/store'
+import { assetOwner, createEditorStore, gizmoLock, keyOwner } from '../store/store'
 import { exportItemCsv } from '../export/csv'
 import { parseProject, serializeProject } from './projectFile'
-import { editedClip, itemClip, withUse } from './itemClip'
+import { baseClip, editedClip, itemClip, withUse } from './itemClip'
 import { evaluateClip } from './pose'
 import { csvKey } from '../physics/runItem'
 
@@ -33,11 +33,10 @@ test('이 조각 수정 is the default layer and needs no 자동 키; the clip s
   s().setFrame(60); s().setValue(actor, ch, 0.9)
   expect(s().project.clips[c]).toBe(clipBefore)
   const off = items()[0].offset![ch].keys
-  expect(off).toHaveLength(1)
-  expect(off[0].f).toBe(60)
-  expect(off[0].v).toBeCloseTo(0.9 - 0.4) // delta from the clip's 0.4 at frame 60
+  expect(off.map(k => [k.f, k.v === 0 ? 0 : 'd'])).toEqual([[45, 0], [60, 'd'], [75, 0]]) // eased back to 0 over OFFSET_EASE frames each side
+  expect(off[1].v).toBeCloseTo(0.9 - 0.4) // delta from the clip's 0.4 at frame 60
   expect(q(60)).toBeCloseTo(0.9)
-  expect(q(0)).toBeCloseTo(0.2 + 0.5) // one key holds its delta over the whole piece
+  expect(q(0)).toBeCloseTo(0.2); expect(q(119)).toBeCloseTo(0.6) // away from the edit the clip plays as before
   s().undo()
   expect(items()[0].offset).toBeUndefined()
   expect(q(60)).toBeCloseTo(0.4)
@@ -61,8 +60,22 @@ test('pieces of one clip keep separate 수정 층; split copies it to the right 
   expect(b.offset).toEqual(a.offset)
   s().setFrame(80); s().setValue(actor, ch, 0) // only the right piece
   const [a2, b2] = [...items()].sort((x, y) => x.start - y.start)
-  expect(a2.offset![ch].keys).toHaveLength(1)
-  expect(b2.offset![ch].keys).toHaveLength(2)
+  expect(a2.offset![ch].keys.map(k => k.f)).toEqual([5, 20, 35])
+  expect(b2.offset![ch].keys.map(k => k.f)).toEqual([5, 20, 35, 65, 80, 95])
+})
+
+test('a value edit changes only its neighbourhood: eases in and out over OFFSET_EASE frames, keeps earlier edits', () => {
+  const at = (f: number) => evaluateClip(s().project.clips[c], defs.g1, f).q[j()] // the clip without 수정 층
+  s().setFrame(5); s().setValue(actor, ch, at(5) + 0.4) // a small change at frame 5
+  expect(q(5)).toBeCloseTo(at(5) + 0.4)
+  for (const f of [20, 40, 80, 119]) expect(q(f)).toBeCloseTo(at(f), 9) // back to the motion after OFFSET_EASE frames
+  expect(q(12) - at(12)).toBeGreaterThan(0); expect(q(12) - at(12)).toBeLessThan(0.4) // easing
+  s().setFrame(60); s().setValue(actor, ch, at(60) - 0.2) // a second edit elsewhere leaves the first one
+  expect(q(5)).toBeCloseTo(at(5) + 0.4); expect(q(60)).toBeCloseTo(at(60) - 0.2)
+  for (const f of [30, 90]) expect(q(f)).toBeCloseTo(at(f), 9)
+  s().beginGesture(); for (const d of [0.1, 0.2, 0.3]) s().setValue(actor, ch, at(60) + d); s().endGesture() // a drag at one frame
+  expect(items()[0].offset![ch].keys.map(k => k.f)).toEqual([0, 5, 20, 45, 60, 75])
+  expect(q(60)).toBeCloseTo(at(60) + 0.3)
 })
 
 test('joint sums are clamped to the URDF limits', () => {
@@ -110,8 +123,9 @@ test('CSV export plays clip + 수정 층', () => {
 
 test('shortening the clip drops 수정 층 keys past the new end', () => {
   s().setValue(actor, ch, 1); s().setFrame(100); s().setValue(actor, ch, 1)
+  expect(items()[0].offset![ch].keys.map(k => k.f)).toEqual([0, 15, 85, 100, 115])
   expect(s().setClip(c, { length: 80 })).toBe(true)
-  expect(items()[0].offset![ch].keys.map(k => k.f)).toEqual([0])
+  expect(items()[0].offset![ch].keys.map(k => k.f)).toEqual([0, 15])
 })
 
 test('itemClip is memoized per edit and is the clip itself without a 수정 층', () => {
@@ -127,8 +141,8 @@ test('project file keeps the 수정 층 and rejects unknown channels', () => {
   s().setFrame(60); s().setValue(actor, ch, 0.9)
   const back = parseProject(serializeProject(s().project), defs)
   const it = back.sequence.tracks.find(t => t.actorId === actor)!.items[0]
-  expect(it.offset![ch].keys[0]).toMatchObject({ f: 60, interp: 'bezier' })
-  expect(it.offset![ch].keys[0].v).toBeCloseTo(0.5)
+  expect(it.offset![ch].keys[1]).toMatchObject({ f: 60, interp: 'bezier' })
+  expect(it.offset![ch].keys[1].v).toBeCloseTo(0.5)
   expect(evaluate(back, defs, actor, 60).q[j()]).toBeCloseTo(0.9)
   const bad = JSON.parse(serializeProject(s().project))
   bad.sequence.tracks.find((t: any) => t.actorId === actor).items[0].offset.nope = { k: [0, 1, 0, 0, 0, 0, 0] }
@@ -201,4 +215,42 @@ test('project file keeps use: original and rejects other values', () => {
   const bad = JSON.parse(serializeProject(s().project))
   bad.sequence.tracks.find((t: any) => t.actorId === actor).items[0].use = 'edited'
   expect(() => parseProject(JSON.stringify(bad), defs)).toThrow('.use')
+})
+
+// ---- 클립 수정 층 (Clip.offset, asset:<clipId>) ----
+test('클립 수정 층: baseClip = original + delta (clamped); every piece plays it under its own 수정 층; the original channels stay', () => {
+  const orig = s().project.clips[c]
+  expect(baseClip(s().project, defs, c)).toBe(orig) // no 수정 층: the clip itself
+  s().setKey(assetOwner(c), ch, 60, 0.3)
+  const p = s().project, clip = p.clips[c]
+  expect(clip.channels[ch]).toBe(orig.channels[ch]) // original curves untouched (shared)
+  const base = baseClip(p, defs, c)!
+  expect(base.offset).toBeUndefined()
+  expect(evaluateClip(base, defs.g1, 60).q[j()]).toBeCloseTo(evaluateClip(orig, defs.g1, 60).q[j()] + 0.3, 6)
+  expect(baseClip(p, defs, c)).toBe(base) // memo
+  expect(q(60)).toBeCloseTo(evaluateClip(base, defs.g1, 60).q[j()], 6) // the sequence plays it
+  s().setKey(items()[0].id, ch, 60, 0.1) // a piece adds its own 수정 층 on top
+  expect(q(60)).toBeCloseTo(evaluateClip(base, defs.g1, 60).q[j()] + 0.1, 6)
+  s().setItemUse(items()[0].id, 'original') // 원본 사용 drops only the piece's 수정 층
+  expect(q(60)).toBeCloseTo(evaluateClip(base, defs.g1, 60).q[j()], 6)
+  s().setKey(assetOwner(c), ch, 60, 50) // the sum is clamped to the URDF limit
+  expect(evaluateClip(baseClip(s().project, defs, c)!, defs.g1, 60).q[j()]).toBeCloseTo(defs.g1.joints[j()].upper, 6)
+  expect(keyOwner(s().project, assetOwner(c))).toMatchObject({ offset: true, robot: 'g1' })
+})
+
+test('클립 수정 층: one undo per edit, saved and read back, cut by a shorter clip, untouched by 키 줄이기', () => {
+  s().setKey(assetOwner(c), ch, 10, 0.2); s().setKey(assetOwner(c), ch, 110, -0.1)
+  expect(s().project.clips[c].offset![ch].keys.map(k => k.f)).toEqual([10, 110])
+  s().undo(); expect(s().project.clips[c].offset![ch].keys).toHaveLength(1)
+  s().redo()
+  const back = parseProject(serializeProject(s().project), defs)
+  expect(back.clips[c].offset![ch].keys.map(k => [k.f, k.v])).toEqual([[10, 0.2], [110, -0.1]])
+  const bad = JSON.parse(serializeProject(s().project)); bad.clips[c].offset = { nope: { k: [0, 1, 0, 0, 0, 0, 0] } }
+  expect(() => parseProject(JSON.stringify(bad), defs)).toThrow('offset')
+  s().simplifyClip(c)
+  expect(s().project.clips[c].offset![ch].keys).toHaveLength(2)
+  expect(s().setClip(c, { length: 100 })).toBe(true)
+  expect(s().project.clips[c].offset![ch].keys.map(k => k.f)).toEqual([10])
+  s().deleteKeys(assetOwner(c), [{ channel: ch, f: 10 }])
+  expect(s().project.clips[c].offset).toBeUndefined() // emptied 수정 층 dropped
 })

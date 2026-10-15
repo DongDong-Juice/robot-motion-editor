@@ -13,7 +13,7 @@ export function sequenceEnd(p: Project): number {
 }
 
 // Playback / arrow-key range [lo, hi): the open clip in clip view, In..Out in sequence view if both set, else 0..end.
-export function playRange(s: Pick<EditorState, 'project' | 'editing'>): [number, number] {
+export function playRange(s: Pick<EditorState, 'project' | 'editing'> & Partial<Pick<EditorState, 'clipEdit'>>): [number, number] {
   const e = editingItem(s)
   if (e) { const lo = e.item.start - e.item.trimIn; return [lo, lo + e.clip.length] }
   const { inF, outF } = s.project.sequence
@@ -22,8 +22,8 @@ export function playRange(s: Pick<EditorState, 'project' | 'editing'>): [number,
 
 // Item the C key splits: an item under the playhead (strictly inside), preferring the track of the selected item, then the selected actor's, then the top-most. None in clip view.
 // `frame` overrides the playhead (the 자르기 button cuts at a typed frame).
-export function splitTarget(s: Pick<EditorState, 'project' | 'editing' | 'selItem' | 'sel' | 'frame'>, frame = s.frame): string | null {
-  if (s.editing) return null
+export function splitTarget(s: Pick<EditorState, 'project' | 'editing' | 'selItem' | 'sel' | 'frame'> & Partial<Pick<EditorState, 'clipEdit'>>, frame = s.frame): string | null {
+  if (s.editing || s.clipEdit) return null
   const tracks = s.project.sequence.tracks
   const hits = tracks.flatMap(t => {
     const it = sortedItems(t).filter(i => frame > i.start && frame < i.start + i.trimOut - i.trimIn).at(-1)
@@ -47,7 +47,7 @@ export function splitAtPlayhead(ed: Pick<ReturnType<typeof getEditor>, 'getState
 // 자르기 button: cut at a sequence frame (same target rule as C), move the playhead there. Returns why it could not cut, or null.
 export function cutAtFrame(ed: Pick<ReturnType<typeof getEditor>, 'getState'>, frame: number): string | null {
   const s = ed.getState()
-  if (s.editing) return '시퀀스에서만 자를 수 있습니다'
+  if (s.editing || s.clipEdit) return '시퀀스에서만 자를 수 있습니다'
   const id = splitTarget(s, frame)
   if (!id) return '그 프레임에 자를 조각이 없습니다'
   if (lockedItem(s, id)) return '잠긴 트랙입니다'
@@ -106,7 +106,7 @@ export function startTransport(): () => void {
     const s = ed.getState()
     const step = (n: number) => {
       e.preventDefault()
-      if (s.editing) { const [lo, hi] = playRange(s); s.setFrame(Math.min(Math.max(s.frame + n, lo), hi - 1)) }
+      if (s.editing || s.clipEdit) { const [lo, hi] = playRange(s); s.setFrame(Math.min(Math.max(s.frame + n, lo), hi - 1)) }
       else s.setFrame(Math.min(Math.max(s.frame + n, 0), sequenceEnd(s.project)))
     }
     if (e.ctrlKey || e.metaKey) {
@@ -117,8 +117,13 @@ export function startTransport(): () => void {
     }
     if (e.key === 'ArrowLeft') step(e.shiftKey ? -10 : -1)
     else if (e.key === 'ArrowRight') step(e.shiftKey ? 10 : 1)
-    else if (e.key === 'Escape') { if (s.editing && !e.defaultPrevented && !(e.target as Element | null)?.closest?.('dialog[open]')) s.closeItem() }
-    else if (e.key === 'Delete') { if (!s.editing && s.selItem) { e.preventDefault(); if (!lockedItem(s, s.selItem)) s.deleteItem(s.selItem) } }
+    else if (e.key === 'Escape') {
+      if (e.defaultPrevented || (e.target as Element | null)?.closest?.('dialog[open]')) return
+      if (s.clipEdit) s.closeClipEdit() // 클립 편집 → back to the sequence
+      else if (s.editing) s.closeItem()
+    }
+    else if (s.clipEdit && ['i', 'o', 'm', 'c', 'delete'].includes(e.key.toLowerCase())) return // sequence keys: not in 클립 편집
+    else if (e.key === 'Delete') { if (!s.editing && s.selItem) { e.preventDefault(); if (!lockedItem(s, s.selItem)) s.removePiece(s.selItem, s.selEdit ? 'edit' : 'piece') } } // 수정 row: the 수정본 only; lane: the piece (its 수정본 stays)
     else if (e.key.toLowerCase() === 'i') s.setIn(Math.max(s.frame, 0))
     else if (e.key.toLowerCase() === 'o') s.setOut(Math.max(s.frame, 0))
     else if (e.key.toLowerCase() === 'm') s.addMarker(Math.max(s.frame, 0))
@@ -126,7 +131,7 @@ export function startTransport(): () => void {
       const id = splitTarget(s)
       if (id && !lockedItem(s, id)) splitAtPlayhead(ed, id)
     }
-    else if (s.editing && e.key === 'Tab' && e.target instanceof Element && e.target.closest('#timeline')) {
+    else if ((s.editing || s.clipEdit) && e.key === 'Tab' && e.target instanceof Element && e.target.closest('#timeline')) {
       e.preventDefault(); s.setView(s.view === 'tracks' ? 'graph' : 'tracks')
       // the focused canvas is unmounted by the switch; refocus the new one so Tab keeps toggling
       requestAnimationFrame(() => document.querySelector<HTMLElement>('#timeline canvas')?.focus())

@@ -33,6 +33,7 @@ test('sequence wheel: no one-frame shift when the rows fit; eased scroll that st
     for (let i = 0; i < n; i++) { await new Promise(res => requestAnimationFrame(res)); out.push(c.toDataURL()) }
     return out
   }, [dy, n] as const)
+  await page.evaluate(() => document.fonts.ready) // the canvas redraws once IBM Plex arrives: not a wheel effect
   const fit = await frames(120)
   expect(new Set(fit).size).toBe(1) // nothing moved in any frame
 

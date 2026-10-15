@@ -32,7 +32,7 @@ const lerp = (a: [number, number], b: [number, number], s: number): [number, num
 const clampDf = (df: number, sign: 1 | -1, len: number) => { const d = Math.max(0, df * sign); return d > len ? len / d : 1 }
 
 /** Split `ks` at frame f without changing the curve: returns the keys up to f and from f, each with a key at f. */
-function split(ks: Key[], f: number): [Key[], Key[]] {
+export function split(ks: Key[], f: number): [Key[], Key[]] {
   if (!ks.length) return [[], []]
   const i = ks.findIndex(k => k.f >= f)
   if (i >= 0 && ks[i].f === f) return [ks.slice(0, i + 1), ks.slice(i)]

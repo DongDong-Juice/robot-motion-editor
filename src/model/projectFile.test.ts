@@ -54,6 +54,16 @@ test('item lead-in lengths (정지·전이·관성) round-trip; bad values are r
   }
 })
 
+test('clip 수정 층 (Clip.offset) round-trips; an unknown channel is rejected', () => {
+  const p = mk(), c = Object.values(p.clips)[0]
+  c.offset = { left_knee_joint: { keys: [makeKey(3, 0.25), makeKey(9, -0.1)] } }
+  const q = parseProject(serializeProject(p), defs)
+  expect(q.clips[c.id].offset!.left_knee_joint.keys.map(k => [k.f, +k.v.toFixed(6)])).toEqual([[3, 0.25], [9, -0.1]])
+  expect(q.clips[c.id].channels).toEqual(c.channels)
+  c.offset = { not_a_joint: { keys: [makeKey(0, 1)] } }
+  expect(() => parseProject(serializeProject(p), defs)).toThrow('offset')
+})
+
 test('item hidden (숨기기) round-trips; anything but true is rejected', () => {
   const p = mk(), it = p.sequence.tracks.flatMap(t => t.items)[0]
   it.hidden = true

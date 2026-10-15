@@ -8,13 +8,13 @@ const ROOT_CH = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.
 const r6 = (x: number) => Math.round(x * 1e6) / 1e6 + 0 // +0 turns -0 into 0
 
 // v2: each curve is { k: [f, v, interp, inDf, inDv, outDf, outDv, ...] }, reals rounded to 6 decimals, no indentation.
-// Clip channels and items' 수정 층 (offset) use the same encoding.
+// Clip channels, clips' 수정 층 and items' 수정 층 (offset) use the same encoding.
 const packCurves = (chs: Record<string, Curve>) => Object.fromEntries(Object.entries(chs).map(([ch, cv]) => [ch, {
   k: cv.keys.flatMap(k => [k.f, r6(k.v), INTERP.indexOf(k.interp), r6(k.inTan.df), r6(k.inTan.dv), r6(k.outTan.df), r6(k.outTan.dv)]),
 }]))
 export const serializeProject = (p: Project): string => JSON.stringify({
   ...p, version: 2,
-  clips: Object.fromEntries(Object.entries(p.clips).map(([id, c]) => [id, { ...c, channels: packCurves(c.channels) }])),
+  clips: Object.fromEntries(Object.entries(p.clips).map(([id, c]) => [id, c.offset ? { ...c, channels: packCurves(c.channels), offset: packCurves(c.offset) } : { ...c, channels: packCurves(c.channels) }])),
   sequence: { ...p.sequence, tracks: p.sequence.tracks.map(t => ({ ...t, items: t.items.map(it => it.offset ? { ...it, offset: packCurves(it.offset) } : it) })) },
 })
 
@@ -55,6 +55,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
       if (!int(c.length) || c.length < 1) fail(`${at}.length`)
       if (!isObj(c.channels)) fail(`${at}.channels`)
       curves(c.channels, `${at}.channels`, c.robot, true)
+      if (c.offset !== undefined) { if (!isObj(c.offset)) fail(`${at}.offset`); curves(c.offset, `${at}.offset`, c.robot, false) }
     }
 
     // Expands v2 { k } into { keys } in place and checks the keys. clampJoints: r6 rounding must not push a clip key past its
@@ -133,6 +134,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
         if (t.kind === 'motion' && p.clips[it.refId].robot !== actorRobot[t.actorId]) fail(`${it_}.refId`, '클립의 로봇이 액터와 다릅니다')
         if (it.trimOut > p.clips[it.refId].length) fail(`${it_}.trimOut`, '클립 길이를 넘습니다')
         if (it.use !== undefined && it.use !== 'original') fail(`${it_}.use`)
+        if (it.noOriginal !== undefined && it.noOriginal !== true) fail(`${it_}.noOriginal`)
         if (it.offset !== undefined) { if (!isObj(it.offset)) fail(`${it_}.offset`); curves(it.offset, `${it_}.offset`, p.clips[it.refId].robot, false) }
       })
       if (!(t.kind === 'video' ? validVideoTrack(t.items, media) : validTrack(t.items))) fail(at, '항목 배치가 올바르지 않습니다 (겹침 또는 범위)')

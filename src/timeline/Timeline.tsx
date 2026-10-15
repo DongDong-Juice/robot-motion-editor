@@ -1,4 +1,7 @@
-import { clipLocked, editingItem, getEditor, useEditor } from '../store/store'
+import { actorOf, clipLocked, editingItem, getEditor, useEditor } from '../store/store'
+import { exportClipCsv } from '../export/csv'
+import { saveCsvFile } from '../fileio'
+import { curveKeyCount } from '../model/itemClip'
 import { useState } from 'react'
 import { cutAtFrame, sequenceEnd } from '../transport'
 import GraphCanvas from './GraphCanvas'
@@ -35,15 +38,45 @@ function CutControl({ disabled }: { disabled: boolean }) {
   )
 }
 
+// 클립 편집 모드 bar: path back to the sequence, 원본 보기 (held), 겹쳐 보기 (원본 ghost), CSV 저장 (the clip as edited).
+function ClipEditBar({ clipId, name }: { clipId: string; name: string }) {
+  const st = getEditor().getState(), overlay = useEditor(s => s.compareOverlay), peek = useEditor(s => s.clipPeek)
+  const n = useEditor(s => curveKeyCount(s.project.clips[clipId]?.offset))
+  const [msg, setMsg] = useState('')
+  const saveCsv = async () => {
+    const s = getEditor().getState()
+    try {
+      const { name: file, text, warnings } = exportClipCsv(s.project, s.defs, clipId)
+      if (warnings.length && !window.confirm(`경고 ${warnings.length}개가 있습니다 (관절 한계·속도·루트). 그래도 저장할까요?`)) return
+      setMsg((await saveCsvFile(file, text)) ? 'CSV를 저장했습니다' : '')
+    } catch (err) { setMsg(`저장 실패: ${err instanceof Error ? err.message : err}`) }
+  }
+  const hold = (on: boolean) => () => st.setClipPeek(on)
+  return (
+    <span className="tl-crumb tl-clipedit" role="group" aria-label="클립 편집">
+      <button onClick={() => st.closeClipEdit()} title="시퀀스로 돌아갑니다 (Esc)">시퀀스로</button>
+      <span> ▸ 목록 ▸ {name} <span className="tl-dim">(클립 편집{n ? ` · 수정 키 ${n}개` : ''})</span></span>
+      <button aria-pressed={peek} onPointerDown={hold(true)} onPointerUp={hold(false)} onPointerLeave={hold(false)}
+        onKeyDown={ev => { if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); st.setClipPeek(true) } }} onKeyUp={hold(false)} onBlur={hold(false)}
+        title="누르고 있는 동안 수정 전 원본을 보여 줍니다">원본 보기</button>
+      <button aria-pressed={overlay} onClick={() => st.setCompareOverlay(!overlay)} title="수정 전 원본을 반투명으로 겹쳐 보여 줍니다">겹쳐 보기</button>
+      <button className="tl-primary" onClick={saveCsv} title="수정한 클립을 CSV로 저장합니다 (기본자세·리드인 없이, 루트 로컬)">CSV 저장</button>
+      {msg && <span className="tl-cutmsg" role="status">{msg}</span>}
+    </span>
+  )
+}
+
 // Transport controls sit with the timeline they drive; the breadcrumb shows only in clip view.
 function TimelineHeader() {
   const playing = useEditor(s => s.playing), frame = useEditor(s => s.frame)
   const end = useEditor(s => sequenceEnd(s.project))
   const autoKey = useEditor(s => s.autoKey), view = useEditor(s => s.view)
-  const project = useEditor(s => s.project), editing = useEditor(s => s.editing)
+  const project = useEditor(s => s.project), editing = useEditor(s => s.editing), clipEdit = useEditor(s => s.clipEdit)
   const st = getEditor().getState()
-  const e = editing ? editingItem({ project, editing }) : null
-  const actor = e && project.actors.find(a => a.id === e.actorId)
+  const e = editing || clipEdit ? editingItem({ project, editing, clipEdit }) : null
+  const actor = e && actorOf({ project, clipEdit }, e.actorId)
+  const clipView = !!editing || !!clipEdit
+  const shownEnd = clipEdit && e ? e.clip.length : end
   const progress = usePhysics(s => s.progress), loading = usePhysics(s => s.loading)
   const anyDone = usePhysics(s => Object.values(s.byItem).some(v => v.status === 'done'))
   return (
@@ -53,16 +86,17 @@ function TimelineHeader() {
           {playing ? <path d="M2.5 1.5h2.5v9H2.5zM7 1.5h2.5v9H7z" fill="currentColor" /> : <path d="M3 1.2v9.6L10.6 6z" fill="currentColor" />}
         </svg>
       </button>
-      <span className="tl-time"><b>{formatTimecode(frame)}</b><span className="tl-dim"> / {formatTimecode(end)}</span></span>
+      <span className="tl-time"><b>{formatTimecode(frame)}</b><span className="tl-dim"> / {formatTimecode(shownEnd)}</span></span>
       <span className="tl-fps">60 fps</span>
       <span className="tl-sep" aria-hidden="true" />
       <button className="tl-auto" aria-pressed={autoKey} onClick={st.toggleAutoKey} title="켜면 원본 클립 수정에서 값을 바꿀 때 그 프레임에 키가 자동으로 들어갑니다"><i aria-hidden="true" />자동 키</button>
-      <CutControl disabled={!!editing} />
-      <span className="tl-seg" role="group" aria-label="클립 보기" title={editing ? '클립 보기 방식 (Tab)' : '클립을 열면 고를 수 있습니다'}>
-        <button aria-pressed={view === 'tracks'} disabled={!editing} onClick={() => st.setView('tracks')}>트랙</button>
-        <button aria-pressed={view === 'graph'} disabled={!editing} onClick={() => st.setView('graph')}>그래프</button>
+      <CutControl disabled={clipView} />
+      <span className="tl-seg" role="group" aria-label="클립 보기" title={clipView ? '클립 보기 방식 (Tab)' : '클립을 열면 고를 수 있습니다'}>
+        <button aria-pressed={view === 'tracks'} disabled={!clipView} onClick={() => st.setView('tracks')}>트랙</button>
+        <button aria-pressed={view === 'graph'} disabled={!clipView} onClick={() => st.setView('graph')}>그래프</button>
       </span>
-      {e && (
+      {clipEdit && e && <ClipEditBar clipId={clipEdit} name={e.clip.name} />}
+      {e && !clipEdit && (
         <span className="tl-crumb">
           <button onClick={() => st.closeItem()}>시퀀스</button>
           <span> ▸ {actor?.name} / {e.clip.name}</span>
@@ -80,17 +114,17 @@ function TimelineHeader() {
 }
 
 export default function Timeline() {
-  const view = useEditor(s => s.view), editing = useEditor(s => s.editing)
+  const view = useEditor(s => s.view), editing = useEditor(s => s.editing), clipEdit = useEditor(s => s.clipEdit)
   const project = useEditor(s => s.project)
-  const e = editing ? editingItem({ project, editing }) : null
+  const e = editing || clipEdit ? editingItem({ project, editing, clipEdit }) : null
   return (
     <div className="tl-wrap">
       <TimelineHeader />
-      {!editing ? <SequenceCanvas /> : (
-        <div className="tl-body" onDragOver={ev => { if (isAssetDrag(ev.dataTransfer)) ev.preventDefault() }}
-          onDrop={ev => { const a = draggedAsset(ev.dataTransfer); if (a) { ev.preventDefault(); dropAssetInClipView(a) } }}>
+      {!editing && !clipEdit ? <SequenceCanvas /> : (
+        <div className="tl-body" onDragOver={ev => { if (!clipEdit && isAssetDrag(ev.dataTransfer)) ev.preventDefault() }}
+          onDrop={ev => { const a = clipEdit ? null : draggedAsset(ev.dataTransfer); if (a) { ev.preventDefault(); dropAssetInClipView(a) } }}>
           {view === 'tracks' ? <TrackCanvas /> : <GraphCanvas />}
-          {e && clipLocked(project, e.clip.id) && <div className="seq-msg" role="status" style={{ left: 164, top: 28 }}>잠긴 트랙입니다</div>}
+          {e && editing && clipLocked(project, e.clip.id) && <div className="seq-msg" role="status" style={{ left: 164, top: 28 }}>잠긴 트랙입니다</div>}
         </div>
       )}
     </div>

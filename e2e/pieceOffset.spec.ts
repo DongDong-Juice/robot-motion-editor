@@ -17,15 +17,15 @@ test('이 조각 수정: slider works without 자동 키, clip untouched; 원본
   }, ch)
 
   await expect(page.getByRole('button', { name: '이 조각 수정' })).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByRole('slider', { name: ch })).toBeEnabled()
-  const num = page.getByLabel(`${ch} 값`)
+  await expect(page.getByRole('slider', { name: `${ch} 슬라이더` })).toBeEnabled()
+  const num = page.getByLabel(`${ch} 숫자`)
   await num.fill('40'); await num.press('Enter')
-  await expect.poll(state).toEqual({ clipKeys: 0, offset: [[30, +(40 * Math.PI / 180 - 0).toFixed(4)]] })
-  await expect(page.getByText('이 조각의 수정 키 1개')).toBeVisible()
+  await expect.poll(state).toEqual({ clipKeys: 0, offset: [[15, 0], [30, +(40 * Math.PI / 180 - 0).toFixed(4)], [45, 0]] }) // eased back around the edit
+  await expect(page.getByText('이 조각의 수정 키 3개')).toBeVisible()
 
   await page.getByRole('button', { name: '원본 클립 수정' }).click()
-  await expect(page.getByRole('slider', { name: ch })).toBeDisabled()
-  await expect(page.getByText('자동 키를 켜면 원본 클립을 고칠 수 있습니다')).toBeVisible()
+  await expect(page.getByRole('slider', { name: `${ch} 슬라이더` })).toBeDisabled()
+  await expect(page.locator('.jp-hint', { hasText: '자동 키를 켜면 원본 클립을 고칠 수 있습니다' })).toBeVisible()
 
   await page.getByRole('button', { name: '이 조각 수정' }).click()
   await page.getByRole('button', { name: '수정 지우기' }).click()

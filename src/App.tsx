@@ -12,6 +12,7 @@ import { startTransport } from './transport'
 import { onMessage } from './projectActions'
 import FileMenu from './FileMenu'
 import PhysicsDialog from './physics/PhysicsDialog'
+import Go2BlockDialog from './go2blocks/Go2BlockDialog'
 import { usePhysics } from './physics/physicsStore'
 import { stale } from './physics/runItem'
 import CsvFpsDialog from './project/CsvFpsDialog'
@@ -27,7 +28,8 @@ export function CrossfadeHint() {
   const lock = useEditor(gizmoLock)
   return lock === 'crossfade' ? <div className="stage-hint hi">크로스페이드 구간에서는 클립 보기에서 편집하세요</div>
     : lock === 'stitch' ? <div className="stage-hint hi">이 프레임의 루트 위치·방향은 앞 클립 끝에 맞춰집니다</div>
-    : lock === 'compare' ? <div className="stage-hint hi">원본을 보는 중입니다 · 오른쪽 패널로 수정하면 수정본 창에 보입니다</div> : null
+    : lock === 'compare' ? <div className="stage-hint hi">원본을 보는 중입니다 · 오른쪽 패널로 수정하면 수정본 창에 보입니다</div>
+    : lock === 'clipRoot' ? <div className="stage-hint hi">클립 편집에서는 루트를 패널 숫자로 고치세요</div> : null
 }
 
 function Menubar() {
@@ -36,6 +38,7 @@ function Menubar() {
   const hasVideo = useEditor(s => !!videoTrack(s.project)?.items.length)
   const [exporting, setExporting] = useState(false)
   const [physicsOpen, setPhysicsOpen] = useState(false)
+  const [blocksOpen, setBlocksOpen] = useState(false)
   const name = useEditor(s => s.fileName ?? 'Motion Editor'), dirty = useEditor(s => s.dirty)
   const [msg, setMsg] = useState('')
   const title = name + (dirty ? ' •' : '')
@@ -53,7 +56,7 @@ function Menubar() {
   }, [])
   return (
     <>
-      <FileMenu onExport={() => setExporting(true)} onPhysics={() => setPhysicsOpen(true)} />
+      <FileMenu onExport={() => setExporting(true)} onPhysics={() => setPhysicsOpen(true)} onBlocks={() => setBlocksOpen(true)} />
       <span className="mb-title">{title}</span>
       {msg && <span role="status" className="mb-msg">{msg}</span>}
       {hasVideo && (
@@ -65,6 +68,7 @@ function Menubar() {
         </span>
       )}
       <PhysicsDialog open={physicsOpen} onClose={() => setPhysicsOpen(false)} />
+      <Go2BlockDialog open={blocksOpen} onClose={() => setBlocksOpen(false)} />
       <ExportDialog open={exporting} onClose={() => setExporting(false)} />
     </>
   )

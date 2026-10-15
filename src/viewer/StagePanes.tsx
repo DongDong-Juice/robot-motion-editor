@@ -65,6 +65,7 @@ function ItemPreview({ id }: { id: string }) {
       : mode ? '기본자세 덮어쓰기를 켰습니다 (앞 1.5초를 바꿈 · 프리뷰·내보내기에만 적용)' : '기본자세를 껐습니다')
     clearTimeout(timer.current); timer.current = window.setTimeout(() => setMsg(null), 3000)
   }
+  const say = (text: string) => { setMsg(text); clearTimeout(timer.current); timer.current = window.setTimeout(() => setMsg(null), 3000) }
   const restTail = (on: boolean) => {
     const s = getEditor().getState(), ok = s.setRestTail(id, on)
     setMsg(!ok ? (findItem(s.project, id)?.t.locked ? '잠긴 트랙입니다' : '끝 기본자세를 바꿀 수 없습니다')
@@ -81,6 +82,14 @@ function ItemPreview({ id }: { id: string }) {
   const tail = itemTail(edit ? withUse(project, id, null) : project, defs, shown)?.tail ?? 0 // 끝 기본자세 frames after trimOut
   const range: [number, number] = ld ? [item.trimIn - ld.inertia, item.trimOut + ld.hold + ld.blend + tail] : [item.trimIn, item.trimOut + tail]
   const s = () => getEditor().getState()
+  // 기본자세 settings belong to the piece: the same buttons on the clip preview and the 수정본 (each plays its own side)
+  const restButtons = <>
+    {item.restPose === true
+      ? <button className="pv-btn" onClick={() => rest(null)} title={REST_TIP.off}>기본자세 해제</button>
+      : <button className="pv-btn" onClick={() => rest(true)} title={REST_TIP.overwrite}>기본자세 덮어쓰기</button>}
+    <button className="pv-btn" aria-pressed={!!item.restTail} onClick={() => restTail(!item.restTail)}
+      title="조각 끝에 전이 후 기본자세 0.5초를 덧붙입니다 (자르면 자동으로 켜짐 · 프리뷰·내보내기에만 적용)">끝 기본자세</button>
+  </>
   return (
     <>
       <div className="pane-title static">
@@ -92,21 +101,22 @@ function ItemPreview({ id }: { id: string }) {
       <div className="stage-3d">
         {edit
           ? <Stage compareClipId={item.refId} range={range} itemId={id} edited>
+              {restButtons}
               <button className="pv-btn" aria-pressed={overlayOn} onClick={() => s().setCompareOverlay(!overlayOn)}
                 title="메인 로봇 프리뷰에 수정본을 반투명으로 겹쳐 그립니다">겹쳐 보기</button>
               <button className="pv-btn" onClick={() => s().openItemPreview(id)} title="수정 비교를 끝내고 이 조각의 클립 프리뷰로 돌아갑니다">클립 프리뷰로</button>
+              <button className="pv-btn" onClick={() => { if (s().bakeEdit(id)) { s().openItemPreview(id); say('수정본을 새 클립으로 만들었습니다 (목록에 추가 · 이 조각이 그 클립을 씀)') } else say('잠긴 트랙입니다') }}
+                title="수정본을 새 클립으로 굳혀 목록에 넣고, 이 조각이 그 클립을 쓰게 합니다 (원본 클립은 그대로)">수정 완료</button>
             </Stage>
           : <Stage compareClipId={item.refId} range={range} itemId={id}>
-              {item.restPose === true
-                ? <button className="pv-btn" onClick={() => rest(null)} title={REST_TIP.off}>기본자세 해제</button>
-                : <button className="pv-btn" onClick={() => rest(true)} title={REST_TIP.overwrite}>기본자세 덮어쓰기</button>}
-              <button className="pv-btn" aria-pressed={!!item.restTail} onClick={() => restTail(!item.restTail)}
-                title="조각 끝에 전이 후 기본자세 0.5초를 덧붙입니다 (자르면 자동으로 켜짐 · 프리뷰·내보내기에만 적용)">끝 기본자세</button>
-              {hasEdit && <button className="pv-btn" onClick={() => s().openEditCompare(id)}
+              {restButtons}
+              {item.noOriginal && <button className="pv-btn" onClick={() => say(s().bakeEdit(id) ? '수정본을 새 클립으로 만들었습니다 (목록에 추가 · 이 조각이 그 클립을 씀)' : '잠긴 트랙입니다')}
+                title="수정본을 새 클립으로 굳혀 목록에 넣고, 이 조각이 그 클립을 쓰게 합니다 (원본 클립은 그대로)">수정 완료</button>}
+              {hasEdit && !item.noOriginal && <button className="pv-btn" onClick={() => s().openEditCompare(id)}
                 title="메인 로봇 프리뷰에 원본, 이 자리에 수정본을 나란히 보여 줍니다">수정 비교</button>}
             </Stage>}
-        {!edit && <LeadRow id={id} item={item} ld={ld ?? itemLead(project, defs, { ...item, restPose: 'prepend' })!} on={!!ld}
-          toggle={() => rest(ld ? null : 'prepend')} />}
+        <LeadRow id={id} item={item} ld={ld ?? itemLead(edit ? withUse(project, id, null) : project, defs, { ...shown, restPose: 'prepend' })!} on={!!ld}
+          toggle={() => rest(ld ? null : 'prepend')} />
         {msg && <div className="pv-msg" role="status">{msg}</div>}
       </div>
     </>

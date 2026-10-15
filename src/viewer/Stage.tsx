@@ -7,11 +7,11 @@ import { COLOR } from '../model/defaults'
 import { evaluate, evaluateClip, evaluateItem, evaluateRoot } from '../model/evaluate'
 import { rebasePose } from '../model/pose'
 import { itemLead, restClipFor, tailedClip } from '../model/restPose'
-import { editedClip, withUse } from '../model/itemClip'
+import { baseClip, editedClip, withUse } from '../model/itemClip'
 import { nearestAngle } from '../model/rootMath'
 import { hiddenAt, stitchTransforms, worldToClipRoot } from '../model/sequence'
 import type { Clip, Project } from '../model/types'
-import { clipLocked, editingItem, editTarget, getEditor, gizmoLock, trackLocked } from '../store/store'
+import { actorOf, CLIP_ACTOR, clipLocked, editingItem, editTarget, getEditor, gizmoLock, trackLocked } from '../store/store'
 import { sequenceEnd } from '../transport'
 import { buildRobot, pivotAngle, type RobotRig } from './buildRobot'
 import type { RobotDef } from '../robot/types'
@@ -119,23 +119,39 @@ export default function Stage({ compareClipId: cid, range, itemId, edited, child
     }
     // 원본 | 수정본 비교: the compared piece is drawn as its original here (the 수정본 is in the preview pane, or ghosted)
     const viewProject = (s: ReturnType<typeof store.getState>) => s.previewEdit && s.itemPreview ? withUse(s.project, s.itemPreview, 'original') : s.project
+    // the actors drawn here: the project's, or (클립 편집 모드) the virtual one for the open clip
+    const viewActors = (s: ReturnType<typeof store.getState>) => s.clipEdit ? [actorOf(s, CLIP_ACTOR)].filter(a => !!a) : s.project.actors
+    // 클립 편집: the clip as edited (baseClip), or while 원본 보기 is held the original
+    const clipEditPose = (s: ReturnType<typeof store.getState>, original: boolean) => {
+      const clip = original ? s.project.clips[s.clipEdit!] : baseClip(s.project, s.defs, s.clipEdit!)!
+      return evaluateClip(clip, s.defs[clip.robot], Math.min(Math.max(Math.round(s.frame), 0), clip.length - 1))
+    }
     let overlay: { robot: string; rig: RobotRig } | null = null
     const applyOverlay = (s: ReturnType<typeof store.getState>) => {
-      const actorId = s.previewEdit && s.compareOverlay && s.itemPreview
-        ? s.project.sequence.tracks.find(t => t.items.some(i => i.id === s.itemPreview))?.actorId : undefined
-      const a = actorId ? s.project.actors.find(x => x.id === actorId) : undefined
+      // 겹쳐 보기: 수정 비교 = the 수정본 over the piece's original; 클립 편집 = the original over the clip as edited
+      const actorId = s.clipEdit ? (s.compareOverlay && !s.clipPeek ? CLIP_ACTOR : undefined)
+        : s.previewEdit && s.compareOverlay && s.itemPreview ? s.project.sequence.tracks.find(t => t.items.some(i => i.id === s.itemPreview))?.actorId : undefined
+      const a = actorId ? actorOf(s, actorId) : undefined
       if (overlay && (!a || overlay.robot !== a.robot)) { scene.remove(overlay.rig.root); disposeObj(overlay.rig.root); overlay = null }
       if (!a || offStage(s, a.id)) return
       if (!overlay) { overlay = { robot: a.robot, rig: buildRobot(s.defs[a.robot], OVERLAY) }; overlay.rig.setGhost(true); scene.add(overlay.rig.root) }
+      if (s.clipEdit) { overlay.rig.applyPose(clipEditPose(s, true)); return }
       const ep = withUse(s.project, s.itemPreview!, null), ei = editingItem(s), t = ei && ei.actorId === a.id ? editTarget(s, a.id) : null
       overlay.rig.applyPose(t ? evaluateItem(ep, s.defs, t.itemId, t.f) : evaluate(ep, s.defs, a.id, s.frame))
     }
     const applyAll = () => {
       const s = store.getState(), vp = viewProject(s)
       const ei = editingItem(s)
-      for (const a of s.project.actors) {
+      for (const a of viewActors(s)) {
         const e = entries.get(a.id)
         if (!e) continue
+        if (s.clipEdit) { // the open clip at the origin
+          e.rig.root.visible = e.dot.visible = true; e.trail.visible = false
+          if (e.ghost) { e.ghost = false; e.rig.setGhost(false) }
+          const pose = clipEditPose(s, s.clipPeek)
+          e.rig.applyPose(pose); e.dot.position.set(pose.rootPos[0], pose.rootPos[1], 0.002)
+          continue
+        }
         const hid = offStage(s, a.id)
         e.rig.root.visible = e.dot.visible = !hid
         e.trail.visible = showTrail(s.project, a.id)
@@ -201,7 +217,7 @@ export default function Stage({ compareClipId: cid, range, itemId, edited, child
       e.trail.geometry = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pts, 3))
     }
     const applyClip = () => {
-      const s = { ...store.getState(), project: paneProject() }, clip = shownClip(), e = entries.get(cid!)
+      const st0 = store.getState(), s = { ...st0, project: paneProject(), frame: st0.clipEdit ? st0.clipEditReturn?.frame ?? 0 : st0.frame }, clip = shownClip(), e = entries.get(cid!)
       if (!clip || !e) return
       // item preview follows the main playhead: range frame lo shows at the item start, or (기본자세 덧붙이기) 1.5 s before it,
       // where the timeline draws the lead-in, so preview, lane, physics graph and CSV rows line up; clamped to the range outside it
@@ -220,9 +236,9 @@ export default function Stage({ compareClipId: cid, range, itemId, edited, child
     const syncActors = () => {
       const s = store.getState()
       const { project, defs } = s
-      const ids = new Set(project.actors.map(a => a.id))
+      const actors = viewActors(s), ids = new Set(actors.map(a => a.id))
       for (const [id, e] of entries) if (!ids.has(id)) { disposeEntry(e); entries.delete(id) }
-      for (const a of project.actors) {
+      for (const a of actors) {
         if (!ids.has(a.id)) continue
         const color = new THREE.Color(a.color)
         let e = entries.get(a.id)
@@ -286,7 +302,7 @@ export default function Stage({ compareClipId: cid, range, itemId, edited, child
         tc.setSpace(rootMode === 'rotate' ? 'local' : 'world')
         tc.showX = tc.showY = tc.showZ = true
       } else if (e && ch && e.rig.jointPivots[ch] && tc.object) {
-        const robot = s.project.actors.find(a => a.id === sel.actorId)!.robot
+        const robot = actorOf(s, sel.actorId)!.robot
         const ax = s.defs[robot].joints.find(j => j.name === ch)!.axis
         tc.setMode('rotate')
         tc.setSpace('local')
@@ -297,7 +313,7 @@ export default function Stage({ compareClipId: cid, range, itemId, edited, child
 
     // current gizmo values for the root, in clip-local channels: undo placement, then the item's stitch transform
     const rootValues = (): [string, number][] => {
-      const s = store.getState(), actor = s.project.actors.find(a => a.id === s.sel.actorId)!
+      const s = store.getState(), actor = actorOf(s, s.sel.actorId)!
       const target = editTarget(s, actor.id)
       const track = s.project.sequence.tracks.find(t => t.items.some(i => i.id === target?.itemId))
       const xf = (track && target && stitchTransforms(s.project, s.defs, track).get(target.itemId)) || { x: 0, y: 0, yaw: 0 }
@@ -327,7 +343,7 @@ export default function Stage({ compareClipId: cid, range, itemId, edited, child
         })
       } else {
         const pivot = entries.get(actorId)!.rig.jointPivots[channel]
-        const robot = s.project.actors.find(a => a.id === actorId)!.robot
+        const robot = actorOf(s, actorId)!.robot
         const ax = s.defs[robot].joints.find(j => j.name === channel)!.axis
         s.setValue(actorId, channel, pivotAngle(pivot, ax))
       }
@@ -384,9 +400,9 @@ export default function Stage({ compareClipId: cid, range, itemId, edited, child
     if (cid) { syncClip(); applyClip() } else { syncActors(); applyAll(); syncSelection() }
     const unsub = store.subscribe((s, prev) => {
       if (cid) { if (s.project !== prev.project) { syncClip(); shownF = -1 } applyClip(); return }
-      if (s.project !== prev.project) syncActors()
+      if (s.project !== prev.project || s.clipEdit !== prev.clipEdit) syncActors()
       applyAll()
-      const key = (p: typeof s.project) => p.actors.map(a => a.id + a.robot).join()
+      const key = (p: typeof s.project) => p.actors.map(a => a.id + a.robot).join() + (s.clipEdit ?? '')
       const lk = locked()
       if (s.sel !== prev.sel || key(s.project) !== key(prev.project) || lk !== wasLocked) syncSelection()
       wasLocked = lk
@@ -397,7 +413,7 @@ export default function Stage({ compareClipId: cid, range, itemId, edited, child
       if (cid) return entries.get(cid)
       const s = store.getState(), sel = s.sel.actorId && entries.get(s.sel.actorId)
       if (sel && sel.rig.root.visible) return sel
-      return s.project.actors.map(a => entries.get(a.id)).find(e => e?.rig.root.visible)
+      return viewActors(s).map(a => entries.get(a.id)).find(e => e?.rig.root.visible)
     }
     const pos = new THREE.Vector3()
     let wasFollowing = false

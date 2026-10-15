@@ -1,14 +1,15 @@
 import { useEffect, useRef } from 'react'
 import { trackDrag } from './drag'
 import { onHandleArrow } from '../layout/useLayout'
-import { clampDf, clipLocked, editingItem, editTarget, getEditor, keyOwner, keyTarget, type KeyRef } from '../store/store'
-import { editedClip } from '../model/itemClip'
+import { actorOf, ASSET, clampDf, clipLocked, editingItem, editTarget, getEditor, keyOwner, keyTarget, targetItem, type KeyRef } from '../store/store'
+import { baseClip, editedClip } from '../model/itemClip'
 import type { Curve, Key, Sequence } from '../model/types'
 import { evalCurve } from '../model/curve'
 import { fitView, handlePoints, valueToY, velocityViolations, yToValue, type ValueScale } from './graph'
 import { frameToX, hoverFrame, hoverScrub, ROOT_CHANNELS, type TimeScale } from './timeScale'
 import { followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { drawRuler, LABEL_W, RULER_H } from './ruler'
+import { drawRangeBand, startRangeDrag } from './rangeBand'
 import { tv } from './viewState'
 
 const KEY = 6, HANDLE_R = 2.5, RED = '#E5484D'
@@ -35,15 +36,17 @@ export default function GraphCanvas() {
     const ctxOf = () => {
       const s = ed.getState()
       if (!s.sel.actorId) return null
-      const actor = s.project.actors.find(a => a.id === s.sel.actorId)
+      const actor = actorOf(s, s.sel.actorId)
       const tg = keyTarget(s, s.sel.actorId)
-      const item = tg && s.project.sequence.tracks.flatMap(t => t.items).find(i => i.id === tg.itemId)
+      const item = tg && targetItem(s, tg.itemId)
       const own = tg && keyOwner(s.project, tg.owner)
       if (!actor || !item || !own) return null
-      const clip = s.project.clips[item.refId], def = s.defs[actor.robot]
-      const cs = scale(), piece = tg.owner === item.id
-      // src: the curves keys are edited on (clip, or the 수정 층 deltas); shown: what the piece plays (clip + 수정 층)
-      return { s, clip, def, cs, clipId: tg.owner, piece, src: own, shown: editedClip(s.project, s.defs, item) ?? clip }
+      // src: the curves keys are edited on (clip, or 수정 층 deltas); clip: what deltas add to (클립 수정 층: the original; 조각:
+      // the clip with its 수정 층); shown: the result (클립 편집: the clip as edited; 시퀀스: what the piece plays)
+      const asset = tg.owner.startsWith(ASSET), def = s.defs[actor.robot]
+      const clip = asset ? s.project.clips[item.refId] : baseClip(s.project, s.defs, item.refId)!
+      const cs = scale(), piece = own.offset
+      return { s, clip, def, cs, clipId: tg.owner, piece, src: own, shown: (asset ? baseClip(s.project, s.defs, item.refId) : editedClip(s.project, s.defs, item)) ?? clip }
     }
     // 이 조각 수정: a delta key sits on the result curve, i.e. at the clip's value plus the delta
     const shift = (c: { piece: boolean; clip: { channels: Record<string, Curve> }; def: { standingHeight: number } }, ch: string, f: number) =>
@@ -51,7 +54,7 @@ export default function GraphCanvas() {
     // union of sel.channel and the channels of sel.keys; 'root' / 'group:<name>' expand to their channels; max 8
     const shown = (): string[] => {
       const { sel, project, defs } = ed.getState(), out: string[] = []
-      const robot = project.actors.find(a => a.id === sel.actorId)?.robot
+      const robot = actorOf(ed.getState(), sel.actorId)?.robot
       const expand = (ch: string): string[] =>
         ch === 'root' || ch === 'group:루트' ? ROOT_CHANNELS
         : ch.startsWith('group:') ? (robot && defs[robot].groups.find(g => g.name === ch.slice(6))?.joints) || []
@@ -193,7 +196,8 @@ export default function GraphCanvas() {
         ctx.fillRect(LABEL_W, RULER_H, xa - LABEL_W, H - RULER_H); if (xb < W) ctx.fillRect(xb, RULER_H, W - xb, H - RULER_H)
       }
       const sel = e?.actorId ?? ed.getState().sel.actorId, cf = (sel && editTarget(ed.getState(), sel)?.f) || 0
-      drawRuler(ctx, sc, W, RULER_H, NO_SEQ, cf, C)
+      drawRuler(ctx, sc, W, RULER_H, NO_SEQ, cf, C, true)
+      { const r = ed.getState().range; if (r) drawRangeBand(ctx, sc, r, 0, H, LABEL_W, W, C.accent) }
       const px = Math.round(frameToX(sc, cf)) + 0.5
       if (px >= LABEL_W) { ctx.fillStyle = C.accent; ctx.fillRect(px - 0.5, 0, 1, H) }
       ctx.fillStyle = C.line; ctx.fillRect(LABEL_W - 1, 0, 1, H)
@@ -209,6 +213,7 @@ export default function GraphCanvas() {
     resetFollow()
     const ro = new ResizeObserver(resize); ro.observe(canvas); resize()
     const unsub = ed.subscribe(schedule)
+    document.fonts?.addEventListener('loadingdone', schedule) // labels drawn in the fallback font before IBM Plex arrived
 
     // ---- mouse ----
     const pos = (e: MouseEvent) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top } }
@@ -222,6 +227,7 @@ export default function GraphCanvas() {
       if (e.button !== 0) return
       canvas.focus()
       const { x, y } = pos(e), c = ctxOf(), st = ed.getState()
+      if (y < RULER_H && startRangeDrag(e, x, scale, m => pos(m).x, track)) return // Shift+drag on the ruler: 구간
       if (y < RULER_H) { st.setFrame(seqFrame(x)); track(m => st.setFrame(seqFrame(pos(m).x)), () => {}); return }
       if (!c || x < LABEL_W) return
       const { def, cs, clipId, piece, src } = c, chs = shown(), frozen = clipLocked(st.project, clipId), clip = { ...src } // locked: select only (Timeline shows the message)
@@ -305,7 +311,7 @@ export default function GraphCanvas() {
     canvas.addEventListener('wheel', onWheel, { passive: false })
     window.addEventListener('keydown', onKey)
     return () => {
-      ro.disconnect(); unsub(); cancelAnimationFrame(raf); hover.stop()
+      ro.disconnect(); document.fonts?.removeEventListener('loadingdone', schedule); unsub(); cancelAnimationFrame(raf); hover.stop()
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('wheel', onWheel)

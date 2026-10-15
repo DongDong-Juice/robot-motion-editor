@@ -1,5 +1,5 @@
 import type { RobotDefs } from '../model/evaluate'
-import type { Clip, Project } from '../model/types'
+import type { Clip, Project, Actor } from '../model/types'
 
 export interface TimeScale { x0: number; pxPerFrame: number }
 export const frameToX = (s: TimeScale, f: number) => s.x0 + f * s.pxPerFrame
@@ -25,9 +25,9 @@ export interface Row { kind: 'group' | 'channel'; actorId: string; label: string
 export const ROOT_CHANNELS = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw']
 export const rowKey = (actorId: string, label: string) => `${actorId}/${label}`
 
-export function buildRows(p: Project, defs: RobotDefs, expanded: Set<string>): Row[] {
+export function buildRows(p: Project, defs: RobotDefs, expanded: Set<string>, actors: Pick<Actor, 'id' | 'name' | 'robot'>[] = p.actors): Row[] {
   const rows: Row[] = []
-  for (const a of p.actors) {
+  for (const a of actors) {
     rows.push({ kind: 'group', actorId: a.id, label: a.name, channels: [] })
     const groups = [{ name: '루트', joints: ROOT_CHANNELS }, ...defs[a.robot].groups]
     for (const g of groups) {

@@ -7,8 +7,10 @@ import { makeKey } from '../model/curve'
 import { eulerToQuat, quatYaw } from '../model/rootMath'
 import { evaluate, type RobotDefs } from '../model/evaluate'
 import type { Project } from '../model/types'
-import { csvFileName, exportItemCsv, itemFrameRange, posesToCsv, samplePoses } from './csv'
+import { csvFileName, exportClipCsv, exportItemCsv, itemFrameRange, posesToCsv, samplePoses } from './csv'
 import { validatePoses } from './validate'
+import { baseClip } from '../model/itemClip'
+import { evaluateClip } from '../model/pose'
 
 const load = loadDef
 const defs: RobotDefs = { g1: load('g1'), go2: load('go2') }
@@ -175,4 +177,20 @@ test('exportItemCsv: restPose item starts at the 기본자세 (차렷) joint ang
   first.slice(11, 40).forEach((v, i) => expect(Math.abs(Number(v) - defs.g1.rest.q[i])).toBeLessThan(1e-6))
   expect(exportItemCsv(proj, defs, g1.id, itemOf(proj, g1.id).id, 'world').warnings).toEqual(
     validatePoses(samplePoses(proj, defs, g1.id, itemOf(proj, g1.id).id, 'world'), defs.g1, itemFrameRange(itemOf(proj, g1.id)).from))
+})
+
+test('exportClipCsv (클립 편집 CSV 저장): one row per clip frame = the clip with its 수정 층, local root, <G1|GO2>_<clip>.csv', () => {
+  const p = structuredClone(proj), clip = p.clips[itemOf(p, g1.id).refId], j = defs.g1.joints.findIndex(x => x.name === 'left_knee_joint')
+  clip.name = 'my clip'
+  clip.channels['root.x'] = { keys: [makeKey(0, 2), makeKey(clip.length - 1, 3)] }
+  clip.offset = { left_knee_joint: { keys: [makeKey(10, 0.3)] } }
+  const { name, text, warnings } = exportClipCsv(p, defs, clip.id)
+  expect(name).toBe('G1_my_clip.csv')
+  expect(warnings).toEqual([])
+  const rows = text.split('\n').map(r => r.split(','))
+  expect(rows).toHaveLength(clip.length + 1)
+  expect(+rows[1][4]).toBeCloseTo(0, 6) // local root: first frame x = 0
+  expect(+rows[11][11 + j]).toBeCloseTo(evaluateClip(baseClip(p, defs, clip.id)!, defs.g1, 10).q[j], 6)
+  expect(+rows[11][11 + j]).toBeCloseTo(0.3, 6) // 수정 층 on a zero curve
+  expect(clip.channels.left_knee_joint).toBeUndefined() // the clip itself unchanged
 })

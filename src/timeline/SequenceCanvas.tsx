@@ -4,7 +4,7 @@ import { getEditor, useEditor } from '../store/store'
 import { itemLen, sortedItems, pieceName, pieceTag } from '../model/sequence'
 import { itemLead, itemTail, REST_BLEND, REST_HOLD } from '../model/restPose'
 import type { Item, Track } from '../model/types'
-import { offsetKeyCount } from '../model/itemClip'
+import { offsetKeyCount, withUse } from '../model/itemClip'
 import { seqFlash, tv } from './viewState'
 import { followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { sequenceEnd } from '../transport'
@@ -71,6 +71,8 @@ function fit(ctx: CanvasRenderingContext2D, text: string, w: number) {
 interface Row { t: Track; it?: Item; y: number; h: number; edit?: boolean }
 const hasEdit = (it: Item) => offsetKeyCount(it) > 0
 const editLabel = (it: Item) => `수정 · 키 ${offsetKeyCount(it)}개`
+// a piece's 수정본 by the piece's name: '#2 · F1200–1441 수정본' (a cut follows: the name changes with the piece)
+const editName = (t: Track, it: Item, clipName: string) => `${pieceTag(t, it) || clipName} 수정본`
 
 // In-progress drag preview; the store is untouched until mouseup.
 interface Drag { itemId: string; mode: 'move' | 'in' | 'out'; df: number }
@@ -134,7 +136,7 @@ export default function SequenceCanvas() {
         out.push({ t, y, h: ROW_H }); y += ROW_H
         if (stairs(t)) for (const it of sortedItems(t)) { // one lane per piece, going down; a 수정 row under a piece with a 수정 층
           out.push({ t, it, y, h: ROW_H }); y += ROW_H
-          if (hasEdit(it)) { out.push({ t, it, y, h: ROW_H, edit: true }); y += ROW_H }
+          if (hasEdit(it) && !it.noOriginal) { out.push({ t, it, y, h: ROW_H, edit: true }); y += ROW_H } // 원본 삭제: the lane is the 수정본
         }
       }
       return out
@@ -160,6 +162,20 @@ export default function SequenceCanvas() {
       return { st, old: !!t.actorId && stale(s.project, s.defs, t.actorId, it.id) }
     }
     const GRAPH = 0.6 // graph fills the bar's bottom 40%
+    // lead-in / tail lengths walk the whole clip (foot contact, motion amount): during a slider or gizmo drag the lanes keep the
+    // lengths from the drag start and catch up when it ends
+    const leads = new Map<string, ReturnType<typeof itemLead>>(), tails = new Map<string, ReturnType<typeof itemTail>>()
+    // `side`: from the original or the 수정본 (each row draws its own; the settings are the piece's, shared); none = the side in use
+    type Side = 'original' | 'edit' | undefined
+    const sided = (it: Item, side: Side) => { const s = ed.getState(); if (!side) return { p: s.project, it }
+      const use = side === 'original' ? 'original' as const : null, n = { ...it }; if (use) n.use = use; else delete n.use
+      return { p: withUse(s.project, it.id, use), it: n } }
+    const leadOf = (it: Item, side?: Side) => { const s = ed.getState(), k = `${it.id}:${side ?? ''}`
+      if (!s.inGesture || !leads.has(k)) { const v = sided(it, side); leads.set(k, itemLead(v.p, s.defs, v.it)) } return leads.get(k)! }
+    const tailOf = (it: Item, side?: Side) => { const s = ed.getState(), k = `${it.id}:${side ?? ''}`
+      if (!s.inGesture || !tails.has(k)) { const v = sided(it, side); tails.set(k, itemTail(v.p, s.defs, v.it)) } return tails.get(k)! }
+    // a lane of a piece with a 수정본 shows the original (its 수정 row the 수정본); a 수정본-only lane and a collapsed row: the side in use
+    const laneSide = (it: Item, lane: boolean): Side => lane && offsetKeyCount(it) > 0 && !it.noOriginal ? 'original' : undefined
     seqFlash.fn = (text, itemId) => flash(text, layout().findIndex(r => !r.it && r.t.items.some(i => i.id === itemId)))
 
     const draw = () => {
@@ -187,11 +203,23 @@ export default function SequenceCanvas() {
       if (scrollY > maxY) scrollY = maxY
       if (scrollY !== scrollTo) { scrollY = Math.abs(scrollTo - scrollY) < 0.5 ? scrollTo : scrollY + (scrollTo - scrollY) * 0.35; schedule() }
       const rows = layout()
+      // 기본자세 blocks of one piece on a lane row at y (덮어쓰기: the first 1.5 s; 덧붙이기: 기본자세 · 전이 · 관성 before the bar;
+      // 끝 기본자세: 전이 · 기본자세 after it), each labelled where the word fits. Used by the 수정 row (the lanes draw theirs in bars()).
+      const restBlocks = (it: Item, ld: ReturnType<typeof itemLead>, tl: ReturnType<typeof itemTail>, y: number, ga: number) => {
+        const x = frameToX(sc, it.start), w = itemLen(it) * tv.ppf, by = y + 2, bh = ROW_H - 5, spans: [string, number, number][] = []
+        const put = (label: string, c: string, x0: number, n: number) => { ctx.fillStyle = c; ctx.fillRect(x0, by, n * tv.ppf, bh); spans.push([label, x0, x0 + n * tv.ppf]); return x0 + n * tv.ppf }
+        ctx.globalAlpha = 0.55 * ga
+        if (it.restPose === true) put('기본자세', C.rest, x, Math.min(OVERWRITE, itemLen(it)))
+        else if (it.restPose === 'prepend' && ld) { let xs = x - ld.lead * tv.ppf; xs = put('기본자세', C.rest, xs, ld.hold); xs = put('전이', C.blend, xs, ld.blend); put('관성', C.inertia, xs, ld.inertia) }
+        if (tl) put('기본자세', C.rest, put('전이', C.blend, x + w, tl.blend), tl.hold)
+        ctx.globalAlpha = ga; ctx.fillStyle = C.text
+        for (const [t, a0, a1] of spans) { const a = Math.max(a0, LABEL_W); if (a1 - a >= ctx.measureText(t).width + 8) ctx.fillText(t, a + 4, y + ROW_H / 2) }
+      }
       // Bars of `items` in one row at y: fill, 기본자세 section, outline, assist graph, crossfade hatch over `xfade`, labels.
       const bars = (t: Track, items: Item[], y: number, color: string, lane: boolean, xfade: [number, number][]) => {
         const video = isVideo(t), actor = s.project.actors.find(a => a.id === t.actorId)
         ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, y, W - LABEL_W, ROW_H); ctx.clip()
-        const unused = lane && !!items[0] && items[0].use !== 'original' && hasEdit(items[0]) // the piece plays its 수정본: the original lane is the unused side
+        const unused = lane && !!items[0] && items[0].use !== 'original' && hasEdit(items[0]) && !items[0].noOriginal // the piece plays its 수정본: the original lane is the unused side
         const ga = (t.locked ? 0.5 : 1) * (lane && items[0]?.hidden ? 0.4 : 1) * (unused ? 0.45 : 1) // locked: half transparent, no hatch; hidden / unused: faded
         ctx.globalAlpha = ga
         for (const it of items) {
@@ -200,7 +228,7 @@ export default function SequenceCanvas() {
           else { ctx.fillStyle = color; ctx.globalAlpha = 0.18 * ga; ctx.fillRect(x, by, w, bh); ctx.globalAlpha = ga }
           if (it.restPose) { // 기본자세 section in its own colour: 덮어쓰기 = the first 1.5 s; 덧붙이기 = the lead-in played before the piece
             ctx.fillStyle = C.rest; ctx.globalAlpha = 0.55 * ga
-            const ld = itemLead(s.project, s.defs, it)
+            const ld = leadOf(it, laneSide(it, lane))
             if (!ld) ctx.fillRect(x, by, Math.min(OVERWRITE, itemLen(it)) * tv.ppf, bh)
             else { // 기본자세 (정지) · 전이 · 관성 (original frames), each in its own colour; one row: a strip, so the piece before stays visible
               let xs = x - ld.lead * tv.ppf
@@ -210,7 +238,7 @@ export default function SequenceCanvas() {
             }
             ctx.globalAlpha = ga
           }
-          const tl = itemTail(s.project, s.defs, it)
+          const tl = tailOf(it, laneSide(it, lane))
           if (tl) { // 끝 기본자세 after the piece's end: 전이 then 기본자세 (정지); one row: a strip, so the next piece stays visible
             ctx.globalAlpha = 0.55 * ga
             let xs = x + w
@@ -223,7 +251,7 @@ export default function SequenceCanvas() {
             for (const f of fs) ctx.fillRect(Math.round(frameToX(sc, it.start + f - it.trimIn)) - 1, by + bh - 4, 2, 4)
           }
           if (video && !mediaUrl(it.refId)) hatch(x, x + w, y, 0.25) // offline
-          ctx.strokeStyle = it.id === s.selItem ? C.accent : video ? C.line : color; ctx.lineWidth = 1
+          ctx.strokeStyle = it.id === s.selItem && !(lane && s.selEdit) ? C.accent : it.noOriginal ? C.piece : video ? C.line : color; ctx.lineWidth = 1
           ctx.strokeRect(x + 0.5, by + 0.5, w - 1, bh - 1)
           if (it.id === s.itemPreview && !(lane && s.previewEdit)) { // the piece open in the clip preview: a light dashed frame inside the bar (수정 비교: on its 수정 row)
             ctx.save(); ctx.strokeStyle = C.text; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3])
@@ -237,7 +265,7 @@ export default function SequenceCanvas() {
         ctx.fillStyle = C.text
         for (const it of items) {
           // 기본자세 section label: only where the whole word fits inside the coloured block (덧붙이기 only in a lane)
-          const ld = it.restPose === 'prepend' ? itemLead(s.project, s.defs, it) : null
+          const ld = it.restPose === 'prepend' ? leadOf(it, laneSide(it, lane)) : null
           const rb = it.restPose === true ? [frameToX(sc, it.start), Math.min(OVERWRITE, itemLen(it)) * tv.ppf]
             : ld && lane ? [frameToX(sc, it.start) - ld.lead * tv.ppf, ld.hold * tv.ppf] : null
           const tag = (text: string, x0: number, x1: number) => { // a section label, only where the whole word fits inside its block
@@ -250,7 +278,7 @@ export default function SequenceCanvas() {
             tag('전이', b0, b1)
             tag('관성', b1, b1 + ld.inertia * tv.ppf)
           }
-          const tl = lane ? itemTail(s.project, s.defs, it) : null
+          const tl = lane ? tailOf(it, laneSide(it, lane)) : null
           if (tl) { const e0 = frameToX(sc, it.start + itemLen(it)), e1 = e0 + tl.blend * tv.ppf; tag('전이', e0, e1); tag('기본자세', e1, e1 + tl.hold * tv.ppf) }
           const x = Math.max(frameToX(sc, it.start) + (it.restPose === true && rb ? rb[1] : 0), LABEL_W) + 4, right = frameToX(sc, it.start + itemLen(it)) - 4 // 덮어쓰기: the name after the block
           const { st, old } = video ? { st: undefined, old: false } : phys(t, it), b = badge(st, old)
@@ -261,7 +289,7 @@ export default function SequenceCanvas() {
             ctx.fillText(b, br - bw + 8, ty); ctx.fillStyle = C.text
           }
           const nr = bw ? br - bw : right
-          if (nr > x) ctx.fillText((video ? refName(it) : pieceName(t, it, refName(it))) + (video && !mediaUrl(it.refId) ? ' (오프라인)' : ''), x, ty, nr - x)
+          if (nr > x) ctx.fillText((video ? refName(it) : it.noOriginal ? editName(t, it, refName(it)) : pieceName(t, it, refName(it))) + (video && !mediaUrl(it.refId) ? ' (오프라인)' : ''), x, ty, nr - x)
         }
         ctx.restore()
       }
@@ -282,23 +310,24 @@ export default function SequenceCanvas() {
           ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, y, W - LABEL_W, ROW_H); ctx.clip()
           const ga = (t.locked ? 0.5 : 1) * (used ? 1 : 0.45), x = frameToX(sc, it.start), w = itemLen(it) * tv.ppf, by = y + 2, bh = ROW_H - 5
           ctx.globalAlpha = 0.18 * ga; ctx.fillStyle = C.piece; ctx.fillRect(x, by, w, bh)
+          restBlocks(it, leadOf(it, 'edit'), tailOf(it, 'edit'), y, ga) // 기본자세 · 전이 · 관성 / 끝 기본자세 of the 수정본
           const fs = Object.values(it.offset ?? {}).flatMap(c => c.keys.map(k => k.f))
           const a = Math.max(Math.min(...fs), it.trimIn), b = Math.min(Math.max(...fs) + 1, it.trimOut)
           if (b > a) { ctx.globalAlpha = 0.5 * ga; ctx.fillRect(frameToX(sc, it.start + a - it.trimIn), by, (b - a) * tv.ppf, bh) }
           ctx.globalAlpha = ga
           for (const f of new Set(fs)) if (f >= it.trimIn && f < it.trimOut) ctx.fillRect(Math.round(frameToX(sc, it.start + f - it.trimIn)) - 1, by + bh - 4, 2, 4)
-          ctx.strokeStyle = it.id === s.selItem ? C.accent : C.piece; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, by + 0.5, w - 1, bh - 1)
+          ctx.strokeStyle = it.id === s.selItem && s.selEdit ? C.accent : C.piece; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, by + 0.5, w - 1, bh - 1)
           if (it.id === s.itemPreview && s.previewEdit) { // open in the 수정본 pane: the dashed frame
             ctx.save(); ctx.strokeStyle = C.text; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]); ctx.strokeRect(x + 2.5, by + 2.5, w - 5, bh - 5); ctx.restore()
           }
           ctx.fillStyle = C.text
-          const tx = Math.max(x, LABEL_W) + 4
-          if (x + w - 4 > tx) ctx.fillText('수정본', tx, y + ROW_H / 2, x + w - 4 - tx)
+          const tx = Math.max(x + (it.restPose === true ? Math.min(OVERWRITE, itemLen(it)) * tv.ppf : 0), LABEL_W) + 4 // 덮어쓰기: after its block
+          if (x + w - 4 > tx) ctx.fillText(editName(t, it, refName(it)), tx, y + ROW_H / 2, x + w - 4 - tx)
           ctx.restore()
           ctx.fillStyle = C.bg; ctx.fillRect(0, y, LABEL_W - 1, ROW_H - 1)
           useMark(it, used)
-          ctx.font = '10px "IBM Plex Sans KR", sans-serif'; ctx.fillStyle = C.piece
-          ctx.fillText(fit(ctx, (it.id === s.itemPreview && s.previewEdit ? '▶ ' : '') + editLabel(it), LABEL_W - 8 - CHILD_X), CHILD_X, y + ROW_H / 2)
+          ctx.font = '10px "IBM Plex Sans KR", sans-serif'; ctx.fillStyle = it.id === s.selItem && s.selEdit ? C.accent : C.piece
+          ctx.fillText(fit(ctx, (it.id === s.itemPreview && s.previewEdit ? '▶ ' : '') + `${laneLabel(t, it)} 수정본`, LABEL_W - 8 - CHILD_X), CHILD_X, y + ROW_H / 2)
           ctx.font = '11px "IBM Plex Sans KR", sans-serif'
           return
         }
@@ -306,17 +335,17 @@ export default function SequenceCanvas() {
           const it = items.find(i => i.id === r.it!.id) ?? r.it
           bars(t, [it], y, color, true, overlaps(items).filter(([a, b]) => a < it.start + itemLen(it) && b > it.start))
           ctx.fillStyle = C.bg; ctx.fillRect(0, y, LABEL_W - 1, ROW_H - 1)
-          useMark(it, it.use === 'original')
+          if (!it.noOriginal) useMark(it, it.use === 'original')
           drawEye(ctx, EYE_X, y + ROW_H / 2, !!it.hidden, it.hidden ? C.accent : C.line)
           ctx.font = '10px "IBM Plex Sans KR", sans-serif'
-          ctx.fillStyle = it.id === s.selItem ? C.accent : C.text
+          ctx.fillStyle = it.id === s.selItem && !s.selEdit ? C.accent : it.noOriginal ? C.piece : C.text
           // the column is narrow: "#n · start" (the bar shows the clip name), a short physics tag on the right; the full text on hover
           const { st, old } = phys(t, r.it), tag = treeTag(st, old), right = EYE_X - ICON_HIT / 2 - 4, tw = tag.text ? ctx.measureText(tag.text).width + 6 : 0
           if (tag.text) {
             ctx.save(); ctx.textAlign = 'right'; ctx.fillStyle = tag.warn ? WARN_RED : '#8d96a3'; ctx.fillText(tag.text, right, y + ROW_H / 2); ctx.restore()
           }
-          const warn = (it.id === s.itemPreview && !s.previewEdit ? '▶ ' : '') + (it.restPose === 'prepend' && itemLead(s.project, s.defs, it)?.why === 'review' ? '⚠ ' : '') // 관성 검토 필요, in front so it is never cut
-          ctx.fillText(fit(ctx, warn + laneLabel(t, it), right - CHILD_X - tw), CHILD_X, y + ROW_H / 2)
+          const warn = (it.id === s.itemPreview && !s.previewEdit ? '▶ ' : '') + (it.restPose === 'prepend' && leadOf(it, laneSide(it, true))?.why === 'review' ? '⚠ ' : '') // 관성 검토 필요, in front so it is never cut
+          ctx.fillText(fit(ctx, warn + laneLabel(t, it) + (it.noOriginal ? ' 수정본' : ''), right - CHILD_X - tw), CHILD_X, y + ROW_H / 2)
           ctx.font = '11px "IBM Plex Sans KR", sans-serif'
           return
         }
@@ -358,6 +387,7 @@ export default function SequenceCanvas() {
     resetFollow()
     const ro = new ResizeObserver(resize); ro.observe(canvas); resize()
     const unsub = ed.subscribe(schedule), unsubMedia = subscribeMedia(schedule), unsubPhys = usePhysics.subscribe(schedule)
+    document.fonts?.addEventListener('loadingdone', schedule) // labels drawn in the fallback font before IBM Plex arrived
 
     // ---- mouse ----
     const pos = (e: { clientX: number; clientY: number }) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top } }
@@ -398,14 +428,14 @@ export default function SequenceCanvas() {
         return
       }
       const r = layout()[row]
-      if (r?.it && hasEdit(r.it) && x >= NAME_X && x < CHILD_X) { // ●: this row's side plays and exports
+      if (r?.it && hasEdit(r.it) && !r.it.noOriginal && x >= NAME_X && x < CHILD_X) { // ●: this row's side plays and exports
         if (!s.setItemUse(r.it.id, r.edit ? null : 'original')) flash(r.t.locked ? LOCKED : DENY, row)
         return
       }
       if (r?.edit && r.it) { // 수정 row (label or bar): select the piece and open 수정 비교; empty time: seek
         const it = r.it, x0 = frameToX(scale(), it.start), x1 = frameToX(scale(), it.start + itemLen(it))
         if (x >= LABEL_W && (x < x0 || x > x1)) { s.selectItem(null); s.setFrame(frameAt(x)); track(m => s.setFrame(frameAt(pos(m).x)), () => {}); return }
-        s.selectItem(it.id)
+        s.selectItem(it.id, true) // the 수정본 itself: Delete removes only it
         if (r.t.actorId) s.select(r.t.actorId)
         s.openEditCompare(it.id)
         return
@@ -494,8 +524,8 @@ export default function SequenceCanvas() {
       const r = x < LABEL_W && y >= RULER_H ? layout()[rowAt(y)] : undefined, near = (ix: number) => Math.abs(x - ix) <= ICON_HIT / 2
       const onUse = x >= NAME_X && x < CHILD_X, useTip = (mine: boolean, side: string) => mine ? '재생·CSV에 이쪽을 씁니다' : `누르면 재생·CSV에 ${side}을 씁니다`
       const tip = !r ? '' : r.edit && r.it ? (onUse ? useTip(r.it.use !== 'original', '수정본')
-          : `${editLabel(r.it)}\n재생·CSV: ${r.it.use === 'original' ? '원본' : '수정본'}\n누르면 수정 비교 (메인 = 원본, 오른쪽 = 수정본)`)
-        : r.it ? (hasEdit(r.it) && onUse ? useTip(r.it.use === 'original', '원본') : near(EYE_X) ? '이 조각 숨기기' : laneTip(r.t, r.it))
+          : `${editName(r.t, r.it, refName(r.it))} · ${editLabel(r.it).replace('수정 · ', '')}\nDelete: 수정본만 지움 (조각은 원본으로 남음)\n재생·CSV: ${r.it.use === 'original' ? '원본' : '수정본'}\n누르면 수정 비교 (메인 = 원본, 오른쪽 = 수정본)`)
+        : r.it ? (hasEdit(r.it) && !r.it.noOriginal && onUse ? useTip(r.it.use === 'original', '원본') : near(EYE_X) ? '이 조각 숨기기' : laneTip(r.t, r.it))
         : !isVideo(r.t) && near(TRAIL_X) ? '경로 표시: 이 로봇의 골반이 지나간 바닥 경로를 메인 화면에 선으로 보여 줍니다'
         : near(EYE_X) ? '숨기기' : near(LOCK_X) ? '잠그기' : ''
       if (canvas.title !== tip) canvas.title = tip
@@ -505,9 +535,9 @@ export default function SequenceCanvas() {
 
     // full text of a lane label (hover): piece, time range, clip, 기본자세, physics
     const laneTip = (t: Track, it: Item) => {
-      const s = ed.getState(), { st, old } = phys(t, it), ld = it.restPose === 'prepend' ? itemLead(s.project, s.defs, it) : null
+      const s = ed.getState(), { st, old } = phys(t, it), ld = it.restPose === 'prepend' ? leadOf(it) : null
       return childLabel(t, it, s.project.clips[it.refId]?.name ?? '') + treeSuffix(st, old).replace(/^ · /, '\n물리 검증: ')
-        + (ld?.why === 'review' ? '\n관성 검토 필요' : '') + (it.restTail ? '\n끝 기본자세 (전이 · 정지 0.5초)' : '') +(hasEdit(it) ? `\n재생·CSV: ${it.use === 'original' ? '원본' : '수정본'}` : '')
+        + (ld?.why === 'review' ? '\n관성 검토 필요' : '') + (it.restTail ? '\n끝 기본자세 (전이 · 정지 0.5초)' : '') +(it.noOriginal ? '\n원본 삭제됨 · 수정본만 재생·CSV' : hasEdit(it) ? `\n재생·CSV: ${it.use === 'original' ? '원본' : '수정본'}\nDelete: 원본만 지움 (수정본은 남음)` : '')
         + (it.id === s.itemPreview ? (s.previewEdit ? '\n수정 비교 중' : '\n클립 프리뷰에서 보는 중') : '')
     }
     const onWheel = (e: WheelEvent) => {
@@ -564,7 +594,7 @@ export default function SequenceCanvas() {
     addEventListener('dragend', clearGhost)
     return () => {
       seqFlash.fn = null
-      ro.disconnect(); unsub(); unsubMedia(); unsubPhys(); hover.stop(); cancelAnimationFrame(raf); clearTimeout(timer)
+      ro.disconnect(); document.fonts?.removeEventListener('loadingdone', schedule); unsub(); unsubMedia(); unsubPhys(); hover.stop(); cancelAnimationFrame(raf); clearTimeout(timer)
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('mouseleave', onLeave)
@@ -630,7 +660,7 @@ export default function SequenceCanvas() {
                   {childLabel(t, it, project.clips[it.refId]?.name ?? '')} 숨기기
                 </button>
               ))}
-              {open && sortedItems(t).filter(hasEdit).map(it => {
+              {open && sortedItems(t).filter(it => hasEdit(it) && !it.noOriginal).map(it => {
                 const l = childLabel(t, it, project.clips[it.refId]?.name ?? ''), s = () => getEditor().getState()
                 return (
                   <span key={`e${it.id}`}>
@@ -656,14 +686,18 @@ export default function SequenceCanvas() {
             }
           }}>
           {ctx.itemId && <button role="menuitem" tabIndex={-1} onClick={() => { closeCtx(false); void runExport(ctx) }}>export하기</button>}
-          {ctxItem && hasEdit(ctxItem) && (['수정본 사용', '원본 사용'] as const).map(l => {
+          {ctxItem && hasEdit(ctxItem) && !ctxItem.noOriginal && (['수정본 사용', '원본 사용'] as const).map(l => {
             const use = l === '원본 사용' ? 'original' : null, on = (ctxItem.use ?? null) === use
             return <button key={l} role="menuitem" tabIndex={-1} aria-disabled={on} title={on ? '지금 재생·CSV에 쓰는 쪽입니다' : undefined}
               onClick={() => { if (on) return; closeCtx(false); if (!getEditor().getState().setItemUse(ctxItem.id, use)) seqFlash.fn?.(LOCKED, ctxItem.id) }}>{on ? '● ' : ''}{l}</button>
           })}
-          {ctxItem && hasEdit(ctxItem) && <button role="menuitem" tabIndex={-1} onClick={() => { closeCtx(false); getEditor().getState().openEditCompare(ctxItem.id) }}>수정 비교</button>}
-          {ctxItem && hasEdit(ctxItem) && <button role="menuitem" tabIndex={-1}
-            onClick={() => { closeCtx(false); if (!getEditor().getState().clearOffset(ctxItem.id)) seqFlash.fn?.(LOCKED, ctxItem.id) }}>수정 지우기</button>}
+          {ctxItem && hasEdit(ctxItem) && !ctxItem.noOriginal && <button role="menuitem" tabIndex={-1} onClick={() => { closeCtx(false); getEditor().getState().openEditCompare(ctxItem.id) }}>수정 비교</button>}
+          {ctxItem && hasEdit(ctxItem) && <button role="menuitem" tabIndex={-1} title="수정본을 새 클립으로 목록에 넣고 이 조각이 그 클립을 씁니다"
+            onClick={() => { closeCtx(false); if (!getEditor().getState().bakeEdit(ctxItem.id)) seqFlash.fn?.(LOCKED, ctxItem.id) }}>수정 완료 (새 클립으로)</button>}
+          {ctxItem && hasEdit(ctxItem) && <button role="menuitem" tabIndex={-1} title="수정본만 지웁니다 (조각은 남음)"
+            onClick={() => { closeCtx(false); if (!getEditor().getState().removePiece(ctxItem.id, 'edit')) seqFlash.fn?.(LOCKED, ctxItem.id) }}>수정본 삭제</button>}
+          {ctxItem && hasEdit(ctxItem) && !ctxItem.noOriginal && <button role="menuitem" tabIndex={-1} title="원본 조각만 지웁니다 (수정본은 남음)"
+            onClick={() => { closeCtx(false); if (!getEditor().getState().removePiece(ctxItem.id, 'piece')) seqFlash.fn?.(LOCKED, ctxItem.id) }}>원본 삭제</button>}
           <button role="menuitem" tabIndex={-1} aria-disabled={noModel} title={noModel ? '미지원' : undefined}
             onClick={() => { if (noModel) return; closeCtx(false); runPhys(ctx) }}>{ctx.itemId ? '물리 검증' : '트랙 물리 검증'}</button>
         </div>

@@ -850,3 +850,69 @@ test('setPhysics is one undoable, dirty edit', () => {
   expect(s().project.physics).toBeUndefined()
 })
 
+// ---- appendClip ----
+const blockClip = (len: number, name = 'Stretch'): Clip => ({ id: crypto.randomUUID(), name, robot: 'go2', length: len, channels: {} })
+const go2Setup = (items: { start: number; trimIn: number; trimOut: number }[]) => {
+  const p = structuredClone(s().project)
+  const go2 = p.actors.find(a => a.robot === 'go2')!
+  const t = p.sequence.tracks.find(t => t.actorId === go2.id)!
+  const ref = t.items[0]?.refId ?? Object.values(p.clips).find(c => c.robot === 'go2')!.id
+  t.items = items.map(i => ({ id: crypto.randomUUID(), refId: ref, ...i }))
+  s().loadProject(p, null)
+  return go2.id
+}
+const itemById = (id: string) => s().project.sequence.tracks.flatMap(t => t.items).find(i => i.id === id)
+
+test('appendClip places at track end (max start+len, not last pushed), one undo', () => {
+  const go2 = go2Setup([{ start: 100, trimIn: 10, trimOut: 60 }, { start: 0, trimIn: 0, trimOut: 50 }])
+  const clip = blockClip(30)
+  const id = s().appendClip(go2, clip)!
+  expect(itemById(id)).toMatchObject({ refId: clip.id, start: 150, trimIn: 0, trimOut: 30 })
+  s().undo()
+  expect(s().project.clips[clip.id]).toBeUndefined()
+  expect(itemById(id)).toBeUndefined()
+})
+
+test('appendClip twice → back to back', () => {
+  const go2 = go2Setup([{ start: 0, trimIn: 0, trimOut: 50 }])
+  const a = s().appendClip(go2, blockClip(30))!, b = s().appendClip(go2, blockClip(20))!
+  expect(itemById(a)!.start).toBe(50)
+  expect(itemById(b)!.start).toBe(80)
+})
+
+test('appendClip on empty track starts at 0', () => {
+  const go2 = go2Setup([])
+  expect(itemById(s().appendClip(go2, blockClip(30))!)!.start).toBe(0)
+})
+
+test('appendClip rejects locked track and robot mismatch', () => {
+  const go2 = go2Setup([])
+  const before = s().project
+  expect(s().appendClip(actor, blockClip(30))).toBeNull() // actor = G1
+  const t = s().project.sequence.tracks.find(t => t.actorId === go2)!
+  s().setTrackFlag(t.id, 'locked', true)
+  const locked = s().project
+  expect(s().appendClip(go2, blockClip(30))).toBeNull()
+  expect(s().project).toBe(locked)
+  expect(before.clips).toEqual(locked.clips)
+})
+
+test('appendClip(null) makes a new GO2 actor with the clip at 0, one undo', () => {
+  const n = s().project.actors.length
+  const id = s().appendClip(null, blockClip(30))!
+  const p = s().project, a = p.actors.at(-1)!, t = p.sequence.tracks.find(t => t.actorId === a.id)!
+  expect(p.actors.length).toBe(n + 1)
+  expect(a.robot).toBe('go2')
+  expect(t.items).toEqual([expect.objectContaining({ id, start: 0, trimIn: 0, trimOut: 30 })])
+  expect(s().appendClip(a.id, blockClip(20))).not.toBeNull()
+  expect(s().project.sequence.tracks.find(t => t.actorId === a.id)!.items.map(i => i.start)).toEqual([0, 30])
+  s().undo(); s().undo()
+  expect(s().project.actors.length).toBe(n)
+})
+
+test('appendClip dedupes name', () => {
+  const go2 = go2Setup([])
+  const a = s().appendClip(go2, blockClip(10))!, b = s().appendClip(go2, blockClip(10))!
+  const name = (id: string) => s().project.clips[itemById(id)!.refId].name
+  expect([name(a), name(b)]).toEqual(['Stretch', 'Stretch_2'])
+})

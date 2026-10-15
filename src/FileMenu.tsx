@@ -4,7 +4,7 @@ import { newProjectFile, openProject, saveProject } from './projectActions'
 
 type Item = { label: string; hint?: string; tip: string; run: () => void } // tip: hover help
 
-export default function FileMenu({ onExport, onPhysics }: { onExport: () => void; onPhysics: () => void }) {
+export default function FileMenu({ onExport, onPhysics, onBlocks }: { onExport: () => void; onPhysics: () => void; onBlocks: () => void }) {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null) // null = closed
   const trig = useRef<HTMLButtonElement>(null)
   const menu = useRef<HTMLDivElement>(null)
@@ -15,7 +15,8 @@ export default function FileMenu({ onExport, onPhysics }: { onExport: () => void
       { label: '저장', hint: 'Ctrl+S', tip: '프로젝트 파일(.motion.json)로 저장합니다. 나중에 열기로 이어서 작업할 수 있습니다', run: () => saveProject() },
       { label: '다른 이름으로 저장', hint: 'Ctrl+Shift+S', tip: '프로젝트를 새 파일 이름으로 저장합니다', run: () => saveProject(true) }],
     [{ label: 'CSV 가져오기', tip: '모션 CSV(RL 학습용 형식)를 지금 프로젝트에 클립으로 추가합니다. 지금 작업은 그대로 두고 로봇 트랙에 이어 붙입니다', run: importCsvFiles },
-      { label: '영상 가져오기', tip: '참조 영상을 V1 트랙에 추가합니다(프로젝트에는 저장되지 않아 다시 열면 재연결 필요)', run: importVideoFiles }],
+      { label: '영상 가져오기', tip: '참조 영상을 V1 트랙에 추가합니다(프로젝트에는 저장되지 않아 다시 열면 재연결 필요)', run: importVideoFiles },
+      { label: 'GO2 블럭 추가…', tip: 'GO2 동작 블럭(실제 로봇 로그: 이동·회전·앉기·점프 등)을 골라 GO2 트랙 끝에 붙입니다. GO2 로봇이 없으면 새로 만듭니다', run: onBlocks }],
     [{ label: '물리 설정…', tip: '물리 검증의 kp/kd와 경고 기준을 바꿉니다', run: onPhysics }],
     [{ label: '내보내기', tip: '타임라인의 조각들을 RL 학습용 CSV로 내보냅니다(조각마다 파일 하나)', run: onExport }],
   ]

@@ -24,7 +24,7 @@ test('수정 비교: main = 원본, pane = 수정본; 원본 사용 plays the or
   const before = (await rigs()).main
 
   // the first 수정 key opens 수정 비교 by itself
-  const num = page.getByLabel(`${ch} 값`)
+  const num = page.getByLabel(`${ch} 숫자`)
   await num.fill('40'); await num.press('Enter')
   const pane = page.getByRole('region', { name: '클립 프리뷰' })
   await expect(pane.getByRole('button', { name: /^수정본 ·/ })).toBeVisible()

@@ -19,7 +19,7 @@ export function hitMarker(seq: Sequence, sc: TimeScale, x: number): number | nul
   return best
 }
 
-/** `frames`: (sequence) each label also shows its frame number, and the playhead carries a tag with the current frame. */
+/** `frames`: (sequence and clip view) each label also shows its frame number, and the playhead carries a tag with the current frame. */
 export function drawRuler(ctx: CanvasRenderingContext2D, sc: TimeScale, w: number, h: number, seq: Sequence, frame: number, C: Colors, frames = false): void {
   ctx.fillStyle = C.panel; ctx.fillRect(0, 0, w, h)
   ctx.fillStyle = C.line; ctx.fillRect(0, h - 1, w, 1)
