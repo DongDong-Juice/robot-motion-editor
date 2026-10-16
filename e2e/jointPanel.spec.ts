@@ -60,7 +60,13 @@ test('3D joint click → part rows → switch rows', async ({ page }) => {
 
   // it lives in the right sidebar, never over the 3D view; a click on empty floor clears the selection and hides it
   await expect(page.locator('.insp .jp')).toHaveCount(1)
+  // ...even mid slider drag: the drag still ends (no gesture left open to merge later edits into one undo step)
+  const box = (await panel.getByRole('slider', { name: 'left_hip_yaw_joint 슬라이더' }).boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down()
+  expect(await page.evaluate(() => (window as any).__editor.getState().inGesture)).toBe(true)
   await page.evaluate(() => (window as any).__editor.getState().select(null))
   await expect(panel).toHaveCount(0)
+  await page.mouse.up()
+  expect(await page.evaluate(() => (window as any).__editor.getState().inGesture)).toBe(false)
   expect(errors).toEqual([])
 })
