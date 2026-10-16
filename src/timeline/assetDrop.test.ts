@@ -5,7 +5,8 @@ import { dropAsset } from './assetDrop'
 
 let ed: ReturnType<typeof initEditor>
 const s = () => ed.getState()
-beforeEach(() => { ed = initEditor({ g1: loadDef('g1'), go2: loadDef('go2') }) })
+const defs = { g1: loadDef('g1'), go2: loadDef('go2') } // parse the meshes once per file, not inside the hook (10 s hook timeout under a full parallel run)
+beforeEach(() => { ed = initEditor(defs) })
 
 test('a new block clip dropped on empty space makes a GO2 actor; one undo removes clip and actor', () => {
   const clip = { id: 'blk', name: 'Stretch', robot: 'go2' as const, length: 30, channels: {} }
