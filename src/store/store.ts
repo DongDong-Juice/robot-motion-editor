@@ -116,8 +116,8 @@ export interface EditorState {
   // mode 'prepend' = 덧붙이기, null = off (덮어쓰기 was removed).
   setRestPose(itemId: string, mode: Item['restPose'] | null): boolean
   setRestTail(itemId: string, on: boolean): boolean
-  /** 덧붙이기 lead-in lengths of a piece, in frames (rounded, clamped); null = back to the default / auto. One undo step. */
-  setRestLead(itemId: string, patch: { restHold?: number | null; restBlend?: number | 'auto' | null; inertia?: number | null }): boolean
+  /** 덧붙이기 lead-in and 끝 기본자세 lengths of a piece, in frames (rounded, clamped); null = back to the default / auto. One undo step. */
+  setRestLead(itemId: string, patch: { restHold?: number | null; restBlend?: number | 'auto' | null; inertia?: number | null; tailHold?: number | null; tailBlend?: number | null }): boolean
   setPhysics(next: PhysicsSettings): void // project-wide physics-assist settings: one undo step
   beginGesture(): void; endGesture(): void
   inGesture: boolean // a slider/gizmo drag is under way (views may skip heavy recomputation until it ends)
@@ -813,8 +813,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       setRestLead: (itemId, patch) => tryEdit(p => {
         const f = findItem(p, itemId)
         if (!f || f.t.locked || f.t.kind !== 'motion') return false
-        const lim = { restHold: HOLD_RANGE, restBlend: BLEND_RANGE, inertia: [0, Math.min(INERTIA_CAP, f.it.trimIn)] } as const
-        for (const k of ['restHold', 'restBlend', 'inertia'] as const) {
+        const lim = { restHold: HOLD_RANGE, restBlend: BLEND_RANGE, inertia: [0, Math.min(INERTIA_CAP, f.it.trimIn)], tailHold: HOLD_RANGE, tailBlend: BLEND_RANGE } as const
+        for (const k of ['restHold', 'restBlend', 'inertia', 'tailHold', 'tailBlend'] as const) {
           const v = patch[k]
           if (v === undefined) continue
           if (v === null) delete f.it[k]

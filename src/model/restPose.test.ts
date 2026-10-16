@@ -3,7 +3,7 @@ import { expect, test } from 'vitest'
 import { evalCurve, makeKey } from './curve'
 import { newProject } from './defaults'
 import { evaluate, evaluateClip, type RobotDefs } from './evaluate'
-import { autoBlend, itemLead, itemTail, leadInPose, leadOf, prependRestPose, REST_BLEND, REST_HOLD, restClipFor } from './restPose'
+import { appendRestPose, autoBlend, itemLead, itemTail, leadInPose, leadOf, prependRestPose, REST_BLEND, REST_HOLD, restClipFor, tailOf } from './restPose'
 import { autoInertia, motionEnergy } from './inertia'
 import { footMat, legsOf, rootMat } from './legIk'
 import { samplePoses } from '../export/csv'
@@ -290,4 +290,45 @@ test('clip view of a 덧붙이기 piece: leadInPose plays its lead-in (차렷 fi
   const { playRange } = await import('../transport')
   s().openItem('i1')
   expect(playRange(s())).toEqual([it.start - lead, it.start + it.trimOut - it.trimIn + (itemTail(s().project, defs, it)?.tail ?? 0)])
+})
+
+// 끝 기본자세 that did not go naturally into the 차렷 (user): a flip leaves roll unwrapped at 2π, and a fast arm carried on far past it
+test('끝 기본자세: a body rolled a full lap (2π) settles at the nearest upright, it does not turn back a lap', () => {
+  const c: Clip = { id: 'flip', name: 'flip', robot: 'g1', length: 30, channels: { 'root.z': lin([0, 0.79], [29, 0.79]), 'root.roll': lin([0, 2 * Math.PI], [29, 2 * Math.PI + 0.02]) } }
+  const r = appendRestPose(c, g1, 0, 30, 30, 40)
+  for (let f = 29; f < 100; f++) expect(Math.abs(evalCurve(r.channels['root.roll'], f, 0) - 2 * Math.PI)).toBeLessThan(0.05)
+})
+
+test('끝 기본자세: a joint moving fast at the end carries on at most ~15° past where it was, then eases into the 차렷', () => {
+  const sp = 'left_shoulder_pitch_joint', si = g1.joints.findIndex(j => j.name === sp), R = g1.rest.q[si]
+  const c: Clip = { id: 'swing', name: 'swing', robot: 'g1', length: 30, channels: { 'root.z': lin([0, 0.79], [29, 0.79]), [sp]: lin([0, R - 1.5], [29, R - 1.5 + 29 * 0.1]) } } // 6°/frame away from 차렷 (unbounded carry: ~57° past)
+  const r = appendRestPose(c, g1, 0, 30, 30, 50), T = evalCurve(r.channels[sp], 29, 0)
+  const past = Math.max(...Array.from({ length: 50 }, (_, k) => evalCurve(r.channels[sp], 30 + k, 0) - T))
+  expect(past).toBeLessThan(0.3)
+  expect(evalCurve(r.channels[sp], 30, 0) - T).toBeGreaterThan(0.05) // still leaves with the motion's speed (no stop at the seam)
+})
+
+test('끝 기본자세 from a low end: 전이 자동 leaves time to stand up, not the last few frames (user: looked rushed)', () => {
+  const c: Clip = { id: 'low', name: 'low', robot: 'g1', length: 30, channels: { 'root.z': lin([0, g1.rest.z - 0.08], [29, g1.rest.z - 0.08]) } }
+  const tl = tailOf({ id: 'x', refId: c.id, start: 0, trimIn: 0, trimOut: 30, restTail: true }, c, g1)
+  expect(tl.blend).toBeGreaterThanOrEqual(45) // 8 cm at ≤ 0.36 m/s within half the 전이 (was 15: auto saw only joint speed)
+  const r = appendRestPose(c, g1, 0, 30, tl.hold, tl.blend), z = (f: number) => evalCurve(r.channels['root.z'], f, 0)
+  const e = 30 + tl.blend // first 정지 frame
+  expect(z(e - 10) - z(30)).toBeGreaterThan(0.06) // most of the rise is done 10 frames before the 정지
+})
+
+test('끝 기본자세 lengths (lane drag): setRestLead tailBlend / tailHold set the 전이 and 정지 after the piece, clamped, one undo', () => {
+  const { st, actor } = rpSetup([30, 110]), s = () => st.getState()
+  const it = () => s().project.sequence.tracks[0].items.find(i => i.id === 'i1')!
+  s().setRestTail('i1', true)
+  const auto = itemTail(s().project, defs, it())!
+  expect(s().setRestLead('i1', { tailBlend: 40, tailHold: 12 })).toBe(true)
+  expect(itemTail(s().project, defs, it())).toMatchObject({ blend: 40, hold: 12, tail: 52, blendOver: false })
+  const rows = samplePoses(s().project, defs, actor, 'i1', 'world')
+  expect(rows.length).toBe(80 + 52)
+  expect(s().setRestLead('i1', { tailHold: 999 })).toBe(true)
+  expect(it().tailHold).toBe(180)
+  s().undo(); expect(it().tailHold).toBe(12)
+  expect(s().setRestLead('i1', { tailBlend: null, tailHold: null })).toBe(true) // back to auto / 0.5 s
+  expect(itemTail(s().project, defs, it())).toEqual(auto)
 })

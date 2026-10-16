@@ -23,7 +23,7 @@ function measure(b: number) {
     const root = rootMat(p.rootPos[0], p.rootPos[1], p.rootPos[2], ro, pi, ya)
     feet.push(legs.map(l => { const m = footMat(l, root, p.q); return [m[3], m[7], m[11]] })); qs.push(p.q); xy.push([p.rootPos[0], p.rootPos[1], ya])
   }
-  const m = { slide: 0, hang: 0, sink: 0, speed: 0, drift: 0, rest: 0 }, run = legs.map(() => 0)
+  const m = { slide: 0, hang: 0, sink: 0, speed: 0, drift: 0, rest: 0, stop: 0 }, run = legs.map(() => 0)
   for (let k = 1; k < feet.length; k++) {
     feet[k].forEach((f, i) => {
       const g = feet[k - 1][i], d = Math.hypot(f[0] - g[0], f[1] - g[1], f[2] - g[2])
@@ -35,17 +35,21 @@ function measure(b: number) {
     m.speed = Math.max(m.speed, ...qs[k].map((v, j) => Math.abs(v - qs[k - 1][j]) * 60 / g1.joints[j].velocity))
     m.drift = Math.max(m.drift, Math.hypot(xy[k][0] - xy[0][0], xy[k][1] - xy[0][1]), Math.abs(xy[k][2] - xy[0][2]))
   }
+  // the step into the 정지 (user: 전이 → 기본자세 looked off: a nearly straight knee came in at full speed and stopped dead)
+  const h = feet.length - tl.hold
+  m.stop = Math.max(...qs[h - 1].map((v, j) => Math.abs(v - qs[h - 2][j]))) * 180 / Math.PI
   for (let k = feet.length - tl.hold; k < feet.length; k++) m.rest = Math.max(m.rest, ...qs[k].map((v, j) => Math.abs(v - g1.rest.q[j])))
   return { tl, m, air: !fc.support[b - 1] }
 }
 
-test('끝 기본자세 across Track1: no slide, hang, sink, drift or over-speed; ends standing', () => {
+test('끝 기본자세 across Track1: no slide, hang, sink, drift or over-speed; settles into standing', () => {
   const ends = Array.from({ length: Math.floor((clip.length - 400) / 400) }, (_, i) => 400 + i * 400)
   let checked = 0
   for (const b of ends) {
     const { tl, m, air } = measure(b), at = `end ${b} (전이 ${tl.blend})`
     expect(m.rest, `${at} last 0.5 s = 기본자세`).toBeLessThan(1e-6)
     expect(m.drift, `${at} drift`).toBeLessThan(1e-6)
+    expect(m.stop, `${at} last 전이 step (°/frame)`).toBeLessThan(1) // was 3–4 before the hand-over
     if (!air) checked++
     expect(m.slide, `${at} slide`).toBeLessThan(0.003)
     // a piece that ends with a foot in the air sets it down during the 전이, one foot after another: it may wait up there a moment

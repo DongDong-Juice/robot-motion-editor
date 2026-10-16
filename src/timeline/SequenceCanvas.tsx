@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { trackDrag } from './drag'
 import { getEditor, useEditor } from '../store/store'
 import { itemLen, sortedItems, pieceName, pieceTag } from '../model/sequence'
-import { itemLead, itemTail, previewRange, REST_BLEND, REST_HOLD } from '../model/restPose'
+import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP, itemLead, itemTail, previewRange, REST_BLEND, REST_HOLD } from '../model/restPose'
 import type { Item, Track } from '../model/types'
 import { offsetKeyCount } from '../model/itemClip'
 import { seqFlash, tv } from './viewState'
@@ -21,9 +21,12 @@ import { withDefaults } from '../physics/settings'
 import { badge, drawAssist, segmentAt, seqFrameOf, treeSuffix, treeTag, WARN_RED } from './physGraph'
 import { drawHScrollbar, drawScrollbar, pressScrollbar, SB_W, sbGeom } from './vscroll'
 
-const ROW_H = 28, EDGE = 6
+const ROW_H = 28, EDGE = 6, LEN_EDGE = 4 // px: piece trim handle, lead-in / 끝 block edge
 const DENY = '이 위치에 놓을 수 없습니다'
 const LOCKED = '잠긴 트랙입니다'
+// lead-in / 끝 기본자세 blocks in a lane: the outer edge of each one drags its length (user)
+type LenKey = 'restHold' | 'restBlend' | 'inertia' | 'tailBlend' | 'tailHold'
+const LEN_NAME: Record<LenKey, string> = { restHold: '기본자세', restBlend: '전이', inertia: '관성', tailBlend: '끝 전이', tailHold: '끝 기본자세' }
 const ICON_HIT = 18 // hit area; icons are drawn 14px: (motion) path, eye, padlock at the label column's right edge
 const TRAIL_X = LABEL_W - 56, EYE_X = LABEL_W - 36, LOCK_X = LABEL_W - 16
 const TRI_W = 18, NAME_X = 20, CHILD_X = NAME_X + 16 // disclosure triangle hit width; track / child label x
@@ -153,8 +156,10 @@ export default function SequenceCanvas() {
     // lead-in / tail lengths walk the whole clip (foot contact, motion amount): during a slider or gizmo drag the lanes keep the
     // lengths from the drag start and catch up when it ends
     const leads = new Map<string, ReturnType<typeof itemLead>>(), tails = new Map<string, ReturnType<typeof itemTail>>()
-    const leadOf = (it: Item) => { const s = ed.getState(); if (!s.inGesture || !leads.has(it.id)) leads.set(it.id, itemLead(s.project, s.defs, it)); return leads.get(it.id)! }
-    const tailOf = (it: Item) => { const s = ed.getState(); if (!s.inGesture || !tails.has(it.id)) tails.set(it.id, itemTail(s.project, s.defs, it)); return tails.get(it.id)! }
+    let lenDrag: { itemId: string; key: LenKey; value: number } | null = null // a block edge being dragged: drawn with that length
+    const dragged = (it: Item) => lenDrag?.itemId === it.id ? { ...it, [lenDrag.key]: lenDrag.value } : null
+    const leadOf = (it: Item) => { const s = ed.getState(), d = dragged(it); if (d) return itemLead(s.project, s.defs, d); if (!s.inGesture || !leads.has(it.id)) leads.set(it.id, itemLead(s.project, s.defs, it)); return leads.get(it.id)! }
+    const tailOf = (it: Item) => { const s = ed.getState(), d = dragged(it); if (d) return itemTail(s.project, s.defs, d); if (!s.inGesture || !tails.has(it.id)) tails.set(it.id, itemTail(s.project, s.defs, it)); return tails.get(it.id)! }
     seqFlash.fn = (text, itemId) => flash(text, layout().findIndex(r => !r.it && r.t.items.some(i => i.id === itemId)))
 
     const draw = () => {
@@ -353,6 +358,38 @@ export default function SequenceCanvas() {
       return it ? { t, it, mode: 'move' as Drag['mode'] } : null
     }
 
+    // the lead-in / 끝 기본자세 block edge under (x, y) in a lane: lead-in blocks by their left edge (the piece start stays put), 끝
+    // blocks by their right edge; never over the bar itself (its ends trim the piece)
+    const lenEdgeAt = (x: number, y: number) => {
+      const r = layout()[rowAt(y)]
+      if (!r?.it || r.t.locked || isVideo(r.t) || x < LABEL_W) return null
+      const it = r.it, sc = scale(), s0 = frameToX(sc, it.start), s1 = frameToX(sc, it.start + itemLen(it))
+      if (x >= s0 && x <= s1) return null
+      const cand: [LenKey, number, number][] = [] // key, edge x, current length
+      const ld = it.restPose === 'prepend' ? leadOf(it) : null, tl = tailOf(it)
+      if (ld) { const x0 = s0 - ld.lead * tv.ppf; cand.push(['restHold', x0, ld.hold], ['restBlend', x0 + ld.hold * tv.ppf, ld.blend], ['inertia', x0 + (ld.hold + ld.blend) * tv.ppf, ld.inertia]) }
+      if (tl) cand.push(['tailBlend', s1 + tl.blend * tv.ppf, tl.blend], ['tailHold', s1 + tl.tail * tv.ppf, tl.hold])
+      let best: { key: LenKey; value: number; d: number; t: Track; it: Item } | null = null
+      for (const [key, ex, value] of cand) { const d = Math.abs(x - ex); if (d <= LEN_EDGE && (!best || d < best.d)) best = { key, value, d, t: r.t, it } }
+      return best
+    }
+    const lenDragFrom = (e: MouseEvent, h: NonNullable<ReturnType<typeof lenEdgeAt>>, row: number) => {
+      const x = pos(e).x, s = ed.getState(), sign = h.key.startsWith('tail') ? 1 : -1 // lead-in edges grow leftwards
+      const [lo, hi] = h.key === 'inertia' ? [0, Math.min(INERTIA_CAP, h.it.trimIn)] : h.key.endsWith('Hold') ? HOLD_RANGE : BLEND_RANGE
+      s.selectItem(h.it.id)
+      if (h.t.actorId) s.select(h.t.actorId)
+      const at = (m: MouseEvent) => Math.min(Math.max(h.value + sign * Math.round((pos(m).x - x) / tv.ppf), lo), hi)
+      track(m => {
+        const v = at(m)
+        if (v !== (lenDrag?.value ?? h.value)) { lenDrag = { itemId: h.it.id, key: h.key, value: v }; flash(`${LEN_NAME[h.key]} ${v}프레임 (${(v / 60).toFixed(2)}초)`, row); schedule() }
+      }, m => {
+        const v = at(m)
+        lenDrag = null
+        if (v !== h.value && !ed.getState().setRestLead(h.it.id, { [h.key]: v })) flash(h.t.locked ? LOCKED : DENY, row)
+        schedule()
+      }, () => { lenDrag = null; schedule() })
+    }
+
     // right-drag: a 구간 프리뷰 of that span opens and loops (user); a right-click without a drag keeps its menu (onContext)
     let loopDragged = false
     const loopDrag = (e: MouseEvent) => {
@@ -404,6 +441,8 @@ export default function SequenceCanvas() {
         else if (t.actorId) s.select(t.actorId)
         return
       }
+      const le = lenEdgeAt(x, y)
+      if (le) { lenDragFrom(e, le, row); return }
       const hit = itemAt(x, y)
       if (!hit) {
         s.selectItem(null); s.setFrame(frameAt(x))
@@ -482,11 +521,11 @@ export default function SequenceCanvas() {
       if (over !== sbHover) { sbHover = over; schedule() }
       if (overH !== hbHover) { hbHover = overH; schedule() }
       if (over || overH) { canvas.style.cursor = ''; if (!edgeDrag) edge.stop(); return }
-      const h = itemAt(x, y)
-      canvas.style.cursor = h && h.mode !== 'move' ? 'ew-resize' : ''
+      const h = itemAt(x, y), le = lenEdgeAt(x, y)
+      canvas.style.cursor = le || (h && h.mode !== 'move') ? 'ew-resize' : ''
       // hover help for the track label icons
       const r = x < LABEL_W && y >= RULER_H ? layout()[rowAt(y)] : undefined, near = (ix: number) => Math.abs(x - ix) <= ICON_HIT / 2
-      const tip = !r ? '' : r.it ? (near(EYE_X) ? '이 조각 숨기기' : laneTip(r.t, r.it))
+      const tip = le ? `끌어서 ${LEN_NAME[le.key]} 길이 조절 (${le.value}프레임)` : !r ? '' : r.it ? (near(EYE_X) ? '이 조각 숨기기' : laneTip(r.t, r.it))
         : !isVideo(r.t) && near(TRAIL_X) ? '경로 표시: 이 로봇의 골반이 지나간 바닥 경로를 메인 화면에 선으로 보여 줍니다'
         : near(EYE_X) ? '숨기기' : near(LOCK_X) ? '잠그기' : ''
       if (canvas.title !== tip) canvas.title = tip

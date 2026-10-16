@@ -124,6 +124,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
         if (it.restHold !== undefined && !(int(it.restHold) && it.restHold >= 0)) fail(`${it_}.restHold`)
         if (it.restBlend !== undefined && it.restBlend !== 'auto' && !(int(it.restBlend) && it.restBlend >= 0)) fail(`${it_}.restBlend`)
         if (it.inertia !== undefined && !(int(it.inertia) && it.inertia >= 0)) fail(`${it_}.inertia`)
+        for (const k of ['tailHold', 'tailBlend']) if (it[k] !== undefined && !(int(it[k]) && it[k] >= 0)) fail(`${it_}.${k}`)
         if (itemIds.has(it.id)) fail(`${it_}.id`, '중복된 ID입니다')
         itemIds.add(it.id)
         if (t.kind === 'video') {
