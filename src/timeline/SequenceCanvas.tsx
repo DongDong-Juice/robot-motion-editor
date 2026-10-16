@@ -303,6 +303,10 @@ export default function SequenceCanvas() {
       }
       drawRuler(ctx, sc, W, RULER_H, s.project.sequence, s.frame, C, true)
       const px = Math.round(frameToX(sc, s.frame)) + 0.5
+      if (s.spanPreview) { // the 구간 프리뷰's span, over the ruler and the rows
+        const a = Math.max(frameToX(sc, s.spanPreview[0]), LABEL_W), b = frameToX(sc, s.spanPreview[1])
+        if (b > a) { ctx.save(); ctx.fillStyle = C.accent; ctx.globalAlpha = 0.25; ctx.fillRect(a, 0, b - a, RULER_H - 1); ctx.globalAlpha = 0.07; ctx.fillRect(a, RULER_H, b - a, H - RULER_H); ctx.restore() }
+      }
       if (px >= LABEL_W) { ctx.fillStyle = C.accent; ctx.fillRect(px - 0.5, RULER_H, 1, H - RULER_H) }
       if (s.itemPreview) { // the clip preview's own playhead
         const qx = Math.round(frameToX(sc, s.previewFrame)) + 0.5
@@ -349,7 +353,23 @@ export default function SequenceCanvas() {
       return it ? { t, it, mode: 'move' as Drag['mode'] } : null
     }
 
+    // right-drag: a 구간 프리뷰 of that span opens and loops (user); a right-click without a drag keeps its menu (onContext)
+    let loopDragged = false
+    const loopDrag = (e: MouseEvent) => {
+      const x0 = pos(e).x, s = ed.getState(), f0 = frameAt(x0)
+      let started = false
+      loopDragged = false // a contextmenu that never came must not swallow this press's menu
+      const set = (m: MouseEvent) => {
+        const x1 = pos(m).x
+        if (!started && Math.abs(x1 - x0) < 4) return
+        started = true
+        const f1 = frameAt(x1)
+        s.setSpanPreview([Math.min(f0, f1), Math.max(f0, f1) + 1])
+      }
+      track(set, m => { set(m); loopDragged = started }, () => {})
+    }
     const onDown = (e: MouseEvent) => {
+      if (e.button === 2) { loopDrag(e); return }
       if (e.button !== 0) return
       canvas.focus()
       const { x, y } = pos(e), s = ed.getState(), row = rowAt(y)
@@ -435,6 +455,7 @@ export default function SequenceCanvas() {
 
     const onContext = (e: MouseEvent) => {
       const { x, y } = pos(e), s = ed.getState()
+      if (loopDragged) { loopDragged = false; e.preventDefault(); return } // the right-drag set a loop span: no menu
       if (y >= RULER_H) { // motion item (bar or child row): item menu; motion track label: track menu
         const r = layout()[rowAt(y)]
         if (r && !r.it && x < LABEL_W && r.t.actorId && !isVideo(r.t)) { e.preventDefault(); setCtx({ x: e.clientX, y: e.clientY, actorId: r.t.actorId, trackId: r.t.id, itemId: null }); return }
@@ -445,6 +466,7 @@ export default function SequenceCanvas() {
       e.preventDefault()
       const mi = hitMarker(s.project.sequence, scale(), x)
       if (mi !== null) s.deleteMarker(mi)
+      else if (s.spanPreview) s.setSpanPreview(null) // ruler right-click: the 구간 프리뷰 closes
     }
 
     const hover = hoverScrub(() => ed.getState().frame, f => { markHover(); ed.getState().setFrame(f) })

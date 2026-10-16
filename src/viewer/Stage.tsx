@@ -49,7 +49,7 @@ interface Entry { rig: RobotRig; trail: THREE.Line; dot: THREE.Points; ghost: bo
  * With `itemId` + `range`, an item with 기본자세 덧붙이기 plays its lead-in clip instead (preview only).
  * With `range` = [from, to) clip frames, the compare robot shows that range, root re-based so frame `from` sits at the origin: with `itemId` it follows
  * the main playhead (item start = `from`), else it loops on its own 60 fps clock. */
-export default function Stage({ compareClipId: cid, range, itemId, children }: { compareClipId?: string; range?: [number, number]; itemId?: string; children?: ReactNode }) {
+export default function Stage({ compareClipId: cid, range, itemId, span, children }: { compareClipId?: string; range?: [number, number]; itemId?: string; span?: boolean /* 구간 프리뷰: the store's spanPreview frames looped, every robot, read-only */; children?: ReactNode }) {
   const [lo, hi] = range ?? [0, 0]
   const host = useRef<HTMLDivElement>(null)
   // 로봇 따라가기: per-pane local UI state, read by the render loop through a ref
@@ -96,15 +96,16 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
     const editPane = !!(cid && itemId && hi > lo)
     const paneActor = editPane ? store.getState().project.sequence.tracks.find(t => t.items.some(i => i.id === itemId))?.actorId : undefined
     const paneKey = paneActor ?? cid
-    if (!cid || editPane) scene.add(tc.getHelper())
+    const mainView = !cid && !span // the editable main view (picking, gizmo, overlay)
+    if (mainView || editPane) scene.add(tc.getHelper())
     // dev/e2e hook
     // dev/e2e hook: __stage = main pane, __stages = every pane by key ('main' or the compare clip id)
     const hook = { camera, tc, entries: () => entries, renderer, camTarget: () => orbit.target.toArray(), overlay: () => overlay?.rig ?? null }
-    const hookKey = ranged ? 'preview' : cid ?? 'main'
+    const hookKey = span ? 'span' : ranged ? 'preview' : cid ?? 'main'
     if (import.meta.env.DEV) {
       const w = window as any
       ;(w.__stages ??= {})[hookKey] = hook
-      if (!cid) w.__stage = hook
+      if (mainView) w.__stage = hook
     }
 
     let dirty = true, raf = 0
@@ -129,7 +130,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
     // 원본 | 수정본 비교: the compared piece is drawn as its original here (the 수정본 is in the preview pane, or ghosted)
     const viewProject = (s: ReturnType<typeof store.getState>) => s.previewEdit && s.itemPreview ? withUse(s.project, s.itemPreview, 'original') : s.project
     // the actors drawn here: the project's, or (클립 편집 모드) the virtual one for the open clip
-    const viewActors = (s: ReturnType<typeof store.getState>) => s.clipEdit ? [actorOf(s, CLIP_ACTOR)].filter(a => !!a) : s.project.actors
+    const viewActors = (s: ReturnType<typeof store.getState>) => s.clipEdit && !span ? [actorOf(s, CLIP_ACTOR)].filter(a => !!a) : s.project.actors
     // 클립 편집: the clip as edited (baseClip), or while 원본 보기 is held the original
     const clipEditPose = (s: ReturnType<typeof store.getState>, original: boolean) => {
       const clip = original ? s.project.clips[s.clipEdit!] : baseClip(s.project, s.defs, s.clipEdit!)!
@@ -148,7 +149,24 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       const ep = withUse(s.project, s.itemPreview!, null), ei = editingItem(s), t = ei && ei.actorId === a.id ? editTarget(s, a.id) : null
       overlay.rig.applyPose(t ? evaluateItem(ep, s.defs, t.itemId, t.f) : evaluate(ep, s.defs, a.id, s.frame))
     }
+    const spanT0 = performance.now()
     const applyAll = () => {
+      if (span) { // 구간 프리뷰: the stored sequence on its own loop over spanPreview (read each frame: a right-drag reshapes it live)
+        const s = store.getState(), sp = s.spanPreview
+        if (!sp) return
+        const f = sp[0] + Math.floor((performance.now() - spanT0) * 60 / 1000) % Math.max(sp[1] - sp[0], 1)
+        for (const a of s.project.actors) {
+          const e = entries.get(a.id)
+          if (!e) continue
+          const hid = offStage({ ...s, frame: f, editing: null }, a.id)
+          e.rig.root.visible = e.dot.visible = !hid; e.trail.visible = false
+          if (hid) continue
+          const pose = evaluate(s.project, s.defs, a.id, f)
+          e.rig.applyPose(pose); e.dot.position.set(pose.rootPos[0], pose.rootPos[1], 0.002)
+        }
+        dirty = true
+        return
+      }
       const s = store.getState(), vp = viewProject(s)
       const ei = editingItem(s)
       for (const a of viewActors(s)) {
@@ -173,7 +191,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
         e.rig.applyPose(pose)
         e.dot.position.set(pose.rootPos[0], pose.rootPos[1], 0.002)
       }
-      if (!cid) applyOverlay(s)
+      if (mainView) applyOverlay(s)
       dirty = true
     }
 
@@ -367,7 +385,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
     rings[0].rotation.y = Math.PI / 2; rings[1].rotation.x = Math.PI / 2
     axisRings.add(...rings); axisRings.visible = viewRing.visible = false
     ;(viewRing.material as THREE.MeshBasicMaterial).opacity = 0.55
-    if (!cid || editPane) scene.add(axisRings, viewRing)
+    if (mainView || editPane) scene.add(axisRings, viewRing)
     const ringQ = new THREE.Quaternion()
     let ringPx = 0
     const updateRings = () => {
@@ -431,7 +449,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       if (best) store.getState().select(best.id, best.via)
       else store.getState().select(null)
     }
-    if (!cid || editPane) { dom.addEventListener('pointerdown', onDown); dom.addEventListener('pointerup', onUp) }
+    if (mainView || editPane) { dom.addEventListener('pointerdown', onDown); dom.addEventListener('pointerup', onUp) }
 
     const onKey = (ev: KeyboardEvent) => {
       const v = VIEWS[ev.key]
@@ -439,7 +457,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
         const d = camera.position.distanceTo(orbit.target)
         camera.position.copy(followRef.current ? orbit.target : target).add(new THREE.Vector3(...v).normalize().multiplyScalar(d))
         orbit.update()
-      } else if (!cid && ev.key.toLowerCase() === 'r' && store.getState().sel.channel?.startsWith('root')) {
+      } else if (mainView && ev.key.toLowerCase() === 'r' && store.getState().sel.channel?.startsWith('root')) {
         rootMode = rootMode === 'translate' ? 'rotate' : 'translate'
         syncSelection()
       }
@@ -457,7 +475,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
     ro.observe(el)
 
     let wasLocked = false
-    if (cid) { syncClip(); applyClip(); if (editPane) syncSelection() } else { syncActors(); applyAll(); syncSelection() }
+    if (cid) { syncClip(); applyClip(); if (editPane) syncSelection() } else { syncActors(); applyAll(); if (mainView) syncSelection() }
     const unsub = store.subscribe((s, prev) => {
       if (cid) {
         if (s.project !== prev.project) { syncClip(); shownF = -1 }
@@ -467,6 +485,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       }
       if (s.project !== prev.project || s.clipEdit !== prev.clipEdit) syncActors()
       applyAll()
+      if (span) return // read-only: no selection or gizmo
       const key = (p: typeof s.project) => p.actors.map(a => a.id + a.robot).join() + (s.clipEdit ?? '')
       const lk = locked()
       if (s.sel !== prev.sel || key(s.project) !== key(prev.project) || lk !== wasLocked) syncSelection()
@@ -501,6 +520,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
         dirty = true
       }
       if (cid) applyClip() // panes play on their own (item preview: its own playhead; ⇄ 비교: a loop)
+      else if (span) applyAll() // 구간 프리뷰: its own loop
       followCam()
       if (!dirty) return
       dirty = false
@@ -530,7 +550,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
         if (w.__stage === hook) delete w.__stage
       }
     }
-  }, [cid, lo, hi, itemId])
+  }, [cid, lo, hi, itemId, span])
 
   return (
     <>
