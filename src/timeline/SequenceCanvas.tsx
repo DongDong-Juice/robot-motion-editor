@@ -19,7 +19,8 @@ import { usePhysics } from '../physics/physicsStore'
 import { runItems, stale } from '../physics/runItem'
 import { withDefaults } from '../physics/settings'
 import { badge, drawAssist, segmentAt, seqFrameOf, treeSuffix, treeTag, DIM, WARN_RED } from './physGraph'
-import { drawHScrollbar, drawScrollbar, pressScrollbar, SB_W, sbGeom } from './vscroll'
+import { drawScrollbar, pressScrollbar, SB_W, sbGeom } from './vscroll'
+import { drawMinimap, MM_H, mmDrag, mmFit, mmGeom, mmHit, type MmHit } from './minimap'
 
 const ROW_H = 28, EDGE = 6, LEN_EDGE = 4 // px: piece trim handle, lead-in / 끝 block edge
 const DENY = '이 위치에 놓을 수 없습니다'
@@ -114,7 +115,7 @@ export default function SequenceCanvas() {
     const col = (n: string) => css.getPropertyValue(n).trim()
     const C = { bg: col('--bg'), panel: col('--panel'), line: col('--line'), text: col('--text'), accent: col('--accent'), rest: col('--rest'), piece: col('--piece'), inertia: col('--inertia'), blend: col('--blend') }
     let W = 0, H = 0, raf = 0, drag: Drag | null = null, ghost: { y: number; start: number; len: number; color: string } | null = null, timer = 0, scrollY = 0, scrollTo = 0 // rows: shown offset, and where the wheel is easing it to
-    let sbHover = false, sbDrag = false, hbHover = false, hbDrag = false
+    let sbHover = false, sbDrag = false, mmHover: MmHit | null = null, mmDragging = false
 
     const scale = (): TimeScale => ({ x0: LABEL_W - tv.scrollF * tv.ppf, pxPerFrame: tv.ppf })
     // V1 (always first) only shows once the project has media
@@ -139,12 +140,9 @@ export default function SequenceCanvas() {
       }
       return out
     }
-    // horizontal scrollbar under the lanes (px along x): the sequence plus half a screen of room after its end; null when it all fits
-    const hbar = () => {
-      const vis = (W - SB_W - LABEL_W) / tv.ppf, end = sequenceEnd(ed.getState().project) + vis / 2
-      return sbGeom(LABEL_W, W - SB_W, Math.max(end, tv.scrollF + vis) * tv.ppf, tv.scrollF * tv.ppf)
-    }
-    const hbH = () => hbar() ? SB_W : 0 // rows end above it
+    // minimap under the lanes (spec: the whole sequence plus half a screen, the visible window boxed), always shown
+    const mm = () => mmGeom(LABEL_W, W - SB_W, sequenceEnd(ed.getState().project), tv.scrollF, tv.ppf)
+    const hbH = () => MM_H // rows end above it
     const maxScroll = () => Math.max(0, layout().reduce((a, r) => a + r.h, 0) - (H - hbH() - RULER_H)) // 0 when the rows fit
     const sbar = () => sbGeom(RULER_H, H - hbH(), layout().reduce((a, r) => a + r.h, 0), scrollY) // vertical scrollbar, null when the rows fit
     const flash = (text: string, row: number) => {
@@ -329,8 +327,11 @@ export default function SequenceCanvas() {
       ctx.fillStyle = C.line; ctx.fillRect(LABEL_W - 1, 0, 1, H)
       const sb = sbar()
       if (sb) drawScrollbar(ctx, W, sb, sbHover, sbDrag, C)
-      const hb = hbar()
-      if (hb) drawHScrollbar(ctx, H, hb, hbHover, hbDrag, C)
+      const end = sequenceEnd(s.project), mmTracks = tracks().map(t => ({
+        color: isVideo(t) ? DIM : s.project.actors.find(a => a.id === t.actorId)?.color ?? C.text,
+        spans: shown(t).map(i => [i.start, i.start + itemLen(i)] as [number, number]) }))
+      drawMinimap(ctx, mm(), H - MM_H, tv.scrollF, mmTracks, { frame: s.frame, inF: s.project.sequence.inF, outF: s.project.sequence.outF,
+        markers: s.project.sequence.markers.map(m => m.f) }, `전체 ${mss(end)}`, LABEL_W, mmHover, mmDragging, { ...C, dim: DIM })
     }
     const schedule = () => { if (!raf) raf = requestAnimationFrame(draw) }
     redraw.current = schedule
@@ -427,9 +428,15 @@ export default function SequenceCanvas() {
       }
       const sb = sbar()
       if (sb && x >= W - SB_W) { pressScrollbar(sb, y, scrollY, v => { scrollY = scrollTo = v; schedule() }, on => { sbDrag = on; schedule() }, track, m => pos(m).y); return }
-      const hb = hbar()
-      if (hb && y >= H - SB_W && x >= LABEL_W) {
-        pressScrollbar(hb, x, tv.scrollF * tv.ppf, v => { markUserScroll(); tv.scrollF = v / tv.ppf; schedule() }, on => { hbDrag = on; schedule() }, track, m => pos(m).x)
+      if (y >= H - MM_H) { // minimap: drag the window (move / an edge = zoom); outside = centre the window there, then drag it
+        if (x < LABEL_W) return
+        const g = mm(), hit = mmHit(g, tv.scrollF, x), view = W - SB_W - LABEL_W
+        if (hit === 'outside') tv.scrollF = Math.min(Math.max(g.total * (x - g.x0) / (g.x1 - g.x0) - g.vis / 2, 0), Math.max(0, g.total - g.vis))
+        const kind = hit === 'outside' ? 'move' : hit, at = { scrollF: tv.scrollF, vis: g.vis }, before = { scrollF: tv.scrollF, ppf: tv.ppf }
+        const apply = (w: { scrollF: number; vis: number }) => { markUserScroll(); tv.scrollF = w.scrollF; if (kind !== 'move') tv.ppf = view / w.vis; schedule() }
+        markUserScroll(); mmDragging = true; schedule()
+        track(m => apply(mmDrag(g, at, kind, pos(m).x - x)), () => { mmDragging = false; schedule() },
+          () => { tv.scrollF = before.scrollF; tv.ppf = before.ppf; mmDragging = false; schedule() })
         return
       }
       const r = layout()[row]
@@ -492,6 +499,10 @@ export default function SequenceCanvas() {
 
     const onDbl = (e: MouseEvent) => {
       const { x, y } = pos(e), s = ed.getState()
+      if (y >= H - MM_H) { // minimap: fit the whole sequence
+        if (x >= LABEL_W) { const f = mmFit(W - SB_W - LABEL_W, sequenceEnd(s.project)); markUserScroll(); tv.scrollF = f.scrollF; tv.ppf = f.ppf; schedule() }
+        return
+      }
       if (y < RULER_H) {
         const mi = hitMarker(s.project.sequence, scale(), x)
         if (mi !== null) { cancel.current = false; setRename({ index: mi, left: Math.max(LABEL_W, x - 55), value: s.project.sequence.markers[mi].name }) }
@@ -531,10 +542,10 @@ export default function SequenceCanvas() {
     const scrubEnd = () => { edgeDrag = false; edge.stop() }
     const onMove = (e: MouseEvent) => {
       const { x, y } = pos(e), over = y >= RULER_H && x >= W - SB_W && !!sbar()
-      const overH = !over && y >= H - SB_W && x >= LABEL_W && !!hbar()
+      const overH = !over && y >= H - MM_H, hit = overH && x >= LABEL_W ? mmHit(mm(), tv.scrollF, x) : null
       if (over !== sbHover) { sbHover = over; schedule() }
-      if (overH !== hbHover) { hbHover = overH; schedule() }
-      if (over || overH) { canvas.style.cursor = ''; if (!edgeDrag) edge.stop(); return }
+      if (hit !== mmHover) { mmHover = hit; schedule() }
+      if (over || overH) { canvas.style.cursor = hit === 'left' || hit === 'right' ? 'ew-resize' : hit === 'move' ? 'grab' : ''; if (!edgeDrag) edge.stop(); return }
       const h = itemAt(x, y), le = lenEdgeAt(x, y)
       canvas.style.cursor = le || (h && h.mode !== 'move') ? 'ew-resize' : ''
       // hover help for the track label icons
@@ -597,7 +608,7 @@ export default function SequenceCanvas() {
 
     canvas.addEventListener('mousedown', onDown)
     canvas.addEventListener('mousemove', onMove)
-    const onLeave = () => { if (!edgeDrag) edge.stop(); if (sbHover || hbHover) { sbHover = hbHover = false; schedule() } }
+    const onLeave = () => { if (!edgeDrag) edge.stop(); if (sbHover || mmHover) { sbHover = false; mmHover = null; schedule() } }
     canvas.addEventListener('mouseleave', onLeave)
     canvas.addEventListener('dblclick', onDbl)
     canvas.addEventListener('contextmenu', onContext)

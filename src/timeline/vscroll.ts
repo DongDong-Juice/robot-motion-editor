@@ -25,19 +25,6 @@ export function drawScrollbar(ctx: CanvasRenderingContext2D, W: number, g: SbGeo
   ctx.restore()
 }
 
-// Horizontal variant at the canvas' bottom edge (geometry from sbGeom along x: top = left, view = width, ty/th = thumb x/width).
-// Slimmer than the vertical bar so it stays out of the way until hovered.
-export function drawHScrollbar(ctx: CanvasRenderingContext2D, H: number, g: SbGeom, hover: boolean, drag: boolean,
-  C: { panel: string; text: string; accent: string }) {
-  const h = hover || drag ? 8 : 4, y = H - SB_W / 2 - h / 2
-  ctx.save()
-  ctx.fillStyle = C.panel; ctx.globalAlpha = hover || drag ? 0.9 : 0.35
-  ctx.beginPath(); ctx.roundRect(g.top + 2, y, g.view - 4, h, h / 2); ctx.fill()
-  ctx.fillStyle = drag ? C.accent : C.text; ctx.globalAlpha = drag ? 0.9 : hover ? 0.55 : 0.25
-  ctx.beginPath(); ctx.roundRect(g.ty + 2, y, g.th - 4, h, h / 2); ctx.fill()
-  ctx.restore()
-}
-
 // Mouse down on the bar at canvas y (x for the horizontal bar): a click on the groove pages toward it, then the thumb follows the mouse.
 // Cancelling (Ctrl+Z / Esc during the drag) restores the scroll from before the press.
 export function pressScrollbar(g: SbGeom, y: number, scrollY: number, set: (v: number) => void, dragging: (on: boolean) => void,
