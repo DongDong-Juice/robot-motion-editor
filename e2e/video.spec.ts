@@ -38,7 +38,8 @@ const open = async (page: Page) => {
 const importVideo = async (page: Page) => {
   const [fc] = await Promise.all([page.waitForEvent('filechooser'), menu(page, '영상 가져오기')])
   await fc.setFiles(file)
-  await expect(page.locator('.pp-media')).toHaveCount(1)
+  await page.getByRole('tab', { name: '영상' }).click()
+  await expect(page.locator('.pp-row[data-kind=media]')).toHaveCount(1)
 }
 
 test('import video auto-places on V1 in split view, scrub syncs', async ({ page }) => {
@@ -89,7 +90,7 @@ test('save/reopen marks media offline, relink restores', async ({ page }) => {
   const name = downloads[0].suggestedFilename()
 
   await menu(page, '새 프로젝트')
-  await expect(page.locator('.pp-media')).toHaveCount(0)
+  await expect(page.locator('.pp-row[data-kind=media]')).toHaveCount(0)
   const [fc] = await Promise.all([page.waitForEvent('filechooser'), menu(page, '열기')])
   await fc.setFiles([{ name, mimeType: 'application/json', buffer: saved }])
   await expect(page.getByText('오프라인').first()).toBeVisible()

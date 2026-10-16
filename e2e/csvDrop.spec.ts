@@ -30,7 +30,7 @@ test('drop CSV files on the 목록 panel to import them', async ({ page }) => {
   await expect(page.locator('.pp-drop')).toHaveCount(0)
   await expect(panel).toContainText('클립 1개를 가져왔습니다')
   await expect(panel).toContainText('note.txt: CSV 파일만 끌어다 놓을 수 있습니다')
-  await expect(panel.locator('.pp-card .pp-name')).toHaveText(['walk'])
+  await expect(panel.locator('.pp-row[data-kind=clip] .pp-name')).toHaveText(['walk'])
   expect(await page.evaluate(() => (window as any).__editor.getState().project.sequence.tracks.some((t: any) => t.items.length))).toBe(true)
 
   await drop([{ name: 'x.txt', text: 'x' }]) // nothing importable: only the skip line

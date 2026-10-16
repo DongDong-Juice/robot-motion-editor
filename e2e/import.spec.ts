@@ -60,7 +60,7 @@ test('headed CSV import creates the G1 actor; export reproduces the input', asyn
   // headed: no fps dialog, imported straight away
   await expect(page.locator('.pp-msg')).toContainText('클립 1개를 가져왔습니다')
   await expect(page.locator('dialog.pp-dlg[open]')).toHaveCount(0)
-  await expect(page.locator('.pp-tag')).toHaveText('G1')
+  await expect(page.locator('.pp-row[data-kind=clip] .pp-col-robot')).toHaveText('G1')
 
   const placed = await page.evaluate(() => {
     const p = (window as any).__editor.getState().project

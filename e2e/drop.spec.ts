@@ -25,7 +25,7 @@ test('drop: card onto a track appends after the overlapped item; empty area make
   expect(await tracks(page)).toEqual([[[0, 120]]]) // second CSV went to the assets only
 
   const seq = page.locator('.seq-canvas')
-  const card = page.locator('.pp-card', { hasText: 'b' }).first()
+  const card = page.locator('.pp-row[data-kind=clip]', { hasText: 'b' }).first()
   const box = (await seq.boundingBox())!
   await card.dragTo(seq, { targetPosition: { x: 250, y: 24 + 14 } }) // over item a, never overlapping it
   expect(await tracks(page)).toEqual([[[0, 120], [120, 60]]])

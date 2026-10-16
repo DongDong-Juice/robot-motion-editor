@@ -17,7 +17,7 @@ test('클립 편집: joint panel edit → 수정 층, CSV 저장 = main pose, or
   const ch = 'left_knee_joint', j = joints.indexOf(ch)
   const before = await page.evaluate(() => { const s = (window as any).__editor.getState(); s.setFrame(40); return JSON.stringify(Object.values(s.project.clips)[0]) })
 
-  await page.locator('.pp-card', { hasText: 'ce' }).dblclick({ position: { x: 150, y: 50 } })
+  await page.locator('.pp-row[data-kind=clip]', { hasText: 'ce' }).dblclick()
   const bar = page.getByRole('group', { name: '클립 편집' })
   await expect(bar).toBeVisible()
   await page.evaluate(ch => { const s = (window as any).__editor.getState(); s.setFrame(100); s.select('__clip_actor__', ch) }, ch)
@@ -43,7 +43,7 @@ test('클립 편집: joint panel edit → 수정 층, CSV 저장 = main pose, or
   expect(st.offsetKeys).toBeGreaterThan(0)
   expect(st.base).toBeCloseTo(rad, 3)
   expect(st.piece).toBeCloseTo(rad, 3) // every piece of the clip plays the change
-  await expect(page.locator('.pp-card .pp-mod')).toBeVisible()
+  await expect(page.locator('.pp-row[data-kind=clip] .pp-mod')).toBeVisible()
 
   // CSV 저장: the row at frame 100 has the edited value
   await bar.getByRole('button', { name: 'CSV 저장' }).click()
