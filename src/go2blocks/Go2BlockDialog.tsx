@@ -3,7 +3,8 @@ import { useEditor } from '../store/store'
 import Go2BlockPanel from './Go2BlockPanel'
 
 // 메뉴 ▸ GO2 블럭 추가…: the block panel for any project, with or without a GO2. Blocks go to the end of the chosen
-// GO2's track, or (새 GO2 로봇) to a new GO2 actor from 0 s; after that the dialog keeps appending to that actor.
+// GO2's track, or (새 GO2 로봇) to a new GO2 actor from 0 s; after that the dialog keeps appending to that actor. 목록에만 추가: the
+// clip goes into the asset list only, nothing on the sequence (user: register now, place later).
 export default function Go2BlockDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null)
   const actors = useEditor(s => s.project.actors), selId = useEditor(s => s.sel.actorId)
@@ -24,7 +25,7 @@ export default function Go2BlockDialog({ open, onClose }: { open: boolean; onClo
   }, [open])
 
   // a target that disappeared (undo of the new actor, deleted track) falls back to the first GO2, else a new one
-  const t = target !== 'new' && !go2s.some(a => a.id === target) ? go2s[0]?.id ?? 'new' : target
+  const t = target !== 'new' && target !== 'asset' && !go2s.some(a => a.id === target) ? go2s[0]?.id ?? 'new' : target
 
   return (
     <dialog ref={ref} className="ps go2-dlg" onKeyDown={e => e.stopPropagation()} onClose={onClose}>
@@ -37,9 +38,10 @@ export default function Go2BlockDialog({ open, onClose }: { open: boolean; onClo
           <select aria-label="붙일 로봇" value={t} onChange={e => { setTarget(e.target.value); setMsg('') }}>
             {go2s.map(a => <option key={a.id} value={a.id}>{a.name} (트랙 끝에 붙임)</option>)}
             <option value="new">새 GO2 로봇 (0초부터)</option>
+            <option value="asset">목록에만 추가 (시퀀스에 놓지 않음)</option>
           </select>
         </label>
-        <Go2BlockPanel actorId={t === 'new' ? null : t} onAdded={(actorId, name) => { setTarget(actorId); setMsg(`추가했습니다: ${name}`) }}
+        <Go2BlockPanel actorId={t === 'new' ? null : t} onAdded={(actorId, name, reused) => { if (actorId) { setTarget(actorId); setMsg(reused ? `목록에 있는 ${name}을(를) 붙였습니다` : `추가했습니다: ${name}`) } else setMsg(reused ? `이미 목록에 있습니다: ${name} (새로 만들지 않음)` : `목록에 추가했습니다: ${name}`) }}
           note={msg && <p className="ps-ok" aria-live="polite">✓ {msg}</p>}
           actions={<button type="button" onClick={() => ref.current?.close()}>닫기</button>} />
       </div>}

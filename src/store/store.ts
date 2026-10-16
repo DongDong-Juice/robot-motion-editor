@@ -97,6 +97,8 @@ export interface EditorState {
   // Add the clip to the assets (name deduped) and place it right after the actor's last item; new item id, null = locked/unknown/robot mismatch. One undo entry.
   // actorId null: a new actor for the clip's robot, with the clip at 0 (메뉴 ▸ GO2 블럭 추가 on a project without a GO2).
   appendClip(actorId: string | null, clip: Clip): string | null
+  /** The clip into the assets only (목록에만 추가; name deduped), one undo entry; its name as stored, null = refused. */
+  addClipAsset(clip: Clip): string | null
   simplifyClip(clipId: string, rot?: number, pos?: number): number
   deleteClip(clipId: string): boolean
   addMedia(name: string, durationF: number): string
@@ -650,6 +652,11 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         })
         return out
       },
+      addClipAsset: clip => {
+        let name: string | null = null
+        tryEdit(p => { addUniqueClip(p, clip); name = p.clips[clip.id].name; return true })
+        return name
+      },
       appendClip: (actorId, clip) => {
         let out: string | null = null
         tryEdit(p => {
@@ -658,7 +665,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
           const actor = p.actors.find(a => a.id === id)
           const track = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === id)
           if (!actor || !track || track.locked || actor.robot !== clip.robot) return false
-          addUniqueClip(p, clip)
+          if (!p.clips[clip.id]) addUniqueClip(p, clip) // a clip already in the assets is placed as it is (no copy)
           const item = { id: crypto.randomUUID(), refId: clip.id, start: Math.max(0, ...track.items.map(i => i.start + itemLen(i))), trimIn: 0, trimOut: clip.length }
           track.items.push(item)
           out = item.id

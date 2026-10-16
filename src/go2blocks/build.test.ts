@@ -7,7 +7,7 @@ import { yawQuat } from '../model/rootMath'
 import type { Clip } from '../model/types'
 import { loadDef } from '../test/defs'
 import { GO2_BLOCKS, type Block } from './blocks'
-import { blockActual, buildBlockClip } from './build'
+import { blockActual, buildBlockClip, emptyBlockClip } from './build'
 
 const defs = { go2: loadDef('go2') } as RobotDefs
 const pose = (x: number, yaw: number, f: number): Pose =>
@@ -33,7 +33,7 @@ const expectTravel = (b: Block, poses: Pose[], fps: number, value: number) => {
 
 test('move: actual counts head + N·loop + tail; 1.0m → 4 loops', () => {
   // head 0.10m + 4 × 0.20m + tail 0.09m
-  expect(blockActual(move, walk, 1.0)).toEqual({ n: 4, actual: expect.closeTo(0.99, 5) })
+  expect(blockActual(move, walk, 1.0)).toMatchObject({ n: 4, actual: expect.closeTo(0.99, 5), base: expect.closeTo(0.19, 5), per: expect.closeTo(0.2, 5) }) // base = head + tail, per = one loop
   const clip = buildBlockClip(move, walk, 50, 1.0, defs)
   expect(clip.robot).toBe('go2')
   expect(clip.length).toBe(Math.floor((10 + 20 * 4 + 10 - 1) * 60 / 50) + 1)
@@ -61,8 +61,8 @@ test('huge value → n capped at 100, builds fast', () => {
 
 test('rotate sign picks left/right spec; actual = clip yaw', () => {
   const r = expectTravel(rotate, turn, 50, 45), l = expectTravel(rotate, turn, 50, -45)
-  expect(r).toEqual({ n: 2, actual: expect.closeTo(0.02 * 49 * 180 / Math.PI, 5) }) // head 5 + 2×20 + tail 4 frames
-  expect(l).toEqual({ n: 2, actual: expect.closeTo(-0.02 * 49 * 180 / Math.PI, 5) })
+  expect(r).toMatchObject({ n: 2, actual: expect.closeTo(0.02 * 49 * 180 / Math.PI, 5) }) // head 5 + 2×20 + tail 4 frames
+  expect(l).toMatchObject({ n: 2, actual: expect.closeTo(-0.02 * 49 * 180 / Math.PI, 5) })
   expect(first(buildBlockClip(rotate, turn, 50, 45, defs), 'root.yaw')).toBeCloseTo(0)
 })
 
@@ -94,4 +94,24 @@ test.each([['move', 1.8], ['move', 4], ['rotate', 90], ['rotate', -90], ['rotate
   const { poses, fps } = parseCsvPoses(readFileSync(new URL(`../../public/go2-blocks/${id}.csv`, import.meta.url), 'utf8'), defs, undefined)
   const r = expectTravel(b, poses, fps, value)
   expect(Math.sign(r.actual)).toBe(Math.sign(value))
+})
+
+test('real Rotate template: only base + n × step angles (n ≥ 1), so 100° and 110° both give the smallest, base + one step', () => {
+  const { poses } = parseCsvPoses(readFileSync('public/go2-blocks/rotate.csv', 'utf8'), { ...defs, g1: loadDef('g1') } as RobotDefs, undefined)
+  const rot = GO2_BLOCKS.find(b => b.id === 'rotate')!
+  const a = blockActual(rot, poses, 100)!, b = blockActual(rot, poses, 110)!, c = blockActual(rot, poses, 250)!
+  expect([a.n, b.n]).toEqual([1, 1])
+  expect(a.actual).toBeCloseTo(a.base + a.per, 6)
+  expect(b.actual).toBeCloseTo(a.actual, 6)
+  expect(c.actual).toBeCloseTo(c.base + c.n * c.per, 6)
+  expect(Math.round(a.actual)).toBe(168)
+  expect(buildBlockClip(rot, poses, 50, 100, defs).name).toBe(buildBlockClip(rot, poses, 50, 110, defs).name) // same motion, same name
+})
+
+test('Empty block: the GO2 rest pose held n frames at the origin', () => {
+  const c = emptyBlockClip(30, defs)
+  expect(c).toMatchObject({ robot: 'go2', length: 30, name: 'Empty_30f' })
+  expect(first(c, 'root.z')).toBeCloseTo(defs.go2.rest.z)
+  expect(last(c, 'root.x')).toBeCloseTo(0)
+  defs.go2.joints.forEach((j, i) => expect(last(c, j.name)).toBeCloseTo(defs.go2.rest.q[i]))
 })
