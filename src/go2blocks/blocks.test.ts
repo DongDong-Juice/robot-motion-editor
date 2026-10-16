@@ -11,11 +11,11 @@ const defs = { go2: loadDef('go2') } as RobotDefs
 const read = (id: string) => readFileSync(new URL(`../../public/go2-blocks/${id}.csv`, import.meta.url), 'utf8')
 const posesOf = (id: string) => parseCsvPoses(read(id), defs, undefined).poses
 const loopSpecs = (): [string, LoopSpec][] => GO2_BLOCKS.flatMap<[string, LoopSpec]>(b =>
-  b.kind === 'fixed' ? [] : b.id === 'move' ? [[b.id, b.spec]] : [[b.id, b.left], [b.id, b.right]])
+  b.kind !== 'loop' ? [] : b.id === 'move' ? [[b.id, b.spec]] : [[b.id, b.left], [b.id, b.right]])
 
 test('every block has a parsable 50fps GO2 csv', () => {
-  expect(GO2_BLOCKS).toHaveLength(15)
-  for (const b of GO2_BLOCKS) expect(parseCsvPoses(read(b.id), defs, undefined)).toMatchObject({ robot: 'go2', fps: 50 })
+  expect(GO2_BLOCKS).toHaveLength(16)
+  for (const b of GO2_BLOCKS) if (b.kind !== 'empty') expect(parseCsvPoses(read(b.id), defs, undefined)).toMatchObject({ robot: 'go2', fps: 50 })
 })
 
 test('loop specs are contiguous, in range, tail >= 5', () => {

@@ -23,19 +23,26 @@ test('compare: second CSV is an asset only; 비교 opens a preview pane without 
 
   const [fc] = await Promise.all([page.waitForEvent('filechooser'), menu(page, 'CSV 가져오기')])
   await fc.setFiles([{ name: 'a.csv', mimeType: 'text/csv', buffer: csv(1) }, { name: 'b.csv', mimeType: 'text/csv', buffer: csv(2) }])
-  await expect(page.locator('.pp-card')).toHaveCount(2)
+  await expect(page.locator('.pp-row[data-kind=clip]')).toHaveCount(2)
   await expect(page.locator('.pp-msg')).toContainText('클립 2개를 가져왔습니다')
   expect(await motionTracks(page)).toBe(1)
   expect(await page.evaluate(() => (window as any).__editor.getState().project.sequence.tracks.find((t: any) => t.kind === 'motion').items.length)).toBe(1)
-  await expect(page.locator('.pp-card').nth(1)).toContainText('사용 0')
+  await expect(page.locator('.pp-row[data-kind=clip]').nth(1).locator('.pp-col-uses')).toHaveText('0')
 
   await page.evaluate(() => { const s = (window as any).__editor.getState(); (window as any).__p0 = s.project; (window as any).__d0 = s.dirty })
-  await page.locator('.pp-card').nth(1).getByRole('button', { name: '⇄ 비교' }).click()
+  await page.locator('.pp-row[data-kind=clip]').nth(1).click()
+  await page.getByRole('button', { name: '⇄ 비교' }).click()
   const pane = page.getByRole('region', { name: '비교 프리뷰' })
   await expect(pane).toContainText('비교 프리뷰 · b (G1)')
   await expect.poll(() => pane.locator('canvas').evaluate(c => c.getBoundingClientRect().width)).toBeGreaterThan(0)
   expect(await motionTracks(page)).toBe(1)
   expect(await page.evaluate(() => { const s = (window as any).__editor.getState(); return s.project === (window as any).__p0 && s.dirty === (window as any).__d0 })).toBe(true)
+  // it plays on its own loop, whatever the sequence does (stopped here)
+  const pose = () => page.evaluate(() => { const w = (window as any), st = w.__stages, k = Object.keys(st).find(k => k !== 'main' && k !== 'preview')!
+    return ([...st[k].entries().values()][0] as any).rig.jointPivots.left_knee_joint.quaternion.toArray().join() })
+  expect(await page.evaluate(() => (window as any).__editor.getState().playing)).toBe(false)
+  const p0 = await pose()
+  await expect.poll(pose).not.toBe(p0)
   const main = page.getByRole('region', { name: '로봇 프리뷰' }).locator('canvas')
   expect(await main.evaluate(c => c.getBoundingClientRect().width)).toBeGreaterThan(0)
 
@@ -49,10 +56,10 @@ test('compare: second CSV is an asset only; 비교 opens a preview pane without 
   await expect(pane).toHaveCount(0)
 
   // right-click menu: 삭제 of a clip in use is rejected with the usual message; Esc closes
-  await page.locator('.pp-card').first().click({ button: 'right' })
+  await page.locator('.pp-row[data-kind=clip]').first().click({ button: 'right' })
   await page.getByRole('menuitem', { name: '삭제' }).click()
   await expect(page.locator('.pp-msg', { hasText: '시퀀스에서 쓰는 클립은 삭제할 수 없습니다' })).toBeVisible()
-  await page.locator('.pp-card').first().focus()
+  await page.locator('.pp-row[data-kind=clip]').first().focus()
   await page.keyboard.press('Shift+F10')
   await expect(page.getByRole('menu', { name: '목록' })).toBeVisible()
   await page.keyboard.press('Escape')

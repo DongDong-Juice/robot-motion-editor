@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import Go2BlockPanel from '../go2blocks/Go2BlockPanel'
 import { curveKeyCount, offsetKeyCount } from '../model/itemClip'
 import { actorOf, clipLocked, editLock, editTarget, getEditor, targetItem, trackLocked, useEditor } from '../store/store'
 import JointPanel from '../viewer/JointPanel'
@@ -7,11 +6,6 @@ import JointPanel from '../viewer/JointPanel'
 const ROOT = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw']
 
 export default function Inspector() {
-  const go2 = useEditor(s => s.project.actors.find(a => a.id === s.sel.actorId && a.robot === 'go2')?.id)
-  return <>{go2 && <Go2BlockPanel key={go2} actorId={go2} />}<InspectorBody /></>
-}
-
-function InspectorBody() {
   const ed = getEditor()
   const { project, defs, frame, sel, editing, clipEdit } = useEditor(s => s)
   const [lenMsg, setLenMsg] = useState(false)

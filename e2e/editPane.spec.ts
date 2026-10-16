@@ -38,11 +38,17 @@ test('clip preview: pick a joint and turn it there; the main view follows, witho
   const angle = (k: string) => page.evaluate(k => { const w = window as any, e = k === 'main' ? w.__stage.entries().get(w.__editor.getState().project.actors[0].id) : [...w.__stages.preview.entries().values()][0]
     return e.rig.jointPivots.left_elbow_joint.quaternion.toArray().map((v: number) => +v.toFixed(4)) }, k)
   const before = await angle('main')
+  // the gizmo's label: joint, angle and limits; while dragging also the change
+  const tagEl = pane.locator('.gz-tag')
+  await expect(tagEl).toBeVisible()
+  await expect(tagEl).toContainText('left_elbow')
   await page.evaluate(() => { const tc = (window as any).__stages.preview.tc
     tc.dispatchEvent({ type: 'dragging-changed', value: true })
     tc.object.rotateOnAxis(new tc.object.position.constructor(0, 1, 0), 0.4)
-    tc.dispatchEvent({ type: 'objectChange' })
-    tc.dispatchEvent({ type: 'dragging-changed', value: false }) })
+    tc.dispatchEvent({ type: 'objectChange' }) })
+  await expect(tagEl).toContainText(/\((\+|−)\d+\.\d°\)/)
+  await page.screenshot({ path: test.info().outputPath('gizmo-tag.png') })
+  await page.evaluate(() => (window as any).__stages.preview.tc.dispatchEvent({ type: 'dragging-changed', value: false }))
   await expect.poll(() => page.evaluate(() => { const it = (window as any).__editor.getState().project.sequence.tracks.find((t: any) => t.kind === 'motion').items[0]
     return !!it.offset?.left_elbow_joint?.keys.length })).toBe(true)
   await page.waitForTimeout(200)

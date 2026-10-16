@@ -41,14 +41,21 @@ function loopPlan(b: LoopBlock, poses: Pose[], value: number) {
   const base = m ? dist(h0, poses[s]) + dist(t0, tl) : turn(h0, poses[s]) + turn(t0, tl)
   const n = Math.min(MAX_LOOPS, Math.max(1, Math.round((Math.abs(value) - Math.abs(base)) / Math.abs(per))))
   const actual = m ? dist(h0, applyXf(tl, powXf(d, n - 1))) : base + n * per
-  return { spec, d, n, actual }
+  return { spec, d, n, actual, base, per }
 }
 
-/** Loop count and the value the clip really covers (m or signed degrees); null for fixed blocks. */
-export function blockActual(block: Block, poses: Pose[], value: number): { n: number; actual: number } | null {
-  if (block.kind === 'fixed') return null
-  const { n, actual } = loopPlan(block, poses, value)
-  return { n, actual }
+/** Loop count and the value the clip really covers (m or signed degrees); null for fixed blocks. base = what the start + stop parts
+ *  of the log cover, per = one repeated step: the clip can only cover base + n × per (n ≥ 1), so the smallest is base + per. */
+export function blockActual(block: Block, poses: Pose[], value: number): { n: number; actual: number; base: number; per: number } | null {
+  if (block.kind !== 'loop') return null
+  const { n, actual, base, per } = loopPlan(block, poses, value)
+  return { n, actual, base, per }
+}
+
+/** The Empty block: the GO2 rest pose (standing still) held `frames` 60fps frames at the origin. */
+export function emptyBlockClip(frames: number, defs: RobotDefs): Clip {
+  const { q, z } = defs.go2.rest, pose: Pose = { rootPos: [0, 0, z], rootQuat: [0, 0, 0, 1], q }
+  return posesToClip(Array(frames).fill(pose), 60, 'go2', defs, `Empty_${frames}f`)
 }
 
 /** Source poses (at `fps`) -> 60fps GO2 clip starting at the origin. Loop blocks: head + loop × n + tail. */

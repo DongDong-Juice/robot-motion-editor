@@ -20,15 +20,18 @@ test('rule 1: free frame is used as is', () => {
   const p = proj(); p.sequence.tracks[0].items = [item('a', 0, 50)]
   expect(dropPlacement(p, b, row(p), 300)).toEqual({ kind: 'existing', trackId: row(p), start: 300 })
 })
-test('rule 1: a drop inside a long item appends right after it, no overlap', () => {
-  const p = proj()
-  expect(dropPlacement(p, b, row(p), 40)).toEqual({ kind: 'existing', trackId: row(p), start: 100 })
-  expect(dropPlacement(p, b, row(p), 0)).toEqual({ kind: 'existing', trackId: row(p), start: 100 })
+test('rule 1: a drop inside a piece inserts at its nearer edge: front half before it (it and the rest pushed back), back half after it', () => {
+  const p = proj() // a at 0..100
+  expect(dropPlacement(p, b, row(p), 40)).toEqual({ kind: 'existing', trackId: row(p), start: 0, shift: { ids: ['i0'], by: 100 } })
+  expect(dropPlacement(p, b, row(p), 0)).toEqual({ kind: 'existing', trackId: row(p), start: 0, shift: { ids: ['i0'], by: 100 } })
+  expect(dropPlacement(p, b, row(p), 70)).toEqual({ kind: 'existing', trackId: row(p), start: 100 })
+  p.sequence.tracks[0].items = [item('a', 0), item('a', 100), item('a', 250)] // back half of the first: the two after it move by the clip length
+  expect(dropPlacement(p, b, row(p), 80)).toEqual({ kind: 'existing', trackId: row(p), start: 100, shift: { ids: ['i100', 'i250'], by: 100 } })
 })
-test('rule 1: a drop whose clip would run into the next item goes after it; a too-short gap goes to the end', () => {
+test('rule 1: a drop in a gap too short for the clip stays at the drop frame and pushes the pieces after it just enough', () => {
   const p = proj(); p.sequence.tracks[0].items = [item('a', 0, 50), item('a', 100, 50)] // gap 50..100 is 50 long, clip b is 100
-  expect(dropPlacement(p, b, row(p), 50)).toEqual({ kind: 'existing', trackId: row(p), start: 150 })
-  expect(dropPlacement(p, b, row(p), 10)).toEqual({ kind: 'existing', trackId: row(p), start: 150 })
+  expect(dropPlacement(p, b, row(p), 50)).toEqual({ kind: 'existing', trackId: row(p), start: 50, shift: { ids: ['i100'], by: 50 } })
+  expect(dropPlacement(p, b, row(p), 10)).toEqual({ kind: 'existing', trackId: row(p), start: 0, shift: { ids: ['i0', 'i100'], by: 100 } })
 })
 test('rule 1: negative frame clamps to 0; locked track rejects', () => {
   const p = proj(); p.sequence.tracks[0].items = []

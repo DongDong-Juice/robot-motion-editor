@@ -377,6 +377,34 @@ test('deleting one of several items keeps the actor', () => {
   expect(trackItems(actor)).toHaveLength(1)
 })
 
+test('deleting a piece leaves no hole: the pieces after it move back to where the one before ends (one undo)', () => {
+  const k = s().newClip('g1') // 120 frames; item0 covers 0–120
+  s().addItem(actor, k, 150); s().addItem(actor, k, 300)
+  const starts = () => [...trackItems(actor)].sort((a, b) => a.start - b.start).map(i => i.start)
+  expect(starts()).toEqual([0, 150, 300])
+  const mid = trackItems(actor).find(i => i.start === 150)!.id
+  expect(s().deleteItem(mid)).toBe(true)
+  expect(starts()).toEqual([0, 120]) // the last piece starts where the first ends
+  s().undo(); expect(starts()).toEqual([0, 150, 300])
+  s().deleteItem(item0().id) // the first piece: the rest move to 0, keeping their spacing
+  expect(starts()).toEqual([0, 150])
+})
+
+test('swapItems: two pieces trade places, the rest re-flow end to end, each slot keeps its gap (one undo)', () => {
+  const k = s().newClip('g1') // 120 frames; item0 = A covers 0–120
+  s().addItem(actor, k, 150); s().addItem(actor, k, 240)
+  const [a, b, c] = [...trackItems(actor)].sort((x, y) => x.start - y.start).map(i => i.id)
+  expect(s().trimItem(b, 'out', -60)).toBe(true) // B 150–210, C 240–360: gaps 30, 30
+  const at = () => Object.fromEntries(trackItems(actor).map(i => [i.id, [i.start, i.start + i.trimOut - i.trimIn]]))
+  expect(s().swapItems(a, c)).toBe(true)
+  expect(at()).toEqual({ [c]: [0, 120], [b]: [150, 210], [a]: [240, 360] })
+  expect(s().swapItems(b, c)).toBe(true) // neighbours: B first, then C, gaps stay with the slots
+  expect(at()).toEqual({ [b]: [0, 60], [c]: [90, 210], [a]: [240, 360] })
+  s().undo(); s().undo()
+  expect(at()).toEqual({ [a]: [0, 120], [b]: [150, 210], [c]: [240, 360] })
+  expect(s().swapItems(a, a)).toBe(false)
+})
+
 test('editTarget in clip view ignores trims', () => {
   const id = item0().id
   s().trimItem(id, 'in', 30)

@@ -6,6 +6,7 @@ export type Block =
   | { id: string; label: string; kind: 'fixed' }
   | { id: 'move'; label: 'Move forward'; kind: 'loop'; param: 'meters'; spec: LoopSpec }
   | { id: 'rotate'; label: 'Rotate'; kind: 'loop'; param: 'degrees'; left: LoopSpec; right: LoopSpec }
+  | { id: 'empty'; label: 'Empty'; kind: 'empty' } // no log: the GO2 rest pose held for n frames (default 30)
 
 export const GO2_BLOCKS: Block[] = [
   // stand still -> accelerate; loop = 1 gait cycle (35f, 0.62m, joint RMS 0.009 rad); tail decelerates to the speed minimum
@@ -27,6 +28,7 @@ export const GO2_BLOCKS: Block[] = [
   { id: 'backflip', label: 'BackFlip', kind: 'fixed' },
   { id: 'leftflip', label: 'LeftFlip', kind: 'fixed' },
   { id: 'rightflip', label: 'RightFlip', kind: 'fixed' },
+  { id: 'empty', label: 'Empty', kind: 'empty' },
 ]
 
 export const blockUrl = (id: string) => `/go2-blocks/${id}.csv`

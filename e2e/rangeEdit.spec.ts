@@ -12,7 +12,7 @@ test('Shift+drag range → value change spreads over the range with fades', asyn
   await importSynthetic(page, 'jp')
   const ch = 'left_knee_joint'
   const clipId = await page.evaluate(() => { const s = (window as any).__editor.getState(); return s.project.sequence.tracks.find((t: any) => t.kind === 'motion').items[0].refId as string })
-  await page.locator('.pp-card').first().dblclick({ position: { x: 150, y: 50 } })
+  await page.locator('.pp-row[data-kind=clip]').first().dblclick()
   await expect(page.getByRole('group', { name: '클립 편집' })).toBeVisible()
   await page.evaluate(ch => { const w = window as any, s = w.__editor.getState(); s.setFrame(60); s.select('__clip_actor__', ch); w.__tv.ppf = 4; w.__tv.scrollF = 0 }, ch)
   await page.getByRole('button', { name: '그래프' }).click()

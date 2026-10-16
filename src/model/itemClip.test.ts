@@ -137,6 +137,18 @@ test('itemClip is memoized per edit and is the clip itself without a 수정 층'
   expect(p2.clips[c].channels[ch].keys).toHaveLength(2)
 })
 
+test('an edit elsewhere keeps the baked clip of a piece: its 수정 층 stays the same object (no re-bake, caches keep hitting)', () => {
+  s().setFrame(60); s().setValue(actor, ch, 0.9)
+  const before = itemClip(s().project, defs, items()[0])
+  s().addActor('go2') // an unrelated edit: new sequence and actors
+  expect(items()[0].offset).toBeDefined()
+  expect(itemClip(s().project, defs, items()[0])).toBe(before)
+  s().setValue(actor, ch, 0.8) // its own 수정 층 changes: re-baked
+  expect(itemClip(s().project, defs, items()[0])).not.toBe(before)
+  s().undo() // back to the earlier project: its bake is still cached
+  expect(itemClip(s().project, defs, items()[0])).toBe(before)
+})
+
 test('project file keeps the 수정 층 and rejects unknown channels', () => {
   s().setFrame(60); s().setValue(actor, ch, 0.9)
   const back = parseProject(serializeProject(s().project), defs)

@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { trackDrag } from './drag'
 import { getEditor, useEditor } from '../store/store'
 import { itemLen, sortedItems, pieceName, pieceTag } from '../model/sequence'
-import { itemLead, itemTail, previewRange, REST_BLEND, REST_HOLD } from '../model/restPose'
+import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP, itemLead, itemTail, previewRange, REST_BLEND, REST_HOLD } from '../model/restPose'
 import type { Item, Track } from '../model/types'
 import { offsetKeyCount } from '../model/itemClip'
 import { seqFlash, tv } from './viewState'
-import { followStep, markHover, markUserScroll, resetFollow } from './follow'
+import { edgeScroll, followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { sequenceEnd } from '../transport'
 import { drawRuler, hitMarker, LABEL_W, RULER_H } from './ruler'
 import { dropPlacement } from '../model/dropPlacement'
@@ -18,14 +18,17 @@ import { formatTimecode, frameToX, hoverFrame, hoverScrub, xToFrame, type TimeSc
 import { usePhysics } from '../physics/physicsStore'
 import { runItems, stale } from '../physics/runItem'
 import { withDefaults } from '../physics/settings'
-import { badge, drawAssist, segmentAt, seqFrameOf, treeSuffix, treeTag, WARN_RED } from './physGraph'
+import { badge, drawAssist, segmentAt, seqFrameOf, treeSuffix, treeTag, DIM, WARN_RED } from './physGraph'
 import { drawHScrollbar, drawScrollbar, pressScrollbar, SB_W, sbGeom } from './vscroll'
 
-const ROW_H = 28, EDGE = 6
+const ROW_H = 28, EDGE = 6, LEN_EDGE = 4 // px: piece trim handle, lead-in / 끝 block edge
 const DENY = '이 위치에 놓을 수 없습니다'
 const LOCKED = '잠긴 트랙입니다'
+// lead-in / 끝 기본자세 blocks in a lane: the outer edge of each one drags its length (user)
+type LenKey = 'restHold' | 'restBlend' | 'inertia' | 'tailBlend' | 'tailHold'
+const LEN_NAME: Record<LenKey, string> = { restHold: '기본자세', restBlend: '전이', inertia: '관성', tailBlend: '끝 전이', tailHold: '끝 기본자세' }
 const ICON_HIT = 18 // hit area; icons are drawn 14px: (motion) path, eye, padlock at the label column's right edge
-const TRAIL_X = LABEL_W - 56, EYE_X = LABEL_W - 36, LOCK_X = LABEL_W - 16
+const TRAIL_X = LABEL_W - 56, EYE_X = LABEL_W - 36, LOCK_X = LABEL_W - 16, PLAY_X = EYE_X - 20 // PLAY_X: piece lanes, left of the eye
 const TRI_W = 18, NAME_X = 20, CHILD_X = NAME_X + 16 // disclosure triangle hit width; track / child label x
 
 // Eye (slashed when the track is hidden) and padlock (shackle open when unlocked); `on` = accent, off = line.
@@ -34,6 +37,13 @@ function drawEye(ctx: CanvasRenderingContext2D, cx: number, cy: number, on: bool
   ctx.beginPath(); ctx.ellipse(cx, cy, 7, 4.5, 0, 0, Math.PI * 2); ctx.stroke()
   ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI * 2); ctx.fill()
   if (on) { ctx.beginPath(); ctx.moveTo(cx - 6, cy + 6); ctx.lineTo(cx + 6, cy - 6); ctx.stroke() }
+  ctx.restore()
+}
+// Piece lane play / pause of the clip preview's loop: a triangle, or two bars while that piece plays
+function drawPlay(ctx: CanvasRenderingContext2D, cx: number, cy: number, playing: boolean, col: string) {
+  ctx.save(); ctx.fillStyle = col
+  if (playing) { ctx.fillRect(cx - 4, cy - 5, 3, 10); ctx.fillRect(cx + 1, cy - 5, 3, 10) }
+  else { ctx.beginPath(); ctx.moveTo(cx - 4, cy - 5); ctx.lineTo(cx + 5, cy); ctx.lineTo(cx - 4, cy + 5); ctx.closePath(); ctx.fill() }
   ctx.restore()
 }
 // 경로 표시: a floor path (S curve) ending in the root dot
@@ -70,7 +80,7 @@ interface Row { t: Track; it?: Item; y: number; h: number }
 const hasEdit = (it: Item) => offsetKeyCount(it) > 0
 
 // In-progress drag preview; the store is untouched until mouseup.
-interface Drag { itemId: string; mode: 'move' | 'in' | 'out'; df: number }
+interface Drag { itemId: string; mode: 'move' | 'in' | 'out'; df: number; swapTo?: string /* lane drag onto another piece's lane: trade places */ }
 interface Msg { text: string; left: number; top: number }
 interface Ctx { x: number; y: number; actorId: string; trackId: string; itemId: string | null } // itemId null: track label menu
 interface Rename { index: number; left: number; value: string }
@@ -153,8 +163,10 @@ export default function SequenceCanvas() {
     // lead-in / tail lengths walk the whole clip (foot contact, motion amount): during a slider or gizmo drag the lanes keep the
     // lengths from the drag start and catch up when it ends
     const leads = new Map<string, ReturnType<typeof itemLead>>(), tails = new Map<string, ReturnType<typeof itemTail>>()
-    const leadOf = (it: Item) => { const s = ed.getState(); if (!s.inGesture || !leads.has(it.id)) leads.set(it.id, itemLead(s.project, s.defs, it)); return leads.get(it.id)! }
-    const tailOf = (it: Item) => { const s = ed.getState(); if (!s.inGesture || !tails.has(it.id)) tails.set(it.id, itemTail(s.project, s.defs, it)); return tails.get(it.id)! }
+    let lenDrag: { itemId: string; key: LenKey; value: number } | null = null // a block edge being dragged: drawn with that length
+    const dragged = (it: Item) => lenDrag?.itemId === it.id ? { ...it, [lenDrag.key]: lenDrag.value } : null
+    const leadOf = (it: Item) => { const s = ed.getState(), d = dragged(it); if (d) return itemLead(s.project, s.defs, d); if (!s.inGesture || !leads.has(it.id)) leads.set(it.id, itemLead(s.project, s.defs, it)); return leads.get(it.id)! }
+    const tailOf = (it: Item) => { const s = ed.getState(), d = dragged(it); if (d) return itemTail(s.project, s.defs, d); if (!s.inGesture || !tails.has(it.id)) tails.set(it.id, itemTail(s.project, s.defs, it)); return tails.get(it.id)! }
     seqFlash.fn = (text, itemId) => flash(text, layout().findIndex(r => !r.it && r.t.items.some(i => i.id === itemId)))
 
     const draw = () => {
@@ -251,7 +263,7 @@ export default function SequenceCanvas() {
           const ty = st?.metrics ? y + 9 : y + ROW_H / 2 // above the graph
           const br = Math.min(right, W - 4), bw = b && br - x >= ctx.measureText(b).width ? ctx.measureText(b).width + 8 : 0
           if (b && bw) { // badge at the bar's (visible) right end
-            ctx.fillStyle = b.startsWith('⚠') || st?.status === 'error' ? WARN_RED : old ? '#8d96a3' : C.text
+            ctx.fillStyle = b.startsWith('⚠') || st?.status === 'error' ? WARN_RED : old ? DIM : C.text
             ctx.fillText(b, br - bw + 8, ty); ctx.fillStyle = C.text
           }
           const nr = bw ? br - bw : right
@@ -269,16 +281,19 @@ export default function SequenceCanvas() {
         if (r.it) { // piece lane (staircase): that piece's bar, with the crossfades it takes part in
           const it = items.find(i => i.id === r.it!.id) ?? r.it
           bars(t, [it], y, color, true, overlaps(items).filter(([a, b]) => a < it.start + itemLen(it) && b > it.start))
+          if (drag?.swapTo === it.id) { ctx.save(); ctx.strokeStyle = C.accent; ctx.lineWidth = 2; ctx.setLineDash([5, 3]); ctx.strokeRect(LABEL_W + 1, y + 1, W - LABEL_W - 2, ROW_H - 3); ctx.restore() } // drop here: trade places
           ctx.fillStyle = C.bg; ctx.fillRect(0, y, LABEL_W - 1, ROW_H - 1)
           drawEye(ctx, EYE_X, y + ROW_H / 2, !!it.hidden, it.hidden ? C.accent : C.line)
+          const previewing = it.id === s.itemPreview
+          drawPlay(ctx, PLAY_X, y + ROW_H / 2, previewing && s.previewPlaying, previewing ? C.accent : C.line)
           ctx.font = '10px "IBM Plex Sans KR", sans-serif'
           ctx.fillStyle = it.id === s.selItem ? C.accent : hasEdit(it) ? C.piece : C.text // 수정됨: green
           // the column is narrow: "#n · start" (the bar shows the clip name), a short physics tag on the right; the full text on hover
-          const { st, old } = phys(t, r.it), tag = treeTag(st, old), right = EYE_X - ICON_HIT / 2 - 4, tw = tag.text ? ctx.measureText(tag.text).width + 6 : 0
+          const { st, old } = phys(t, r.it), tag = treeTag(st, old), right = PLAY_X - ICON_HIT / 2 - 4, tw = tag.text ? ctx.measureText(tag.text).width + 6 : 0
           if (tag.text) {
-            ctx.save(); ctx.textAlign = 'right'; ctx.fillStyle = tag.warn ? WARN_RED : '#8d96a3'; ctx.fillText(tag.text, right, y + ROW_H / 2); ctx.restore()
+            ctx.save(); ctx.textAlign = 'right'; ctx.fillStyle = tag.warn ? WARN_RED : DIM; ctx.fillText(tag.text, right, y + ROW_H / 2); ctx.restore()
           }
-          const warn = (it.id === s.itemPreview ? '▶ ' : '') + (it.restPose === 'prepend' && leadOf(it)?.why === 'review' ? '⚠ ' : '') // 관성 검토 필요, in front so it is never cut
+          const warn = (it.restPose === 'prepend' && leadOf(it)?.why === 'review' ? '⚠ ' : '') // 관성 검토 필요, in front so it is never cut
           ctx.fillText(fit(ctx, warn + laneLabel(t, it) + (hasEdit(it) ? ' 수정' : ''), right - CHILD_X - tw), CHILD_X, y + ROW_H / 2)
           ctx.font = '11px "IBM Plex Sans KR", sans-serif'
           return
@@ -302,6 +317,10 @@ export default function SequenceCanvas() {
       }
       drawRuler(ctx, sc, W, RULER_H, s.project.sequence, s.frame, C, true)
       const px = Math.round(frameToX(sc, s.frame)) + 0.5
+      if (s.spanPreview) { // the 구간 프리뷰's span, over the ruler and the rows
+        const a = Math.max(frameToX(sc, s.spanPreview[0]), LABEL_W), b = frameToX(sc, s.spanPreview[1])
+        if (b > a) { ctx.save(); ctx.fillStyle = C.accent; ctx.globalAlpha = 0.25; ctx.fillRect(a, 0, b - a, RULER_H - 1); ctx.globalAlpha = 0.07; ctx.fillRect(a, RULER_H, b - a, H - RULER_H); ctx.restore() }
+      }
       if (px >= LABEL_W) { ctx.fillStyle = C.accent; ctx.fillRect(px - 0.5, RULER_H, 1, H - RULER_H) }
       if (s.itemPreview) { // the clip preview's own playhead
         const qx = Math.round(frameToX(sc, s.previewFrame)) + 0.5
@@ -348,14 +367,62 @@ export default function SequenceCanvas() {
       return it ? { t, it, mode: 'move' as Drag['mode'] } : null
     }
 
+    // the lead-in / 끝 기본자세 block edge under (x, y) in a lane: lead-in blocks by their left edge (the piece start stays put), 끝
+    // blocks by their right edge; never over the bar itself (its ends trim the piece)
+    const lenEdgeAt = (x: number, y: number) => {
+      const r = layout()[rowAt(y)]
+      if (!r?.it || r.t.locked || isVideo(r.t) || x < LABEL_W) return null
+      const it = r.it, sc = scale(), s0 = frameToX(sc, it.start), s1 = frameToX(sc, it.start + itemLen(it))
+      if (x >= s0 && x <= s1) return null
+      const cand: [LenKey, number, number][] = [] // key, edge x, current length
+      const ld = it.restPose === 'prepend' ? leadOf(it) : null, tl = tailOf(it)
+      if (ld) { const x0 = s0 - ld.lead * tv.ppf; cand.push(['restHold', x0, ld.hold], ['restBlend', x0 + ld.hold * tv.ppf, ld.blend], ['inertia', x0 + (ld.hold + ld.blend) * tv.ppf, ld.inertia]) }
+      if (tl) cand.push(['tailBlend', s1 + tl.blend * tv.ppf, tl.blend], ['tailHold', s1 + tl.tail * tv.ppf, tl.hold])
+      let best: { key: LenKey; value: number; d: number; t: Track; it: Item } | null = null
+      for (const [key, ex, value] of cand) { const d = Math.abs(x - ex); if (d <= LEN_EDGE && (!best || d < best.d)) best = { key, value, d, t: r.t, it } }
+      return best
+    }
+    const lenDragFrom = (e: MouseEvent, h: NonNullable<ReturnType<typeof lenEdgeAt>>, row: number) => {
+      const x = pos(e).x, s = ed.getState(), sign = h.key.startsWith('tail') ? 1 : -1 // lead-in edges grow leftwards
+      const [lo, hi] = h.key === 'inertia' ? [0, Math.min(INERTIA_CAP, h.it.trimIn)] : h.key.endsWith('Hold') ? HOLD_RANGE : BLEND_RANGE
+      s.selectItem(h.it.id)
+      if (h.t.actorId) s.select(h.t.actorId)
+      const at = (m: MouseEvent) => Math.min(Math.max(h.value + sign * Math.round((pos(m).x - x) / tv.ppf), lo), hi)
+      track(m => {
+        const v = at(m)
+        if (v !== (lenDrag?.value ?? h.value)) { lenDrag = { itemId: h.it.id, key: h.key, value: v }; flash(`${LEN_NAME[h.key]} ${v}프레임 (${(v / 60).toFixed(2)}초)`, row); schedule() }
+      }, m => {
+        const v = at(m)
+        lenDrag = null
+        if (v !== h.value && !ed.getState().setRestLead(h.it.id, { [h.key]: v })) flash(h.t.locked ? LOCKED : DENY, row)
+        schedule()
+      }, () => { lenDrag = null; schedule() })
+    }
+
+    // right-drag: a 구간 프리뷰 of that span opens and loops (user); a right-click without a drag keeps its menu (onContext)
+    let loopDragged = false
+    const loopDrag = (e: MouseEvent) => {
+      const x0 = pos(e).x, s = ed.getState(), f0 = frameAt(x0)
+      let started = false
+      loopDragged = false // a contextmenu that never came must not swallow this press's menu
+      const set = (m: MouseEvent) => {
+        const x1 = pos(m).x
+        if (!started && Math.abs(x1 - x0) < 4) return
+        started = true
+        const f1 = frameAt(x1)
+        s.setSpanPreview([Math.min(f0, f1), Math.max(f0, f1) + 1])
+      }
+      track(set, m => { set(m); loopDragged = started }, () => {})
+    }
     const onDown = (e: MouseEvent) => {
+      if (e.button === 2) { loopDrag(e); return }
       if (e.button !== 0) return
       canvas.focus()
       const { x, y } = pos(e), s = ed.getState(), row = rowAt(y)
       if (y < RULER_H) {
         const mi = hitMarker(s.project.sequence, scale(), x)
         if (mi !== null) { s.setFrame(s.project.sequence.markers[mi].f); return }
-        s.setFrame(frameAt(x)); track(m => s.setFrame(frameAt(pos(m).x)), () => {})
+        s.setFrame(frameAt(x)); track(scrubDrag, scrubEnd)
         return
       }
       const sb = sbar()
@@ -367,6 +434,11 @@ export default function SequenceCanvas() {
       }
       const r = layout()[row]
       if (r?.it && x < LABEL_W && Math.abs(x - EYE_X) <= ICON_HIT / 2) { s.setItemHidden(r.it.id, !r.it.hidden); return } // the piece's 숨기기
+      if (r?.it && x < LABEL_W && Math.abs(x - PLAY_X) <= ICON_HIT / 2) { // play / pause that piece's loop in the clip preview
+        if (s.itemPreview === r.it.id) s.setPreviewPlaying(!s.previewPlaying)
+        else s.openItemPreview(r.it.id, true)
+        return
+      }
       if (r?.it && x < LABEL_W) { // lane label: select the piece and preview it
         s.selectItem(r.it.id)
         if (r.t.actorId) s.select(r.t.actorId)
@@ -383,10 +455,12 @@ export default function SequenceCanvas() {
         else if (t.actorId) s.select(t.actorId)
         return
       }
+      const le = lenEdgeAt(x, y)
+      if (le) { lenDragFrom(e, le, row); return }
       const hit = itemAt(x, y)
       if (!hit) {
         s.selectItem(null); s.setFrame(frameAt(x))
-        track(m => s.setFrame(frameAt(pos(m).x)), () => {})
+        track(scrubDrag, scrubEnd)
         return
       }
       const { t, it, mode } = hit
@@ -397,12 +471,16 @@ export default function SequenceCanvas() {
       }
       s.selectItem(it.id)
       if (t.actorId) s.select(t.actorId)
+      // a lane bar dragged up / down onto another piece's lane of the same track: the two trade places (user)
+      const swapTarget = (m: MouseEvent) => { const tr = mode === 'move' && r?.it ? layout()[rowAt(pos(m).y)] : undefined
+        return tr?.it && tr.t.id === t.id && tr.it.id !== it.id ? tr.it.id : undefined }
       track(m => {
-        const df = Math.round((pos(m).x - x) / tv.ppf)
-        if (df !== (drag?.df ?? 0)) { drag = { itemId: it.id, mode, df }; schedule() }
+        const swapTo = swapTarget(m), df = swapTo ? 0 : Math.round((pos(m).x - x) / tv.ppf)
+        if (df !== (drag?.df ?? 0) || swapTo !== drag?.swapTo) { drag = { itemId: it.id, mode, df, swapTo }; schedule() }
       }, m => {
-        const df = Math.round((pos(m).x - x) / tv.ppf), st = ed.getState()
+        const swapTo = swapTarget(m), df = swapTo ? 0 : Math.round((pos(m).x - x) / tv.ppf), st = ed.getState()
         drag = null
+        if (swapTo) { if (!st.swapItems(it.id, swapTo)) flash(t.locked ? LOCKED : DENY, row); schedule(); return }
         if (df === 0 && r?.it) st.openItemPreview(it.id, true) // a click on a lane bar also previews (and plays) that piece
         if (df !== 0) {
           const ok = mode === 'move' ? st.moveItem(it.id, Math.max(0, it.start + df)) : st.trimItem(it.id, mode, df)
@@ -430,6 +508,7 @@ export default function SequenceCanvas() {
 
     const onContext = (e: MouseEvent) => {
       const { x, y } = pos(e), s = ed.getState()
+      if (loopDragged) { loopDragged = false; e.preventDefault(); return } // the right-drag set a loop span: no menu
       if (y >= RULER_H) { // motion item (bar or child row): item menu; motion track label: track menu
         const r = layout()[rowAt(y)]
         if (r && !r.it && x < LABEL_W && r.t.actorId && !isVideo(r.t)) { e.preventDefault(); setCtx({ x: e.clientX, y: e.clientY, actorId: r.t.actorId, trackId: r.t.id, itemId: null }); return }
@@ -440,25 +519,32 @@ export default function SequenceCanvas() {
       e.preventDefault()
       const mi = hitMarker(s.project.sequence, scale(), x)
       if (mi !== null) s.deleteMarker(mi)
+      else if (s.spanPreview) s.setSpanPreview(null) // ruler right-click: the 구간 프리뷰 closes
     }
 
     const hover = hoverScrub(() => ed.getState().frame, f => { markHover(); ed.getState().setFrame(f) })
+    // past 90% / before 10% of the track area while the playhead follows the pointer: scroll (dragging: the playhead itself)
+    let edgeDrag = false
+    const edge = edgeScroll(() => [LABEL_W, W - SB_W], () => [0, sequenceEnd(ed.getState().project) - (W - SB_W - LABEL_W) / tv.ppf * 0.5],
+      x => { if (edgeDrag) ed.getState().setFrame(frameAt(x)); else { const f = hoverFrame(x, LABEL_W, scale(), false); if (f !== null) hover.push(Math.max(0, f)) } schedule() })
+    const scrubDrag = (m: MouseEvent) => { const x = pos(m).x; ed.getState().setFrame(frameAt(x)); edgeDrag = true; edge.at(x) }
+    const scrubEnd = () => { edgeDrag = false; edge.stop() }
     const onMove = (e: MouseEvent) => {
       const { x, y } = pos(e), over = y >= RULER_H && x >= W - SB_W && !!sbar()
       const overH = !over && y >= H - SB_W && x >= LABEL_W && !!hbar()
       if (over !== sbHover) { sbHover = over; schedule() }
       if (overH !== hbHover) { hbHover = overH; schedule() }
-      if (over || overH) { canvas.style.cursor = ''; return }
-      const h = itemAt(x, y)
-      canvas.style.cursor = h && h.mode !== 'move' ? 'ew-resize' : ''
+      if (over || overH) { canvas.style.cursor = ''; if (!edgeDrag) edge.stop(); return }
+      const h = itemAt(x, y), le = lenEdgeAt(x, y)
+      canvas.style.cursor = le || (h && h.mode !== 'move') ? 'ew-resize' : ''
       // hover help for the track label icons
       const r = x < LABEL_W && y >= RULER_H ? layout()[rowAt(y)] : undefined, near = (ix: number) => Math.abs(x - ix) <= ICON_HIT / 2
-      const tip = !r ? '' : r.it ? (near(EYE_X) ? '이 조각 숨기기' : laneTip(r.t, r.it))
+      const tip = le ? `끌어서 ${LEN_NAME[le.key]} 길이 조절 (${le.value}프레임)` : !r ? '' : r.it ? (near(EYE_X) ? '이 조각 숨기기' : near(PLAY_X) ? (ed.getState().itemPreview === r.it.id && ed.getState().previewPlaying ? '멈춤' : '재생 (클립 프리뷰에서 반복)') : laneTip(r.t, r.it))
         : !isVideo(r.t) && near(TRAIL_X) ? '경로 표시: 이 로봇의 골반이 지나간 바닥 경로를 메인 화면에 선으로 보여 줍니다'
         : near(EYE_X) ? '숨기기' : near(LOCK_X) ? '잠그기' : ''
       if (canvas.title !== tip) canvas.title = tip
       const f = hoverFrame(x, LABEL_W, scale(), e.buttons !== 0 || ed.getState().playing || renaming.current)
-      if (f !== null) hover.push(Math.max(0, f))
+      if (f !== null) { hover.push(Math.max(0, f)); edge.at(x) } else if (!edgeDrag) edge.stop()
     }
 
     // full text of a lane label (hover): piece, time range, clip, 기본자세, physics
@@ -492,11 +578,11 @@ export default function SequenceCanvas() {
       const { row, frame } = dropAt(e), p = ed.getState().project, pl = dropPlacement(p, asset, row?.t.id ?? null, frame)
       if (pl.kind === 'reject') return setGhost(null)
       const rows = layout(), last = rows.at(-1), bottom = last ? last.y + last.h : RULER_H - scrollY
-      if (pl.kind === 'newActor') setGhost({ y: bottom, start: pl.start, len: p.clips[asset.id].length, color: COLOR[pl.robot] })
+      if (pl.kind === 'newActor') setGhost({ y: bottom, start: pl.start, len: (asset.clip ?? p.clips[asset.id]).length, color: COLOR[pl.robot] })
       else {
         const t = pl.kind === 'video' ? rows.find(r => !r.it && isVideo(r.t)) : rows.find(r => !r.it && r.t.id === pl.trackId)
         const actor = p.actors.find(a => a.id === t?.t.actorId)
-        setGhost(t ? { y: t.y, start: pl.start, len: asset.kind === 'clip' ? p.clips[asset.id].length : p.media.find(m => m.id === asset.id)!.durationF, color: actor?.color ?? C.accent } : null)
+        setGhost(t ? { y: t.y, start: pl.start, len: asset.kind === 'clip' ? (asset.clip ?? p.clips[asset.id]).length : p.media.find(m => m.id === asset.id)!.durationF, color: actor?.color ?? C.accent } : null)
       }
     }
     const onDrop = (e: DragEvent) => {
@@ -511,7 +597,7 @@ export default function SequenceCanvas() {
 
     canvas.addEventListener('mousedown', onDown)
     canvas.addEventListener('mousemove', onMove)
-    const onLeave = () => { if (sbHover || hbHover) { sbHover = hbHover = false; schedule() } }
+    const onLeave = () => { if (!edgeDrag) edge.stop(); if (sbHover || hbHover) { sbHover = hbHover = false; schedule() } }
     canvas.addEventListener('mouseleave', onLeave)
     canvas.addEventListener('dblclick', onDbl)
     canvas.addEventListener('contextmenu', onContext)
@@ -522,7 +608,7 @@ export default function SequenceCanvas() {
     addEventListener('dragend', clearGhost)
     return () => {
       seqFlash.fn = null
-      ro.disconnect(); document.fonts?.removeEventListener('loadingdone', schedule); unsub(); unsubMedia(); unsubPhys(); hover.stop(); cancelAnimationFrame(raf); clearTimeout(timer)
+      ro.disconnect(); document.fonts?.removeEventListener('loadingdone', schedule); unsub(); unsubMedia(); unsubPhys(); hover.stop(); edge.stop(); cancelAnimationFrame(raf); clearTimeout(timer)
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('mouseleave', onLeave)

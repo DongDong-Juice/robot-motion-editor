@@ -47,6 +47,18 @@ export function parseProject(text: string, defs: RobotDefs): Project {
       actorIds.add(a.id); actorRobot[a.id] = a.robot
     })
 
+    // Bins (virtual folders): a bad bin on an item is dropped below, never rejected.
+    const binTab = new Map<string, string>()
+    if (p.bins !== undefined) {
+      if (!Array.isArray(p.bins)) fail('bins')
+      p.bins.forEach((b: any, i: number) => {
+        const at = `bins.${i}`
+        if (!isObj(b) || !str(b.id) || !str(b.name) || !(['clip', 'media'] as unknown[]).includes(b.tab)) fail(at)
+        if (binTab.has(b.id)) fail(`${at}.id`, '중복된 ID입니다')
+        binTab.set(b.id, b.tab)
+      })
+    }
+
     if (!isObj(p.clips)) fail('clips')
     for (const [id, c] of Object.entries<any>(p.clips)) {
       const at = `clips.${id}`
@@ -56,6 +68,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
       if (!isObj(c.channels)) fail(`${at}.channels`)
       curves(c.channels, `${at}.channels`, c.robot, true)
       if (c.offset !== undefined) { if (!isObj(c.offset)) fail(`${at}.offset`); curves(c.offset, `${at}.offset`, c.robot, false) }
+      if (c.bin !== undefined && binTab.get(c.bin) !== 'clip') delete c.bin
     }
 
     // Expands v2 { k } into { keys } in place and checks the keys. clampJoints: r6 rounding must not push a clip key past its
@@ -95,6 +108,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
       if (!isObj(m) || !str(m.id) || !str(m.name)) fail(at)
       if (!int(m.durationF) || m.durationF < 1) fail(`${at}.durationF`)
       if (Object.hasOwn(media, m.id)) fail(`${at}.id`, '중복된 ID입니다')
+      if (m.bin !== undefined && binTab.get(m.bin) !== 'media') delete m.bin
       media[m.id] = m
     })
     let videoTracks = 0
@@ -124,6 +138,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
         if (it.restHold !== undefined && !(int(it.restHold) && it.restHold >= 0)) fail(`${it_}.restHold`)
         if (it.restBlend !== undefined && it.restBlend !== 'auto' && !(int(it.restBlend) && it.restBlend >= 0)) fail(`${it_}.restBlend`)
         if (it.inertia !== undefined && !(int(it.inertia) && it.inertia >= 0)) fail(`${it_}.inertia`)
+        for (const k of ['tailHold', 'tailBlend']) if (it[k] !== undefined && !(int(it[k]) && it[k] >= 0)) fail(`${it_}.${k}`)
         if (itemIds.has(it.id)) fail(`${it_}.id`, '중복된 ID입니다')
         itemIds.add(it.id)
         if (t.kind === 'video') {

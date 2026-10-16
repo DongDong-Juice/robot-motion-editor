@@ -1,5 +1,6 @@
 import type { Sequence } from '../model/types'
 import { formatTimecode, frameToX, type TimeScale } from './timeScale'
+import { DIM } from './physGraph'
 
 export const LABEL_W = 160, RULER_H = 24
 export interface Colors { bg: string; panel: string; line: string; text: string; accent: string }
@@ -10,7 +11,6 @@ export function tickStep(ppf: number, gap = 60): { minor: number; major: number 
   const [minor, major] = STEPS.find(([, M]) => M * ppf >= gap) ?? STEPS[STEPS.length - 1]
   return { minor, major }
 }
-const DIM = '#8d96a3'
 
 // Index of the marker within 4px of x, or null.
 export function hitMarker(seq: Sequence, sc: TimeScale, x: number): number | null {

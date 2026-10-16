@@ -1,7 +1,7 @@
 import { actorOf, clipLocked, editingItem, getEditor, useEditor } from '../store/store'
 import { exportClipCsv } from '../export/csv'
 import { saveCsvFile } from '../fileio'
-import { curveKeyCount } from '../model/itemClip'
+import { curveKeyCount, offsetKeyCount } from '../model/itemClip'
 import { useState } from 'react'
 import { cutAtFrame, sequenceEnd } from '../transport'
 import GraphCanvas from './GraphCanvas'
