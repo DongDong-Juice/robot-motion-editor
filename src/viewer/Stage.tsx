@@ -137,11 +137,10 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       return lead ? placeItemPose(vp, s.defs, ei!.item.id, lead) : t ? evaluateItem(vp, s.defs, t.itemId, t.f) : evaluate(vp, s.defs, a.id, s.frame)
     }
     // 겹쳐 보기 ghosts, one per actor: the original under the edit. 클립 편집: the clip without its 클립 수정 층 (겹쳐 보기 button);
-    // sequence / clip view: the piece under the playhead without its 조각 수정 층 (원본 겹쳐 보기, user: see the edit against G1 #1)
+    // sequence / clip view: the piece under the playhead without its 조각 수정 층 (원본 겹쳐 보기, always on — user: see the edit against G1 #1)
     const overlays = new Map<string, { robot: string; rig: RobotRig }>()
     const ghostOf = (s: S, a: Actor): (() => ReturnType<typeof mainPose>) | null => {
       if (s.clipEdit) return s.compareOverlay && !s.clipPeek ? () => clipEditPose(s, true) : null
-      if (!s.originalGhost) return null
       const ei = editingItem(s)
       if (ei && ei.actorId !== a.id) return null // the other actors are ghosts already
       const t = s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === a.id)
