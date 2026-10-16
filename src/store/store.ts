@@ -756,6 +756,11 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
           const f = findItem(p, itemId)
           if (!f || f.t.locked) return false
           f.t.items = f.t.items.filter(i => i.id !== itemId)
+          if (f.t.kind === 'motion') { // no hole left (user): the pieces after it move back so the next starts where the one before ends
+            const before = f.t.items.filter(i => i.start < f.it.start), after = f.t.items.filter(i => i.start >= f.it.start)
+            const d = after.length ? Math.min(...after.map(i => i.start)) - Math.max(0, ...before.map(i => i.start + itemLen(i))) : 0
+            if (d > 0) for (const i of after) i.start -= d
+          }
           // last clip of a motion track gone -> the robot goes with it (the clip stays in the assets)
           if (f.t.kind === 'motion' && !f.t.items.length) {
             p.actors = p.actors.filter(a => a.id !== f.t.actorId)
