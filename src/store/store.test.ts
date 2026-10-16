@@ -377,17 +377,36 @@ test('deleting one of several items keeps the actor', () => {
   expect(trackItems(actor)).toHaveLength(1)
 })
 
-test('deleting a piece leaves no hole: the pieces after it move back to where the one before ends (one undo)', () => {
+test('deleting a cut piece merges its range into the piece before: the original motion runs on (one undo)', () => {
+  const id = item0().id // 0–120
+  s().splitItem(id, 40); const sorted = () => [...trackItems(actor)].sort((a, b) => a.start - b.start)
+  s().splitItem(sorted()[1].id, 80)
+  const [a, b, c2] = sorted().map(i => i.id)
+  s().setRestTail(b, false)
+  expect(s().deleteItem(b)).toBe(true)
+  expect(sorted().map(i => [i.id, i.start, i.trimIn, i.trimOut])).toEqual([[a, 0, 0, 80], [c2, 80, 80, 120]]) // C stays put
+  expect(sorted()[0].restTail).toBe(false) // A's end is B's end now: B's 끝 기본자세
+  s().undo(); expect(sorted()).toHaveLength(3)
+})
+
+test('deleting the first cut piece merges it into the next one, which takes its front settings', () => {
+  s().splitItem(item0().id, 40)
+  const sorted = () => [...trackItems(actor)].sort((a, b) => a.start - b.start), [first, next] = sorted().map(i => i.id)
+  s().setRestPose(first, null)
+  expect(s().deleteItem(first)).toBe(true)
+  expect(sorted().map(i => [i.id, i.start, i.trimIn, i.trimOut])).toEqual([[next, 0, 0, 120]])
+  expect(sorted()[0].restPose).toBeUndefined()
+})
+
+test('a piece with no continuous neighbour is just deleted: its slot stays empty, nothing moves', () => {
   const k = s().newClip('g1') // 120 frames; item0 covers 0–120
   s().addItem(actor, k, 150); s().addItem(actor, k, 300)
   const starts = () => [...trackItems(actor)].sort((a, b) => a.start - b.start).map(i => i.start)
-  expect(starts()).toEqual([0, 150, 300])
   const mid = trackItems(actor).find(i => i.start === 150)!.id
   expect(s().deleteItem(mid)).toBe(true)
-  expect(starts()).toEqual([0, 120]) // the last piece starts where the first ends
-  s().undo(); expect(starts()).toEqual([0, 150, 300])
-  s().deleteItem(item0().id) // the first piece: the rest move to 0, keeping their spacing
-  expect(starts()).toEqual([0, 150])
+  expect(starts()).toEqual([0, 300])
+  s().deleteItem(item0().id) // first piece, the next is another clip: no merge, no pull
+  expect(starts()).toEqual([300])
 })
 
 test('swapItems: two pieces trade places, the rest re-flow end to end, each slot keeps its gap (one undo)', () => {
