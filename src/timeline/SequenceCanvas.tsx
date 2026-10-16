@@ -25,7 +25,7 @@ const ROW_H = 28, EDGE = 6
 const DENY = '이 위치에 놓을 수 없습니다'
 const LOCKED = '잠긴 트랙입니다'
 const ICON_HIT = 18 // hit area; icons are drawn 14px: (motion) path, eye, padlock at the label column's right edge
-const TRAIL_X = LABEL_W - 56, EYE_X = LABEL_W - 36, LOCK_X = LABEL_W - 16
+const TRAIL_X = LABEL_W - 56, EYE_X = LABEL_W - 36, LOCK_X = LABEL_W - 16, PLAY_X = EYE_X - 20 // PLAY_X: piece lanes, left of the eye
 const TRI_W = 18, NAME_X = 20, CHILD_X = NAME_X + 16 // disclosure triangle hit width; track / child label x
 
 // Eye (slashed when the track is hidden) and padlock (shackle open when unlocked); `on` = accent, off = line.
@@ -34,6 +34,13 @@ function drawEye(ctx: CanvasRenderingContext2D, cx: number, cy: number, on: bool
   ctx.beginPath(); ctx.ellipse(cx, cy, 7, 4.5, 0, 0, Math.PI * 2); ctx.stroke()
   ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI * 2); ctx.fill()
   if (on) { ctx.beginPath(); ctx.moveTo(cx - 6, cy + 6); ctx.lineTo(cx + 6, cy - 6); ctx.stroke() }
+  ctx.restore()
+}
+// Piece lane play / pause of the clip preview's loop: a triangle, or two bars while that piece plays
+function drawPlay(ctx: CanvasRenderingContext2D, cx: number, cy: number, playing: boolean, col: string) {
+  ctx.save(); ctx.fillStyle = col
+  if (playing) { ctx.fillRect(cx - 4, cy - 5, 3, 10); ctx.fillRect(cx + 1, cy - 5, 3, 10) }
+  else { ctx.beginPath(); ctx.moveTo(cx - 4, cy - 5); ctx.lineTo(cx + 5, cy); ctx.lineTo(cx - 4, cy + 5); ctx.closePath(); ctx.fill() }
   ctx.restore()
 }
 // 경로 표시: a floor path (S curve) ending in the root dot
@@ -271,14 +278,16 @@ export default function SequenceCanvas() {
           bars(t, [it], y, color, true, overlaps(items).filter(([a, b]) => a < it.start + itemLen(it) && b > it.start))
           ctx.fillStyle = C.bg; ctx.fillRect(0, y, LABEL_W - 1, ROW_H - 1)
           drawEye(ctx, EYE_X, y + ROW_H / 2, !!it.hidden, it.hidden ? C.accent : C.line)
+          const previewing = it.id === s.itemPreview
+          drawPlay(ctx, PLAY_X, y + ROW_H / 2, previewing && s.previewPlaying, previewing ? C.accent : C.line)
           ctx.font = '10px "IBM Plex Sans KR", sans-serif'
           ctx.fillStyle = it.id === s.selItem ? C.accent : hasEdit(it) ? C.piece : C.text // 수정됨: green
           // the column is narrow: "#n · start" (the bar shows the clip name), a short physics tag on the right; the full text on hover
-          const { st, old } = phys(t, r.it), tag = treeTag(st, old), right = EYE_X - ICON_HIT / 2 - 4, tw = tag.text ? ctx.measureText(tag.text).width + 6 : 0
+          const { st, old } = phys(t, r.it), tag = treeTag(st, old), right = PLAY_X - ICON_HIT / 2 - 4, tw = tag.text ? ctx.measureText(tag.text).width + 6 : 0
           if (tag.text) {
             ctx.save(); ctx.textAlign = 'right'; ctx.fillStyle = tag.warn ? WARN_RED : DIM; ctx.fillText(tag.text, right, y + ROW_H / 2); ctx.restore()
           }
-          const warn = (it.id === s.itemPreview ? '▶ ' : '') + (it.restPose === 'prepend' && leadOf(it)?.why === 'review' ? '⚠ ' : '') // 관성 검토 필요, in front so it is never cut
+          const warn = (it.restPose === 'prepend' && leadOf(it)?.why === 'review' ? '⚠ ' : '') // 관성 검토 필요, in front so it is never cut
           ctx.fillText(fit(ctx, warn + laneLabel(t, it) + (hasEdit(it) ? ' 수정' : ''), right - CHILD_X - tw), CHILD_X, y + ROW_H / 2)
           ctx.font = '11px "IBM Plex Sans KR", sans-serif'
           return
@@ -367,6 +376,11 @@ export default function SequenceCanvas() {
       }
       const r = layout()[row]
       if (r?.it && x < LABEL_W && Math.abs(x - EYE_X) <= ICON_HIT / 2) { s.setItemHidden(r.it.id, !r.it.hidden); return } // the piece's 숨기기
+      if (r?.it && x < LABEL_W && Math.abs(x - PLAY_X) <= ICON_HIT / 2) { // play / pause that piece's loop in the clip preview
+        if (s.itemPreview === r.it.id) s.setPreviewPlaying(!s.previewPlaying)
+        else s.openItemPreview(r.it.id, true)
+        return
+      }
       if (r?.it && x < LABEL_W) { // lane label: select the piece and preview it
         s.selectItem(r.it.id)
         if (r.t.actorId) s.select(r.t.actorId)
@@ -453,7 +467,7 @@ export default function SequenceCanvas() {
       canvas.style.cursor = h && h.mode !== 'move' ? 'ew-resize' : ''
       // hover help for the track label icons
       const r = x < LABEL_W && y >= RULER_H ? layout()[rowAt(y)] : undefined, near = (ix: number) => Math.abs(x - ix) <= ICON_HIT / 2
-      const tip = !r ? '' : r.it ? (near(EYE_X) ? '이 조각 숨기기' : laneTip(r.t, r.it))
+      const tip = !r ? '' : r.it ? (near(EYE_X) ? '이 조각 숨기기' : near(PLAY_X) ? (ed.getState().itemPreview === r.it.id && ed.getState().previewPlaying ? '멈춤' : '재생 (클립 프리뷰에서 반복)') : laneTip(r.t, r.it))
         : !isVideo(r.t) && near(TRAIL_X) ? '경로 표시: 이 로봇의 골반이 지나간 바닥 경로를 메인 화면에 선으로 보여 줍니다'
         : near(EYE_X) ? '숨기기' : near(LOCK_X) ? '잠그기' : ''
       if (canvas.title !== tip) canvas.title = tip
