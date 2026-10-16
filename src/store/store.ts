@@ -271,6 +271,13 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         for (const [n, cv] of Object.entries(c.offset)) if (!cv.keys.length) delete c.offset[n]
         if (!Object.keys(c.offset).length) delete c.offset
       }
+      // The draft deep-copied every piece's 수정 층: keep the old object where it did not change, so the bakes and caches keyed
+      // on it (itemClip, lead-in, foot contact, IK) keep hitting after an edit elsewhere. Committed projects are never mutated.
+      const old = new Map(get().project.sequence.tracks.flatMap(t => t.items.map(i => [i.id, i.offset] as const)))
+      for (const t of next.sequence.tracks) for (const it of t.items) {
+        const o = old.get(it.id)
+        if (o && it.offset && it.offset !== o && JSON.stringify(it.offset) === JSON.stringify(o)) it.offset = o
+      }
       if (!gesture || !gestureMoved) { undoS = [...undoS, get().project].slice(-MAX_UNDO); redoS = [] }
       if (gesture) gestureMoved = true
       set({ project: freezeClips(next), ...follow(next) })
