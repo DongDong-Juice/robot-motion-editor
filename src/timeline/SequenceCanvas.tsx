@@ -6,7 +6,7 @@ import { itemLead, itemTail, previewRange, REST_BLEND, REST_HOLD } from '../mode
 import type { Item, Track } from '../model/types'
 import { offsetKeyCount } from '../model/itemClip'
 import { seqFlash, tv } from './viewState'
-import { followStep, markHover, markUserScroll, resetFollow } from './follow'
+import { edgeScroll, followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { sequenceEnd } from '../transport'
 import { drawRuler, hitMarker, LABEL_W, RULER_H } from './ruler'
 import { dropPlacement } from '../model/dropPlacement'
@@ -376,7 +376,7 @@ export default function SequenceCanvas() {
       if (y < RULER_H) {
         const mi = hitMarker(s.project.sequence, scale(), x)
         if (mi !== null) { s.setFrame(s.project.sequence.markers[mi].f); return }
-        s.setFrame(frameAt(x)); track(m => s.setFrame(frameAt(pos(m).x)), () => {})
+        s.setFrame(frameAt(x)); track(scrubDrag, scrubEnd)
         return
       }
       const sb = sbar()
@@ -407,7 +407,7 @@ export default function SequenceCanvas() {
       const hit = itemAt(x, y)
       if (!hit) {
         s.selectItem(null); s.setFrame(frameAt(x))
-        track(m => s.setFrame(frameAt(pos(m).x)), () => {})
+        track(scrubDrag, scrubEnd)
         return
       }
       const { t, it, mode } = hit
@@ -470,12 +470,18 @@ export default function SequenceCanvas() {
     }
 
     const hover = hoverScrub(() => ed.getState().frame, f => { markHover(); ed.getState().setFrame(f) })
+    // past 90% / before 10% of the track area while the playhead follows the pointer: scroll (dragging: the playhead itself)
+    let edgeDrag = false
+    const edge = edgeScroll(() => [LABEL_W, W - SB_W], () => [0, sequenceEnd(ed.getState().project) - (W - SB_W - LABEL_W) / tv.ppf * 0.5],
+      x => { if (edgeDrag) ed.getState().setFrame(frameAt(x)); else { const f = hoverFrame(x, LABEL_W, scale(), false); if (f !== null) hover.push(Math.max(0, f)) } schedule() })
+    const scrubDrag = (m: MouseEvent) => { const x = pos(m).x; ed.getState().setFrame(frameAt(x)); edgeDrag = true; edge.at(x) }
+    const scrubEnd = () => { edgeDrag = false; edge.stop() }
     const onMove = (e: MouseEvent) => {
       const { x, y } = pos(e), over = y >= RULER_H && x >= W - SB_W && !!sbar()
       const overH = !over && y >= H - SB_W && x >= LABEL_W && !!hbar()
       if (over !== sbHover) { sbHover = over; schedule() }
       if (overH !== hbHover) { hbHover = overH; schedule() }
-      if (over || overH) { canvas.style.cursor = ''; return }
+      if (over || overH) { canvas.style.cursor = ''; if (!edgeDrag) edge.stop(); return }
       const h = itemAt(x, y)
       canvas.style.cursor = h && h.mode !== 'move' ? 'ew-resize' : ''
       // hover help for the track label icons
@@ -485,7 +491,7 @@ export default function SequenceCanvas() {
         : near(EYE_X) ? '숨기기' : near(LOCK_X) ? '잠그기' : ''
       if (canvas.title !== tip) canvas.title = tip
       const f = hoverFrame(x, LABEL_W, scale(), e.buttons !== 0 || ed.getState().playing || renaming.current)
-      if (f !== null) hover.push(Math.max(0, f))
+      if (f !== null) { hover.push(Math.max(0, f)); edge.at(x) } else if (!edgeDrag) edge.stop()
     }
 
     // full text of a lane label (hover): piece, time range, clip, 기본자세, physics
@@ -538,7 +544,7 @@ export default function SequenceCanvas() {
 
     canvas.addEventListener('mousedown', onDown)
     canvas.addEventListener('mousemove', onMove)
-    const onLeave = () => { if (sbHover || hbHover) { sbHover = hbHover = false; schedule() } }
+    const onLeave = () => { if (!edgeDrag) edge.stop(); if (sbHover || hbHover) { sbHover = hbHover = false; schedule() } }
     canvas.addEventListener('mouseleave', onLeave)
     canvas.addEventListener('dblclick', onDbl)
     canvas.addEventListener('contextmenu', onContext)
@@ -549,7 +555,7 @@ export default function SequenceCanvas() {
     addEventListener('dragend', clearGhost)
     return () => {
       seqFlash.fn = null
-      ro.disconnect(); document.fonts?.removeEventListener('loadingdone', schedule); unsub(); unsubMedia(); unsubPhys(); hover.stop(); cancelAnimationFrame(raf); clearTimeout(timer)
+      ro.disconnect(); document.fonts?.removeEventListener('loadingdone', schedule); unsub(); unsubMedia(); unsubPhys(); hover.stop(); edge.stop(); cancelAnimationFrame(raf); clearTimeout(timer)
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('mouseleave', onLeave)

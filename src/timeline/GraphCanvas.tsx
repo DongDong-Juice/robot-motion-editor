@@ -7,7 +7,7 @@ import type { Curve, Key, Sequence } from '../model/types'
 import { evalCurve } from '../model/curve'
 import { fitView, handlePoints, valueToY, velocityViolations, yToValue, type ValueScale } from './graph'
 import { frameToX, hoverFrame, hoverScrub, ROOT_CHANNELS, type TimeScale } from './timeScale'
-import { followStep, markHover, markUserScroll, resetFollow } from './follow'
+import { edgeScroll, followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { drawRuler, LABEL_W, RULER_H } from './ruler'
 import { drawPieceBounds, drawRangeBand, minScrollF, startRangeDrag } from './rangeBand'
 import { tv } from './viewState'
@@ -226,7 +226,7 @@ export default function GraphCanvas() {
       canvas.focus()
       const { x, y } = pos(e), c = ctxOf(), st = ed.getState()
       if (y < RULER_H && startRangeDrag(e, x, scale, m => pos(m).x, track)) return // Shift+drag on the ruler: 구간
-      if (y < RULER_H) { st.setFrame(seqFrame(x)); track(m => st.setFrame(seqFrame(pos(m).x)), () => {}); return }
+      if (y < RULER_H) { st.setFrame(seqFrame(x)); track(m => { const mx = pos(m).x; st.setFrame(seqFrame(mx)); edgeDrag = true; edge.at(mx) }, () => { edgeDrag = false; edge.stop() }); return }
       if (!c || x < LABEL_W) return
       const { def, cs, clipId, piece, src } = c, chs = shown(), frozen = clipLocked(st.project, clipId), clip = { ...src } // locked: select only (Timeline shows the message)
       const near = (px: number, py: number) => Math.abs(px - x) <= 6 && Math.abs(py - y) <= 6
@@ -278,11 +278,15 @@ export default function GraphCanvas() {
     }
 
     const hover = hoverScrub(() => ed.getState().frame, f => { markHover(); ed.getState().setFrame(f) })
+    let edgeDrag = false // past 90% / before 10% of the plot while the playhead follows the pointer: scroll
+    const edge = edgeScroll(() => [LABEL_W, W], () => { const e = editingItem(ed.getState()); return [minScrollF(), (e?.item.trimOut ?? 0) - (W - LABEL_W) / tv.ppf * 0.5] },
+      x => { if (edgeDrag) ed.getState().setFrame(seqFrame(x)); else hover.push(seqFrame(x)); schedule() })
     const onMove = (e: MouseEvent) => {
       const x = pos(e).x
       const f = hoverFrame(x, LABEL_W, scale(), e.buttons !== 0 || ed.getState().playing || !editingItem(ed.getState()))
-      if (f !== null) hover.push(seqFrame(x))
+      if (f !== null) { hover.push(seqFrame(x)); edge.at(x) } else if (!edgeDrag) edge.stop()
     }
+    const onLeave = () => { if (!edgeDrag) edge.stop() }
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
@@ -306,12 +310,14 @@ export default function GraphCanvas() {
 
     canvas.addEventListener('mousedown', onDown)
     canvas.addEventListener('mousemove', onMove)
+    canvas.addEventListener('mouseleave', onLeave)
     canvas.addEventListener('wheel', onWheel, { passive: false })
     window.addEventListener('keydown', onKey)
     return () => {
-      ro.disconnect(); document.fonts?.removeEventListener('loadingdone', schedule); unsub(); cancelAnimationFrame(raf); hover.stop()
+      ro.disconnect(); document.fonts?.removeEventListener('loadingdone', schedule); unsub(); cancelAnimationFrame(raf); hover.stop(); edge.stop()
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)
+      canvas.removeEventListener('mouseleave', onLeave)
       canvas.removeEventListener('wheel', onWheel)
       window.removeEventListener('keydown', onKey)
     }
