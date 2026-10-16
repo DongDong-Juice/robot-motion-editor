@@ -25,8 +25,8 @@ export function loadTemplate(id: string): Promise<Template> {
 
 const DEFAULT = { meters: 1.0, degrees: 90 }
 
-// The 라이브러리 tab's input for the picked block. actorId null = a new GO2 actor on 추가; onAdded gets the actor the block went to and the clip name.
-export default function Go2BlockPanel({ actorId, blockId, onAdded }: { actorId: string | null; blockId: string; onAdded?: (actorId: string, name: string) => void }) {
+// The 라이브러리 tab's input for the picked block. actorId null = a new GO2 actor on 추가; onAdded gets the clip name.
+export default function Go2BlockPanel({ actorId, blockId, onAdded }: { actorId: string | null; blockId: string; onAdded?: (name: string) => void }) {
   const locked = useEditor(s => !!actorId && trackLocked(s.project, actorId))
   const target = useEditor(s => s.project.actors.find(a => a.id === actorId)?.name)
   const block = GO2_BLOCKS.find(b => b.id === blockId)!
@@ -51,7 +51,7 @@ export default function Go2BlockPanel({ actorId, blockId, onAdded }: { actorId: 
     const st = getEditor().getState(), clip = buildBlockClip(block, t.poses, t.fps, v, st.defs)
     const itemId = st.appendClip(actorId, clip)
     const p = getEditor().getState().project, track = itemId ? p.sequence.tracks.find(tr => tr.items.some(i => i.id === itemId)) : null
-    if (itemId && track?.actorId) onAdded?.(track.actorId, p.clips[clip.id]?.name ?? clip.name)
+    if (itemId && track?.actorId) onAdded?.(p.clips[clip.id]?.name ?? clip.name)
   }
 
   return (
@@ -67,7 +67,7 @@ export default function Go2BlockPanel({ actorId, blockId, onAdded }: { actorId: 
         </label>
       )}
       {actual && <p className="pp-dim" role="status">→ 실제 {+actual.actual.toFixed(unit === 'm' ? 2 : 0)}{unit} ({actual.n}회)</p>}
-      {tpl?.id === blockId && tpl.err && <p className="pp-msg" role="alert">템플릿을 불러오지 못했습니다: {tpl.err}</p>}
+      {tpl?.id === blockId && tpl.err && <p className="pp-msg" role="alert" style={{ color: 'var(--warn)' }}>템플릿을 불러오지 못했습니다: {tpl.err}</p>}
       <div className="pp-tools">
         <span className="pp-dim pp-name">대상: {target ?? '새 GO2 로봇'}</span>
         <button disabled={!t || !valid || locked} onClick={add}>추가</button>

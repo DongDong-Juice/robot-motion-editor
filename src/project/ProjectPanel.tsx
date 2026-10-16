@@ -25,6 +25,7 @@ export default function ProjectPanel() {
   const [tab, setTab] = useState<'clip' | 'media' | 'block'>('clip')
   const [query, setQuery] = useState('')
   const res = useImportUi(s => s.res)
+  useEffect(() => { if (res) setTab('clip') }, [res]) // show what was just imported
   useEffect(() => { if (res) { const t = setTimeout(() => setImportResult(null), 10000); return () => clearTimeout(t) } }, [res])
   const count = tab === 'block' ? filterBlocks(query).length : filterTree(tab === 'clip' ? Object.values(project.clips) : project.media, [], query, new Set()).count
 

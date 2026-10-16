@@ -92,7 +92,7 @@ export interface EditorState {
   // New actor (no default clip) for the clip's robot with the clip at `start`; null = unknown clip. One undo entry.
   placeClipAsNewActor(clipId: string, start: number): { actorId: string; itemId: string } | null
   // Add the clip to the assets (name deduped) and place it right after the actor's last item; new item id, null = locked/unknown/robot mismatch. One undo entry.
-  // actorId null: a new actor for the clip's robot, with the clip at 0 (메뉴 ▸ GO2 블럭 추가 on a project without a GO2).
+  // actorId null: a new actor for the clip's robot, with the clip at 0 (목록 ▸ 라이브러리 tab on a project without a GO2).
   appendClip(actorId: string | null, clip: Clip): string | null
   simplifyClip(clipId: string, rot?: number, pos?: number): number
   deleteClip(clipId: string): boolean
@@ -748,7 +748,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       renameBin: (id, name) => {
         const n = name.trim()
         return !!n && tryEdit(p => {
-          if (!p.bins?.some(b => b.id === id)) return false
+          if (!p.bins?.find(b => b.id === id) || p.bins.find(b => b.id === id)!.name === n) return false // unchanged = no undo entry
           p.bins = p.bins.map(b => b.id === id ? { ...b, name: n } : b)
           return true
         })

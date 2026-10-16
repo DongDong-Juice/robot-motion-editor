@@ -22,6 +22,12 @@ test('renameBin ignores a blank name', () => {
   expect(s().renameBin(b, ' Walk ')).toBe(true)
   expect(s().project.bins![0].name).toBe('Walk')
 })
+test('renameBin to the same name is a no-op with no undo entry', () => {
+  const b = s().addBin('clip')
+  expect(s().renameBin(b, ' 폴더 1 ')).toBe(false)
+  s().undo()
+  expect(s().project.bins ?? []).toEqual([])
+})
 test('deleteBin keeps its items at the top level', () => {
   const c = s().newClip('g1'), b = s().addBin('clip', [c])
   s().deleteBin(b)

@@ -116,3 +116,15 @@ test('a fixed block dragged to empty timeline space makes a GO2 actor and clip',
   expect(await clipCount(page)).toBe(1)
   await expect(row(page, 'Move forward')).not.toHaveAttribute('draggable', 'true')
 })
+
+test('a fixed block drags to the timeline without picking its row first', async ({ page }) => {
+  await boot(page)
+  await library(page)
+  const seq = page.locator('.seq-canvas'), box = (await seq.boundingBox())!
+  // the template preloads in the background: retry the drag until it takes
+  await expect(async () => {
+    await row(page, 'Stretch').dragTo(seq, { targetPosition: { x: 300, y: box.height - 20 } })
+    expect((await actors(page)).map(a => a.robot)).toEqual(['go2'])
+  }).toPass()
+  expect(await clipCount(page)).toBe(1)
+})

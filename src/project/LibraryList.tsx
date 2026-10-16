@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react'
-import Go2BlockPanel, { cachedTemplate } from '../go2blocks/Go2BlockPanel'
+import { useEffect, useRef, useState } from 'react'
+import Go2BlockPanel, { cachedTemplate, loadTemplate } from '../go2blocks/Go2BlockPanel'
 import { GO2_BLOCKS } from '../go2blocks/blocks'
 import { buildBlockClip } from '../go2blocks/build'
 import { getEditor, useEditor } from '../store/store'
@@ -19,6 +19,7 @@ export default function LibraryList({ query }: { query: string }) {
     const go2 = s.project.actors.filter(a => a.robot === 'go2')
     return (go2.find(a => a.id === s.sel.actorId) ?? go2[0])?.id ?? null
   })
+  useEffect(() => { for (const b of GO2_BLOCKS) if (b.kind === 'fixed') loadTemplate(b.id).catch(() => {}) }, []) // a drag fires no click, so load up front
   const rows = filterBlocks(query)
   const ids = rows.map(b => b.id)
   const tabStop = focus && ids.includes(focus) ? focus : ids[0]
@@ -26,6 +27,7 @@ export default function LibraryList({ query }: { query: string }) {
 
   const onKey = (e: React.KeyboardEvent, id: string) => {
     const d = ({ ArrowDown: 1, ArrowUp: -1 } as Record<string, number>)[e.key]
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') e.stopPropagation()
     const n = d && ids[ids.indexOf(id) + d]
     if (!n) return
     e.preventDefault(); e.stopPropagation()
@@ -55,7 +57,7 @@ export default function LibraryList({ query }: { query: string }) {
         ))}
       </div>
       {sel && <div className="pp-blk">
-        <Go2BlockPanel key={sel} actorId={target} blockId={sel} onAdded={(_, name) => setMsg(`추가했습니다: ${name}`)} />
+        <Go2BlockPanel key={sel} actorId={target} blockId={sel} onAdded={name => setMsg(`추가했습니다: ${name}`)} />
         {msg && <p className="pp-msg" aria-live="polite">{msg}</p>}
       </div>}
     </>

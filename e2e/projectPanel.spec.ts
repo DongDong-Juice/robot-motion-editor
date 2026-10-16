@@ -66,6 +66,11 @@ test('폴더', async ({ page }) => {
   await expect(bin).toHaveAttribute('aria-expanded', 'true')
   expect(await frame()).toBe(30)
 
+  // ←/→ on a top-level clip row never step the playhead either
+  await page.locator(`.pp-row[data-id="${clips[0].id}"]`).focus()
+  await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowRight')
+  expect(await frame()).toBe(30)
+
   // save → open keeps the folder and its member
   await page.evaluate(async () => {
     const { serializeProject, parseProject } = await import(/* @vite-ignore */ '/src/model/projectFile.ts')

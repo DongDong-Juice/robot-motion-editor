@@ -133,6 +133,7 @@ export default function AssetList({ tab, query, setQuery }: { tab: 'clip' | 'med
 
   const onKey = (e: React.KeyboardEvent<HTMLElement>, r: Row) => {
     if (e.target !== e.currentTarget) return
+    if (e.key.startsWith('Arrow')) e.stopPropagation() // never reaches the transport
     const id = rowId(r), i = ids.indexOf(id)
     const go = (j: number) => { const n = ids[j]; if (n) { e.preventDefault(); e.stopPropagation(); setSel(new Set([n])); setAnchor(n); focusRow(n) } }
     if (e.key === 'ArrowDown') go(i + 1)
@@ -144,7 +145,11 @@ export default function AssetList({ tab, query, setQuery }: { tab: 'clip' | 'med
       e.preventDefault(); e.stopPropagation()
       const b = e.currentTarget.getBoundingClientRect()
       setMenu({ id, x: b.left + 8, y: b.top + 24, row: e.currentTarget })
-    } else if (e.key === 'Delete') { e.stopPropagation(); del(id) }
+    } else if (e.key === 'Delete') {
+      e.stopPropagation(); del(id)
+      const next = ids[i + 1] ?? ids[i - 1] // focus would fall to body once the row is gone
+      setTimeout(() => { if (!treeRef.current?.querySelector(`[data-id="${id}"]`) && next) focusRow(next) })
+    }
     else if ((e.key === 'Enter' || e.key === 'F2') && (r.kind === 'bin' || tab === 'clip')) { e.preventDefault(); e.stopPropagation(); setRenaming(id) }
   }
 
