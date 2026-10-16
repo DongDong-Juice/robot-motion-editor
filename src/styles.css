@@ -271,6 +271,10 @@ body {
 .pp-meta { color: var(--dim); font-size: 10.5px; }
 .pp-box button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 3px; font: inherit; font-size: 12px; padding: 3px 8px; cursor: pointer; width: 100%; }
 .pp-box button:hover { border-color: var(--accent); }
+.pp-video { display: flex; align-items: center; gap: 4px; margin: 2px 0 6px; }
+.pp-video button { background: var(--bg); color: var(--dim); border: 1px solid var(--line); border-radius: 3px; font: inherit; font-size: 12px; padding: 2px 10px; cursor: pointer; }
+.pp-video button[aria-pressed=true] { color: var(--text); border-color: var(--accent); }
+.pp-video input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
 .pp-card:focus-visible, .pp-box button:focus-visible, .pp-btns button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .pp-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .pp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

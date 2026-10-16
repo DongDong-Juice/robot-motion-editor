@@ -3,6 +3,7 @@ import { relinkMedia, setImportResult, useImportUi, importDroppedFiles } from '.
 import { mediaUrl, subscribeMedia } from '../media/registry'
 import { getEditor, useEditor } from '../store/store'
 import { curveKeyCount } from '../model/itemClip'
+import { videoTrack } from '../model/video'
 import { setDragged } from '../timeline/assetDrop'
 
 function RenameInput({ name, onDone }: { name: string; onDone: (v: string | null) => void }) {
@@ -40,6 +41,20 @@ function CardMenu({ menu, items, close }: { menu: Menu; items: [string, () => vo
   return (
     <div ref={ref} role="menu" aria-label="목록" className="tl-menu" style={{ left: menu.x, top: menu.y }} onKeyDown={onKey}>
       {items.map(([label, run]) => <button key={label} role="menuitem" tabIndex={-1} onClick={() => { close(false); run() }}>{label}</button>)}
+    </div>
+  )
+}
+
+// How the reference video on V1 is shown (viewer preference, not saved): over the robot view or split beside it, with opacity.
+function VideoView() {
+  const st = getEditor().getState(), mode = useEditor(s => s.videoMode), opacity = useEditor(s => s.videoOpacity)
+  if (!useEditor(s => !!videoTrack(s.project)?.items.length)) return null
+  return (
+    <div role="group" aria-label="영상" className="pp-video">
+      <span className="pp-meta">보기</span>
+      {([['overlay', '오버레이'], ['split', '분할']] as const).map(([m, label]) =>
+        <button key={m} aria-pressed={mode === m} onClick={() => st.setVideoMode(m)}>{label}</button>)}
+      {mode === 'overlay' && <input type="range" aria-label="영상 투명도" title="영상 투명도" min={0} max={1} step={0.05} value={opacity} onChange={e => st.setVideoOpacity(+e.target.value)} />}
     </div>
   )
 }
@@ -122,6 +137,7 @@ export default function ProjectPanel() {
         </div>
       ))}
       {project.media.length > 0 && <h3>영상</h3>}
+      <VideoView />
       {project.media.map(m => {
         const off = mediaUrl(m.id) == null
         return (
