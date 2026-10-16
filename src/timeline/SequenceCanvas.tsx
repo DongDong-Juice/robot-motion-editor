@@ -506,11 +506,11 @@ export default function SequenceCanvas() {
       const { row, frame } = dropAt(e), p = ed.getState().project, pl = dropPlacement(p, asset, row?.t.id ?? null, frame)
       if (pl.kind === 'reject') return setGhost(null)
       const rows = layout(), last = rows.at(-1), bottom = last ? last.y + last.h : RULER_H - scrollY
-      if (pl.kind === 'newActor') setGhost({ y: bottom, start: pl.start, len: p.clips[asset.id].length, color: COLOR[pl.robot] })
+      if (pl.kind === 'newActor') setGhost({ y: bottom, start: pl.start, len: (asset.clip ?? p.clips[asset.id]).length, color: COLOR[pl.robot] })
       else {
         const t = pl.kind === 'video' ? rows.find(r => !r.it && isVideo(r.t)) : rows.find(r => !r.it && r.t.id === pl.trackId)
         const actor = p.actors.find(a => a.id === t?.t.actorId)
-        setGhost(t ? { y: t.y, start: pl.start, len: asset.kind === 'clip' ? p.clips[asset.id].length : p.media.find(m => m.id === asset.id)!.durationF, color: actor?.color ?? C.accent } : null)
+        setGhost(t ? { y: t.y, start: pl.start, len: asset.kind === 'clip' ? (asset.clip ?? p.clips[asset.id]).length : p.media.find(m => m.id === asset.id)!.durationF, color: actor?.color ?? C.accent } : null)
       }
     }
     const onDrop = (e: DragEvent) => {

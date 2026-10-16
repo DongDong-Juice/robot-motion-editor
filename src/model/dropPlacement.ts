@@ -1,9 +1,10 @@
 import type { RobotKind } from '../robot/types'
 import { itemLen, validTrack } from './sequence'
-import type { Item, Project } from './types'
+import type { Clip, Item, Project } from './types'
 import { validVideoTrack, videoTrack } from './video'
 
-export interface Asset { kind: 'clip' | 'media'; id: string }
+// `clip` = a new clip not yet in the project (id === clip.id): a GO2 block dragged from the library.
+export interface Asset { kind: 'clip' | 'media'; id: string; clip?: Clip }
 export type Placement =
   | { kind: 'existing'; trackId: string; start: number }
   | { kind: 'newActor'; robot: RobotKind; start: number }
@@ -31,7 +32,7 @@ export function dropPlacement(p: Project, asset: Asset, rowTrackId: string | nul
     const start = snap(t?.items ?? [], m.id, m.durationF, f, items => validVideoTrack(items, media))
     return start === null ? { kind: 'reject', reason: '이 위치에 놓을 수 없습니다' } : { kind: 'video', start }
   }
-  const clip = p.clips[asset.id]
+  const clip = asset.clip ?? p.clips[asset.id]
   if (!clip) return { kind: 'reject', reason: '알 수 없는 클립입니다' }
   const t = p.sequence.tracks.find(t => t.id === rowTrackId)
   const actor = t?.kind === 'motion' ? p.actors.find(a => a.id === t.actorId) : undefined

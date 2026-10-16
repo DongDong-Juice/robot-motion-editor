@@ -60,7 +60,7 @@ test('headed CSV import creates the G1 actor; export reproduces the input', asyn
   // headed: no fps dialog, imported straight away
   await expect(page.locator('.pp-msg')).toContainText('클립 1개를 가져왔습니다')
   await expect(page.locator('dialog.pp-dlg[open]')).toHaveCount(0)
-  await expect(page.locator('.pp-tag')).toHaveText('G1')
+  await expect(page.locator('.pp-row[data-kind=clip] .pp-col-robot')).toHaveText('G1')
 
   const placed = await page.evaluate(() => {
     const p = (window as any).__editor.getState().project
@@ -106,7 +106,7 @@ test('메뉴 menu: keyboard navigation and focus return', async ({ page }) => {
   await expect(trigger).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(trigger).toHaveAttribute('aria-expanded', 'true')
-  await expect(items).toHaveCount(9)
+  await expect(items).toHaveCount(8)
   expect(await focused()).toBe('새 프로젝트')
   await page.keyboard.press('ArrowUp') // wraps to the last
   expect(await focused()).toBe('내보내기')
