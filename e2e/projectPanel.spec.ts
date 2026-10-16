@@ -29,6 +29,10 @@ test('탭·필터', async ({ page }) => {
   await page.getByRole('tab', { name: '모션(CSV)' }).click()
   await expect(filter).toHaveValue('walk')
   await expect(page.locator('.pp-row[data-kind=clip]')).toHaveCount(1)
+  // 새 폴더 with nothing selected clears the filter so the empty folder shows and its rename starts
+  await page.getByRole('button', { name: '새 폴더' }).click()
+  await expect(page.getByRole('textbox', { name: '폴더 이름 변경' })).toBeVisible()
+  await expect(filter).toHaveValue('')
 })
 
 test('폴더', async ({ page }) => {
@@ -49,6 +53,18 @@ test('폴더', async ({ page }) => {
   expect((await st(page)).clips[0].bin).toBeUndefined()
   await page.evaluate(() => (window as any).__editor.getState().redo())
   expect((await st(page)).clips[0].bin).toBe(s.bins[0].id)
+
+  // ←/→ on a folder row fold it and never step the playhead
+  const frame = () => page.evaluate(() => (window as any).__editor.getState().frame as number)
+  await page.evaluate(() => (window as any).__editor.getState().setFrame(30))
+  await bin.focus()
+  await expect(bin).toHaveAttribute('aria-expanded', 'true')
+  await page.keyboard.press('ArrowLeft')
+  await expect(bin).toHaveAttribute('aria-expanded', 'false')
+  expect(await frame()).toBe(30)
+  await page.keyboard.press('ArrowRight')
+  await expect(bin).toHaveAttribute('aria-expanded', 'true')
+  expect(await frame()).toBe(30)
 
   // save → open keeps the folder and its member
   await page.evaluate(async () => {

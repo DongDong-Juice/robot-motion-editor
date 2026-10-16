@@ -55,7 +55,7 @@ export default function ProjectPanel() {
       </div>
       {tab === 'media' && <VideoView />}
       {/* both lists stay mounted so each keeps its open folders and selection across tab switches */}
-      {tabs.map(([t]) => <div key={t} className={`pp-list ${t}`} hidden={tab !== t}><AssetList tab={t} query={query} /></div>)}
+      {tabs.map(([t]) => <div key={t} className={`pp-list ${t}`} hidden={tab !== t}><AssetList tab={t} query={query} setQuery={setQuery} /></div>)}
       {res && (
         <div className="pp-msg" role="status">
           {res.head && <p>{res.head}</p>}

@@ -62,7 +62,7 @@ function RowMenu({ x, y, entries, close }: { x: number; y: number; entries: Entr
 }
 
 /** One tab's list (모션 or 영상): folders, filter, selection, drag (to the timeline or into a folder), rename, right-click menu. */
-export default function AssetList({ tab, query }: { tab: 'clip' | 'media'; query: string }) {
+export default function AssetList({ tab, query, setQuery }: { tab: 'clip' | 'media'; query: string; setQuery: (q: string) => void }) {
   const ed = getEditor()
   const project = useEditor(s => s.project), clipEdit = useEditor(s => s.clipEdit)
   const [, bump] = useReducer((n: number) => n + 1, 0)
@@ -118,6 +118,7 @@ export default function AssetList({ tab, query }: { tab: 'clip' | 'media'; query
   }
   const newBin = () => {
     const id = ed.getState().addBin(tab, selItems)
+    if (!selItems.length) setQuery('') // an empty folder is hidden while filtering, so its rename input would never mount
     setOpenBin(id, true); setSel(new Set([id])); setAnchor(id); setFocus(id); setRenaming(id)
   }
 
@@ -133,11 +134,11 @@ export default function AssetList({ tab, query }: { tab: 'clip' | 'media'; query
   const onKey = (e: React.KeyboardEvent<HTMLElement>, r: Row) => {
     if (e.target !== e.currentTarget) return
     const id = rowId(r), i = ids.indexOf(id)
-    const go = (j: number) => { const n = ids[j]; if (n) { e.preventDefault(); setSel(new Set([n])); setAnchor(n); focusRow(n) } }
+    const go = (j: number) => { const n = ids[j]; if (n) { e.preventDefault(); e.stopPropagation(); setSel(new Set([n])); setAnchor(n); focusRow(n) } }
     if (e.key === 'ArrowDown') go(i + 1)
     else if (e.key === 'ArrowUp') go(i - 1)
-    else if (e.key === 'ArrowRight' && r.kind === 'bin' && !r.open) { e.preventDefault(); setOpenBin(id, true) }
-    else if (e.key === 'ArrowLeft' && r.kind === 'bin' && r.open) { e.preventDefault(); setOpenBin(id, false) }
+    else if (e.key === 'ArrowRight' && r.kind === 'bin' && !r.open) { e.preventDefault(); e.stopPropagation(); setOpenBin(id, true) }
+    else if (e.key === 'ArrowLeft' && r.kind === 'bin' && r.open) { e.preventDefault(); e.stopPropagation(); setOpenBin(id, false) }
     else if (e.key === 'ArrowLeft' && r.kind === 'item' && r.depth === 1) { const b = itemOf.get(id)?.bin; if (b) go(ids.indexOf(b)) }
     else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
       e.preventDefault(); e.stopPropagation()
