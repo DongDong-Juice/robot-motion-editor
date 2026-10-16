@@ -1,7 +1,7 @@
 import { actorOf, clipLocked, editingItem, getEditor, useEditor } from '../store/store'
 import { exportClipCsv } from '../export/csv'
 import { saveCsvFile } from '../fileio'
-import { curveKeyCount } from '../model/itemClip'
+import { curveKeyCount, offsetKeyCount } from '../model/itemClip'
 import { useState } from 'react'
 import { cutAtFrame, sequenceEnd } from '../transport'
 import GraphCanvas from './GraphCanvas'
@@ -77,6 +77,7 @@ function TimelineHeader() {
   const actor = e && actorOf({ project, clipEdit }, e.actorId)
   const clipView = !!editing || !!clipEdit
   const shownEnd = clipEdit && e ? e.clip.length : end
+  const ghost = useEditor(s => s.originalGhost), anyEdit = useEditor(s => s.project.sequence.tracks.some(t => t.items.some(i => offsetKeyCount(i) > 0)))
   const progress = usePhysics(s => s.progress), loading = usePhysics(s => s.loading)
   const anyDone = usePhysics(s => Object.values(s.byItem).some(v => v.status === 'done'))
   return (
@@ -94,6 +95,8 @@ function TimelineHeader() {
         <button aria-pressed={view === 'tracks'} disabled={!clipView} onClick={() => st.setView('tracks')}>트랙</button>
         <button aria-pressed={view === 'graph'} disabled={!clipView} onClick={() => st.setView('graph')}>그래프</button>
       </span>
+      {!clipEdit && anyEdit && <button aria-pressed={ghost} onClick={() => st.setOriginalGhost(!ghost)}
+        title="수정한 조각 위에서 수정 전 원본을 메인 로봇 프리뷰에 반투명으로 겹쳐 보여 줍니다">원본 겹쳐 보기</button>}
       {clipEdit && e && <ClipEditBar clipId={clipEdit} name={e.clip.name} />}
       {e && !clipEdit && (
         <span className="tl-crumb">

@@ -64,6 +64,8 @@ export interface EditorState {
    *  frames each side. Not saved; cleared when the open clip changes. */
   range: Range | null; setRange(r: Range | null): void
   degrees: boolean; setDegrees(on: boolean): void // angle unit of the value fields (inspector and joint panel)
+  /** 원본 겹쳐 보기 (main view, default on): a piece with a 수정 층 under the playhead also shows its original as a ghost. View only. */
+  originalGhost: boolean; setOriginalGhost(on: boolean): void
   clearOffset(itemId: string): boolean // drop the piece's whole 수정 층 (one undo step); false = none / locked
   clearClipOffset(clipId: string): boolean // drop the clip's whole 수정 층 (one undo step); false = none
   select(actorId: string | null, channel?: string | null): void; selectKeys(keys: KeyRef[], additive: boolean): void
@@ -427,6 +429,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         return { range: { a, b, fade: Math.min(Math.max(Math.round(r.fade), 0), 600) } }
       }),
       degrees: true, setDegrees: degrees => set({ degrees }),
+      originalGhost: true, setOriginalGhost: originalGhost => set({ originalGhost }),
       setClipPeek: on => set({ clipPeek: on }),
       openClipEdit: clipId => {
         const s = get()
