@@ -218,3 +218,30 @@ test('physics round-trips as-is; absent stays absent; non-object is dropped', ()
     expect('physics' in parseProject(JSON.stringify(o), defs)).toBe(false)
   }
 })
+
+test('bins round-trip; clip/media bin kept', () => {
+  const p = mk(), c = Object.values(p.clips)[0]
+  p.bins = [{ id: 'b1', name: 'Walk', tab: 'clip' }, { id: 'b2', name: 'Ref', tab: 'media' }]
+  c.bin = 'b1'
+  const q = parseProject(serializeProject(p), defs)
+  expect(q.bins).toEqual(p.bins)
+  expect(q.clips[c.id].bin).toBe('b1')
+})
+test('a bin that is missing or of the other tab is dropped (item goes to the top level), the file still opens', () => {
+  const p = mk(), c = Object.values(p.clips)[0]
+  p.bins = [{ id: 'm', name: 'Ref', tab: 'media' }]
+  c.bin = 'gone'
+  expect(parseProject(serializeProject(p), defs).clips[c.id].bin).toBeUndefined()
+  c.bin = 'm'
+  expect(parseProject(serializeProject(p), defs).clips[c.id].bin).toBeUndefined()
+})
+test('an old file without bins opens with every item at the top level', () => {
+  const q = parseProject(v1(mk()), defs)
+  expect(q.bins).toBeUndefined()
+  expect(Object.values(q.clips).every(c => c.bin === undefined)).toBe(true)
+})
+test('malformed bins are rejected', () => {
+  bad(p => { p.bins = {} }, 'bins')
+  bad(p => { p.bins = [{ id: 'b', name: 'x', tab: 'block' }] }, 'bins.0')
+  bad(p => { p.bins = [{ id: 'b', name: 'x', tab: 'clip' }, { id: 'b', name: 'y', tab: 'clip' }] }, '중복된 ID')
+})
