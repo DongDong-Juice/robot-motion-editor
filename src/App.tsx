@@ -11,7 +11,6 @@ import { startTransport } from './transport'
 import { onMessage } from './projectActions'
 import FileMenu from './FileMenu'
 import PhysicsDialog from './physics/PhysicsDialog'
-import Go2BlockDialog from './go2blocks/Go2BlockDialog'
 import { usePhysics } from './physics/physicsStore'
 import { stale } from './physics/runItem'
 import CsvFpsDialog from './project/CsvFpsDialog'
@@ -30,7 +29,6 @@ function Menubar() {
   const st = useEditor(s => s)
   const [exporting, setExporting] = useState(false)
   const [physicsOpen, setPhysicsOpen] = useState(false)
-  const [blocksOpen, setBlocksOpen] = useState(false)
   const name = useEditor(s => s.fileName ?? 'Motion Editor'), dirty = useEditor(s => s.dirty)
   const [msg, setMsg] = useState('')
   const title = name + (dirty ? ' •' : '')
@@ -48,11 +46,10 @@ function Menubar() {
   }, [])
   return (
     <>
-      <FileMenu onExport={() => setExporting(true)} onPhysics={() => setPhysicsOpen(true)} onBlocks={() => setBlocksOpen(true)} />
+      <FileMenu onExport={() => setExporting(true)} onPhysics={() => setPhysicsOpen(true)} />
       <span className="mb-title">{title}</span>
       {msg && <span role="status" className="mb-msg">{msg}</span>}
       <PhysicsDialog open={physicsOpen} onClose={() => setPhysicsOpen(false)} />
-      <Go2BlockDialog open={blocksOpen} onClose={() => setBlocksOpen(false)} />
       <ExportDialog open={exporting} onClose={() => setExporting(false)} />
     </>
   )

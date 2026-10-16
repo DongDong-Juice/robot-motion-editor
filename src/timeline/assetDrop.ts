@@ -1,4 +1,4 @@
-import { dropPlacement, type Asset } from '../model/dropPlacement'
+import { dropPlacement, type Asset, type Placement } from '../model/dropPlacement'
 import { getEditor } from '../store/store'
 
 const CLIP = 'application/x-motion-clip', MEDIA = 'application/x-motion-media'
@@ -18,6 +18,18 @@ export const draggedAsset = (dt: DataTransfer | null): Asset | null => {
 export function dropAsset(asset: Asset, rowTrackId: string | null, frame: number): string | null {
   const s = getEditor().getState(), pl = dropPlacement(s.project, asset, rowTrackId, frame)
   if (pl.kind === 'reject') return pl.reason
+  if (!asset.clip) return place(asset, pl)
+  s.beginGesture() // the new clip and its placement are one undo entry
+  try {
+    s.addClip(asset.clip)
+    const r = place({ kind: 'clip', id: asset.clip.id }, pl)
+    if (r) getEditor().getState().cancelGesture() // placement failed: drop the clip too
+    return r
+  } finally { s.endGesture() }
+}
+
+function place(asset: Asset, pl: Exclude<Placement, { kind: 'reject' }>): string | null {
+  const s = getEditor().getState()
   if (pl.kind === 'newActor') {
     const r = s.placeClipAsNewActor(asset.id, pl.start)
     if (!r) return '이 위치에 놓을 수 없습니다'
@@ -37,7 +49,7 @@ export function dropAsset(asset: Asset, rowTrackId: string | null, frame: number
 export function dropAssetInClipView(asset: Asset): string | null {
   const s = getEditor().getState()
   s.closeItem()
-  const p = s.project, robot = asset.kind === 'clip' ? p.clips[asset.id]?.robot : undefined
+  const p = s.project, robot = asset.kind === 'clip' ? (asset.clip ?? p.clips[asset.id])?.robot : undefined
   const row = p.sequence.tracks.find(t => t.kind === 'motion' && p.actors.find(a => a.id === t.actorId)?.robot === robot)
   return dropAsset(asset, row?.id ?? null, s.frame)
 }

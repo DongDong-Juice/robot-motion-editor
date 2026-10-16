@@ -273,6 +273,18 @@ body {
 .pp-list[hidden] { display: none; }
 .pp-cols, .pp-row { display: grid; grid-template-columns: minmax(0, 1fr) 30px 48px 26px; align-items: center; gap: 4px; padding: 2px 4px; }
 .pp-list.media :is(.pp-cols, .pp-row) { grid-template-columns: minmax(0, 1fr) 48px auto; }
+.pp-list.block :is(.pp-cols, .pp-row) { grid-template-columns: minmax(0, 1fr) 36px; }
+.pp-col-kind { color: var(--dim); font-size: 11px; text-align: right; }
+.pp-row[draggable=true] { cursor: grab; }
+/* 라이브러리: the picked block's input */
+.pp-blk { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 6px; font-size: 12px; }
+.pp-blk p { margin: 0; }
+.pp-blk-t { font-size: 12px; font-weight: 500; margin: 0; }
+.pp-blk-field { display: flex; flex-direction: column; gap: 3px; color: var(--dim); }
+.pp-blk input { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 3px; font: inherit; font-variant-numeric: tabular-nums; text-align: right; padding: 2px 6px; }
+.pp-blk input:focus { outline: none; border-color: var(--accent); }
+.pp-blk .ps-unit input { padding-right: 24px; }
+.pp-blk .pp-tools { align-items: center; }
 .pp-cols { color: var(--dim); font-size: 11px; border-bottom: 1px solid var(--line); }
 .pp-tree { flex: 1; min-height: 40px; border-radius: 3px; }
 .pp-tree.over { outline: 1px dashed var(--accent); outline-offset: -1px; }
@@ -349,27 +361,10 @@ body {
 .ps input:focus-visible { outline: none; }
 .ps input::-webkit-inner-spin-button, .ps input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .ps input[type=number] { -moz-appearance: textfield; appearance: textfield; }
-/* 메뉴 ▸ GO2 블럭 추가… */
 .mb-msg { color: var(--accent); }
 .sr-only:not(:focus-within) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .sr-only:focus-within { position: absolute; z-index: 3; left: 0; top: 0; background: var(--panel); }
-.ps form, .ps-form { display: flex; flex-direction: column; gap: 14px; }
-.go2-dlg { width: 320px; }
-.ps-field { display: flex; flex-direction: column; gap: 4px; }
-.ps-field > span:first-child { font-size: 11.5px; color: var(--dim); }
-.ps select { width: 100%; height: 28px; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 3px; font: inherit; padding: 0 6px; cursor: pointer; }
-.ps select:hover { border-color: var(--line-hi); }
-.ps select:focus { outline: none; border-color: var(--accent); }
-.ps-field input { height: 28px; }
-.ps-status { margin-top: -8px; }
-.ps-status p, .ps p.ps-ok { margin: 0; }
-.ps-ok { color: var(--accent); font-size: 12px; }
 #menubar .ps-foot button:disabled { opacity: .45; cursor: default; filter: none; }
-#inspector .go2-blocks { gap: 8px; padding-bottom: 0; }
-.insp-addrow { display: flex; align-items: center; gap: 8px; }
-.insp-addstat { flex: 1; min-width: 0; font-size: 12px; }
-.insp-addstat p { margin: 0; }
-.insp .insp-addrow button { flex: none; height: 26px; padding: 0 14px; }
 
 /* 클립 편집 bar */
 .tl-clipedit { display: inline-flex; align-items: center; gap: 6px; }

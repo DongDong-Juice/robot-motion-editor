@@ -3,6 +3,7 @@ import { setImportResult, useImportUi, importDroppedFiles } from '../importActio
 import { getEditor, useEditor } from '../store/store'
 import { videoTrack } from '../model/video'
 import AssetList from './AssetList'
+import LibraryList, { filterBlocks } from './LibraryList'
 import { filterTree } from './binTree'
 
 // How the reference video on V1 is shown (viewer preference, not saved): over the robot view or split beside it, with opacity.
@@ -21,11 +22,11 @@ function VideoView() {
 
 export default function ProjectPanel() {
   const project = useEditor(s => s.project)
-  const [tab, setTab] = useState<'clip' | 'media'>('clip')
+  const [tab, setTab] = useState<'clip' | 'media' | 'block'>('clip')
   const [query, setQuery] = useState('')
   const res = useImportUi(s => s.res)
   useEffect(() => { if (res) { const t = setTimeout(() => setImportResult(null), 10000); return () => clearTimeout(t) } }, [res])
-  const count = filterTree(tab === 'clip' ? Object.values(project.clips) : project.media, [], query, new Set()).count
+  const count = tab === 'block' ? filterBlocks(query).length : filterTree(tab === 'clip' ? Object.values(project.clips) : project.media, [], query, new Set()).count
 
   // CSV files dragged in from the desktop: highlight the panel and import on drop (rows dragged out are not files)
   const [over, setOver] = useState(false)
@@ -40,7 +41,7 @@ export default function ProjectPanel() {
       void importDroppedFiles(Array.from(e.dataTransfer.files))
     },
   }
-  const tabs = [['clip', '모션(CSV)'], ['media', '영상']] as const
+  const tabs = [['clip', '모션(CSV)'], ['media', '영상'], ['block', '라이브러리']] as const
 
   return (
     <div className={over ? 'pp drop' : 'pp'} {...fileDrop}>
@@ -55,7 +56,8 @@ export default function ProjectPanel() {
       </div>
       {tab === 'media' && <VideoView />}
       {/* both lists stay mounted so each keeps its open folders and selection across tab switches */}
-      {tabs.map(([t]) => <div key={t} className={`pp-list ${t}`} hidden={tab !== t}><AssetList tab={t} query={query} setQuery={setQuery} /></div>)}
+      {tabs.map(([t]) => <div key={t} className={`pp-list ${t}`} hidden={tab !== t}>
+        {t === 'block' ? <LibraryList query={query} /> : <AssetList tab={t} query={query} setQuery={setQuery} />}</div>)}
       {res && (
         <div className="pp-msg" role="status">
           {res.head && <p>{res.head}</p>}
