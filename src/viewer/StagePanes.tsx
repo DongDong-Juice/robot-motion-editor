@@ -103,15 +103,6 @@ function ItemPreview({ id }: { id: string }) {
   )
 }
 
-// Main pane title while comparing: " · 원본 (<piece>)" — the main view draws that piece as its original.
-function useMainSuffix() {
-  return useEditor(s => {
-    if (!s.previewEdit || !s.itemPreview) return ''
-    const f = findItem(s.project, s.itemPreview)
-    return f ? ` · 원본 (${pieceName(f.t, f.it, s.project.clips[f.it.refId]?.name ?? '')})` : ''
-  })
-}
-
 const sec = (f: number) => (f / 60).toFixed(2)
 
 const WHY_TIP = '관성 자동 판정: 자른 위치에서 최대 1.5초(없으면 3초) 거슬러 올라가, 두 발이 바닥을 딛고 서 있으면서 몸이 가장 덜 움직이는 지점부터 원본을 씁니다.'
@@ -279,7 +270,6 @@ export default function StagePanes({ robot }: { robot: ReactNode }) {
     setRatios(moveDivider(ratios, i, k * STEP))
   }
 
-  const mainSuffix = useMainSuffix()
   const split = mode === 'split'
   const titled = split || n > 1
   // overlay covers only the main robot pane (below its title)
@@ -306,7 +296,7 @@ export default function StagePanes({ robot }: { robot: ReactNode }) {
       )}
       <div ref={rowEl} className="pane-robots">
         <section className="pane pane-robot" aria-label="로봇 프리뷰" style={{ flex: `${ratios[0]} 1 0` }}>
-          {titled && <div className={split ? 'pane-title' : 'pane-title static'} {...(split ? titleProps('robot') : {})}><span>로봇 프리뷰{mainSuffix}</span></div>}
+          {titled && <div className={split ? 'pane-title' : 'pane-title static'} {...(split ? titleProps('robot') : {})}><span>로봇 프리뷰</span></div>}
           {robot}
         </section>
         {extra.map(({ preview: pv, id }, i) => { // divider i sits between pane i and i+1
