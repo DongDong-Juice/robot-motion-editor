@@ -102,6 +102,9 @@ export interface EditorState {
   addVideoItem(mediaId: string, start: number): boolean
   addItem(actorId: string, clipId: string, start: number): boolean
   moveItem(itemId: string, start: number): boolean
+  /** Two pieces of one motion track trade places in time (lane drag, user); the pieces re-flow end to end and each slot keeps its
+   *  gap / crossfade overlap to the one before. One undo; false = other track / locked / invalid. */
+  swapItems(aId: string, bId: string): boolean
   trimItem(itemId: string, side: 'in' | 'out', df: number): boolean
   splitItem(itemId: string, frame: number): boolean
   deleteItem(itemId: string): boolean
@@ -749,6 +752,16 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         if (f.t.kind === 'motion') { it.restPose = 'prepend'; right.restPose = 'prepend' } // 기본자세 덧붙이기 on both pieces by default (user)
         it.trimOut = cut
         f.t.items.push(right)
+        return validItems(p, f.t)
+      }),
+      swapItems: (aId, bId) => tryEdit(p => {
+        const f = findItem(p, aId), g = findItem(p, bId)
+        if (!f || !g || f.t !== g.t || f.t.locked || f.t.kind !== 'motion' || aId === bId) return false
+        const items = sortedItems(f.t), i = items.indexOf(f.it), j = items.indexOf(g.it)
+        const gaps = items.map((it, k) => k ? it.start - (items[k - 1].start + itemLen(items[k - 1])) : it.start)
+        ;[items[i], items[j]] = [items[j], items[i]]
+        let end = 0
+        items.forEach((it, k) => { it.start = Math.max(0, (k ? end : 0) + gaps[k]); end = it.start + itemLen(it) })
         return validItems(p, f.t)
       }),
       deleteItem: itemId => {

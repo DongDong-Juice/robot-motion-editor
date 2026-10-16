@@ -70,7 +70,7 @@ interface Row { t: Track; it?: Item; y: number; h: number }
 const hasEdit = (it: Item) => offsetKeyCount(it) > 0
 
 // In-progress drag preview; the store is untouched until mouseup.
-interface Drag { itemId: string; mode: 'move' | 'in' | 'out'; df: number }
+interface Drag { itemId: string; mode: 'move' | 'in' | 'out'; df: number; swapTo?: string /* lane drag onto another piece's lane: trade places */ }
 interface Msg { text: string; left: number; top: number }
 interface Ctx { x: number; y: number; actorId: string; trackId: string; itemId: string | null } // itemId null: track label menu
 interface Rename { index: number; left: number; value: string }
@@ -269,6 +269,7 @@ export default function SequenceCanvas() {
         if (r.it) { // piece lane (staircase): that piece's bar, with the crossfades it takes part in
           const it = items.find(i => i.id === r.it!.id) ?? r.it
           bars(t, [it], y, color, true, overlaps(items).filter(([a, b]) => a < it.start + itemLen(it) && b > it.start))
+          if (drag?.swapTo === it.id) { ctx.save(); ctx.strokeStyle = C.accent; ctx.lineWidth = 2; ctx.setLineDash([5, 3]); ctx.strokeRect(LABEL_W + 1, y + 1, W - LABEL_W - 2, ROW_H - 3); ctx.restore() } // drop here: trade places
           ctx.fillStyle = C.bg; ctx.fillRect(0, y, LABEL_W - 1, ROW_H - 1)
           drawEye(ctx, EYE_X, y + ROW_H / 2, !!it.hidden, it.hidden ? C.accent : C.line)
           ctx.font = '10px "IBM Plex Sans KR", sans-serif'
@@ -397,12 +398,16 @@ export default function SequenceCanvas() {
       }
       s.selectItem(it.id)
       if (t.actorId) s.select(t.actorId)
+      // a lane bar dragged up / down onto another piece's lane of the same track: the two trade places (user)
+      const swapTarget = (m: MouseEvent) => { const tr = mode === 'move' && r?.it ? layout()[rowAt(pos(m).y)] : undefined
+        return tr?.it && tr.t.id === t.id && tr.it.id !== it.id ? tr.it.id : undefined }
       track(m => {
-        const df = Math.round((pos(m).x - x) / tv.ppf)
-        if (df !== (drag?.df ?? 0)) { drag = { itemId: it.id, mode, df }; schedule() }
+        const swapTo = swapTarget(m), df = swapTo ? 0 : Math.round((pos(m).x - x) / tv.ppf)
+        if (df !== (drag?.df ?? 0) || swapTo !== drag?.swapTo) { drag = { itemId: it.id, mode, df, swapTo }; schedule() }
       }, m => {
-        const df = Math.round((pos(m).x - x) / tv.ppf), st = ed.getState()
+        const swapTo = swapTarget(m), df = swapTo ? 0 : Math.round((pos(m).x - x) / tv.ppf), st = ed.getState()
         drag = null
+        if (swapTo) { if (!st.swapItems(it.id, swapTo)) flash(t.locked ? LOCKED : DENY, row); schedule(); return }
         if (df === 0 && r?.it) st.openItemPreview(it.id, true) // a click on a lane bar also previews (and plays) that piece
         if (df !== 0) {
           const ok = mode === 'move' ? st.moveItem(it.id, Math.max(0, it.start + df)) : st.trimItem(it.id, mode, df)
