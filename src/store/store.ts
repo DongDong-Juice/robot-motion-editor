@@ -4,7 +4,7 @@ import { simplifyCurve, simplifyTolerance } from '../model/simplify'
 import { addActor as addActorTo, emptyProject, newProject, nextClipName } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
 import { inCrossfade, itemLen, resolve, sortedItems, validTrack } from '../model/sequence'
-import type { Actor, Item, Clip, Curve, Interp, Project, Tan, Track } from '../model/types'
+import type { Actor, Bin, Item, Clip, Curve, Interp, Project, Tan, Track } from '../model/types'
 import { validVideoTrack, videoTrack } from '../model/video'
 import { baseClip, offsetKeyCount } from '../model/itemClip'
 import { addOverRange, type Range } from '../model/rangeEdit'
@@ -97,6 +97,12 @@ export interface EditorState {
   simplifyClip(clipId: string, rot?: number, pos?: number): number
   deleteClip(clipId: string): boolean
   addMedia(name: string, durationF: number): string
+  // Project-panel folders (virtual, per tab). addBin names it `폴더 n` and moves `ids` into it; moveToBin skips items of the other tab, null = top level, false = nothing changed.
+  addBin(tab: Bin['tab'], ids?: string[]): string
+  renameBin(id: string, name: string): boolean
+  deleteBin(id: string): boolean
+  moveToBin(ids: string[], binId: string | null): boolean
+  addClip(clip: Clip): string // assets only, top level, name deduped (`_2`); returns the clip id
   deleteMedia(mediaId: string): boolean
   addVideoItem(mediaId: string, start: number): boolean
   addItem(actorId: string, clipId: string, start: number): boolean
@@ -118,6 +124,25 @@ export interface EditorState {
   fileName: string | null; dirty: boolean
   loadProject(p: Project, fileName: string | null): void; markSaved(fileName: string): void; newProjectFile(): void
   undo(): void; redo(): void
+}
+
+// Put the draft's clips/media in `ids` into bin `binId` (null = top level); items of the other tab are skipped. Returns how many changed.
+function setBin(p: Project, ids: string[], binId: string | null): number {
+  const tab = binId === null ? null : p.bins?.find(b => b.id === binId)?.tab
+  const to = binId ?? undefined
+  let n = 0
+  const put = <T extends { bin?: string }>(o: T): T => {
+    if (o.bin === to) return o
+    n++
+    const { bin: _, ...rest } = o
+    return (to === undefined ? rest : { ...rest, bin: to }) as T
+  }
+  for (const id of ids) {
+    const c = p.clips[id]
+    if (c && (tab === null || tab === 'clip')) p.clips[id] = put(c)
+  }
+  if (tab === null || tab === 'media') p.media = p.media.map(m => ids.includes(m.id) ? put(m) : m)
+  return n
 }
 
 const MAX_UNDO = 200
@@ -708,6 +733,40 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
           p.media.push({ id, name: n, durationF })
         }, [])
         return id
+      },
+      addBin: (tab, ids = []) => {
+        const id = crypto.randomUUID()
+        edit(p => {
+          const bins = p.bins ?? []
+          let n = 1
+          while (bins.some(b => b.tab === tab && b.name === `폴더 ${n}`)) n++
+          p.bins = [...bins, { id, name: `폴더 ${n}`, tab }]
+          setBin(p, ids, id)
+        }, [])
+        return id
+      },
+      renameBin: (id, name) => {
+        const n = name.trim()
+        return !!n && tryEdit(p => {
+          if (!p.bins?.some(b => b.id === id)) return false
+          p.bins = p.bins.map(b => b.id === id ? { ...b, name: n } : b)
+          return true
+        })
+      },
+      deleteBin: id => tryEdit(p => {
+        if (!p.bins?.some(b => b.id === id)) return false
+        for (const [cid, c] of Object.entries(p.clips)) if (c.bin === id) { const { bin: _, ...rest } = c; p.clips[cid] = rest }
+        p.media = p.media.map(m => { if (m.bin !== id) return m; const { bin: _, ...rest } = m; return rest })
+        p.bins = p.bins.filter(b => b.id !== id)
+        return true
+      }),
+      moveToBin: (ids, binId) => tryEdit(p => {
+        if (binId !== null && !p.bins?.some(b => b.id === binId)) return false
+        return setBin(p, ids, binId) > 0
+      }),
+      addClip: clip => {
+        edit(p => { const { bin: _, ...top } = clip; addUniqueClip(p, top) }, [])
+        return clip.id
       },
       deleteMedia: mediaId => tryEdit(p => {
         if (!p.media.some(m => m.id === mediaId) || p.sequence.tracks.some(t => t.items.some(i => i.refId === mediaId))) return false
