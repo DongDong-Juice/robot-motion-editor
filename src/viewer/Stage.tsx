@@ -7,10 +7,10 @@ import { COLOR } from '../model/defaults'
 import { evaluate, evaluateClip, evaluateItem, evaluateRoot, placeItemPose } from '../model/evaluate'
 import { rebasePose } from '../model/pose'
 import { itemLead, leadInPose, restClipFor, tailedClip } from '../model/restPose'
-import { baseClip, editedClip } from '../model/itemClip'
+import { baseClip, editedClip, offsetKeyCount, withUse } from '../model/itemClip'
 import { nearestAngle } from '../model/rootMath'
-import { hiddenAt, stitchTransforms, worldToClipRoot } from '../model/sequence'
-import type { Clip, Project } from '../model/types'
+import { hiddenAt, resolve, sortedItems, stitchTransforms, worldToClipRoot } from '../model/sequence'
+import type { Actor, Clip, Project } from '../model/types'
 import { actorOf, CLIP_ACTOR, clipLocked, editingItem, editTarget, getEditor, gizmoLock, trackLocked } from '../store/store'
 import { sequenceEnd } from '../transport'
 import { buildRobot, pivotAngle, type RobotRig } from './buildRobot'
@@ -95,7 +95,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
     if (!cid || editPane) scene.add(tc.getHelper())
     // dev/e2e hook
     // dev/e2e hook: __stage = main pane, __stages = every pane by key ('main' or the compare clip id)
-    const hook = { camera, tc, entries: () => entries, renderer, camTarget: () => orbit.target.toArray(), overlay: () => overlay?.rig ?? null }
+    const hook = { camera, tc, entries: () => entries, renderer, camTarget: () => orbit.target.toArray(), overlay: () => overlays.values().next().value?.rig ?? null, overlays: () => overlays }
     const hookKey = ranged ? 'preview' : cid ?? 'main'
     if (import.meta.env.DEV) {
       const w = window as any
@@ -129,14 +129,41 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       const clip = original ? s.project.clips[s.clipEdit!] : baseClip(s.project, s.defs, s.clipEdit!)!
       return evaluateClip(clip, s.defs[clip.robot], Math.min(Math.max(Math.round(s.frame), 0), clip.length - 1))
     }
-    let overlay: { robot: string; rig: RobotRig } | null = null
-    const applyOverlay = (s: ReturnType<typeof store.getState>) => {
-      // 겹쳐 보기 (클립 편집): the original over the clip as edited
-      const a = s.clipEdit && s.compareOverlay && !s.clipPeek ? actorOf(s, CLIP_ACTOR) : undefined
-      if (overlay && (!a || overlay.robot !== a.robot)) { scene.remove(overlay.rig.root); disposeObj(overlay.rig.root); overlay = null }
-      if (!a || offStage(s, a.id)) return
-      if (!overlay) { overlay = { robot: a.robot, rig: buildRobot(s.defs[a.robot], OVERLAY) }; overlay.rig.setGhost(true); scene.add(overlay.rig.root) }
-      overlay.rig.applyPose(clipEditPose(s, true))
+    type S = ReturnType<typeof store.getState>
+    // an actor's pose on the main view from project `vp` (the clip view: its piece, lead-in and 끝 기본자세 as the preview and CSV)
+    const mainPose = (s: S, vp: Project, a: Actor) => {
+      const ei = editingItem(s), t = ei && ei.actorId === a.id ? editTarget(s, a.id) : null
+      const lead = t && s.editing ? leadInPose(vp, s.defs, ei!.item, s.frame) : null // clip view on the piece's 기본자세 · 전이 · 관성 / 끝 기본자세
+      return lead ? placeItemPose(vp, s.defs, ei!.item.id, lead) : t ? evaluateItem(vp, s.defs, t.itemId, t.f) : evaluate(vp, s.defs, a.id, s.frame)
+    }
+    // 겹쳐 보기 ghosts, one per actor: the original under the edit. 클립 편집: the clip without its 클립 수정 층 (겹쳐 보기 button);
+    // sequence / clip view: the piece under the playhead without its 조각 수정 층 (원본 겹쳐 보기, user: see the edit against G1 #1)
+    const overlays = new Map<string, { robot: string; rig: RobotRig }>()
+    const ghostOf = (s: S, a: Actor): (() => ReturnType<typeof mainPose>) | null => {
+      if (s.clipEdit) return s.compareOverlay && !s.clipPeek ? () => clipEditPose(s, true) : null
+      if (!s.originalGhost) return null
+      const ei = editingItem(s)
+      if (ei && ei.actorId !== a.id) return null // the other actors are ghosts already
+      const t = s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === a.id)
+      const it = ei ? ei.item : t && resolve(sortedItems(t), s.frame)?.item
+      if (!it || it.use === 'original' || !offsetKeyCount(it)) return null
+      return () => mainPose(s, withUse(s.project, it.id, 'original'), a)
+    }
+    const applyOverlay = (s: S) => {
+      const want = new Map<string, () => ReturnType<typeof mainPose>>()
+      for (const a of viewActors(s)) { const g = !offStage(s, a.id) && ghostOf(s, a); if (g) want.set(a.id, g) }
+      for (const [id, o] of overlays) {
+        const a = want.has(id) ? viewActors(s).find(x => x.id === id) : undefined
+        if (!a || o.robot !== a.robot) { scene.remove(o.rig.root); disposeObj(o.rig.root); overlays.delete(id) }
+      }
+      for (const [id, pose] of want) {
+        let o = overlays.get(id)
+        if (!o) {
+          const robot = viewActors(s).find(x => x.id === id)!.robot
+          overlays.set(id, o = { robot, rig: buildRobot(s.defs[robot], OVERLAY) }); o.rig.setGhost(true); scene.add(o.rig.root)
+        }
+        o.rig.applyPose(pose())
+      }
     }
     const applyAll = () => {
       const s = store.getState(), vp = s.project
@@ -157,9 +184,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
         if (hid) continue
         const ghost = !!ei && ei.actorId !== a.id
         if (e.ghost !== ghost) { e.ghost = ghost; e.rig.setGhost(ghost) }
-        const t = ei && !ghost ? editTarget(s, a.id) : null
-        const lead = t && s.editing ? leadInPose(vp, s.defs, ei!.item, s.frame) : null // clip view on the piece's 기본자세 · 전이 · 관성 / 끝 기본자세
-        const pose = lead ? placeItemPose(vp, s.defs, ei!.item.id, lead) : t ? evaluateItem(vp, s.defs, t.itemId, t.f) : evaluate(vp, s.defs, a.id, s.frame)
+        const pose = mainPose(s, vp, a)
         e.rig.applyPose(pose)
         e.dot.position.set(pose.rootPos[0], pose.rootPos[1], 0.002)
       }
@@ -462,7 +487,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       dom.removeEventListener('pointerup', onUp)
       el.removeEventListener('keydown', onKey)
       for (const e of entries.values()) disposeEntry(e)
-      if (overlay) disposeObj(overlay.rig.root)
+      for (const o of overlays.values()) disposeObj(o.rig.root)
       disposeObj(grid)
       tc.dispose(); orbit.dispose()
       // dispose() alone keeps the WebGL context alive until GC; release it now so opening/closing
