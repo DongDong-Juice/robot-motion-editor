@@ -51,6 +51,16 @@ test('import video auto-places on V1 in split view, scrub syncs', async ({ page 
     return { items: v1.items.map((i: any) => i.start), mode: s.videoMode }
   })
   expect(auto).toEqual({ items: [0], mode: 'split' })
+  // view controls sit in the assets panel's 영상 section (not the menu bar)
+  const view = page.locator('.pp').getByRole('group', { name: '영상' })
+  await expect(page.locator('#menubar').getByRole('group', { name: '영상' })).toHaveCount(0)
+  await expect(view.getByRole('button', { name: '분할' })).toHaveAttribute('aria-pressed', 'true')
+  await view.getByRole('button', { name: '오버레이' }).click()
+  expect(await page.evaluate(() => (window as any).__editor.getState().videoMode)).toBe('overlay')
+  await view.getByRole('slider', { name: '영상 투명도' }).fill('0.8')
+  expect(await page.evaluate(() => (window as any).__editor.getState().videoOpacity)).toBe(0.8)
+  await view.getByRole('button', { name: '분할' }).click()
+  await expect(view.getByRole('slider', { name: '영상 투명도' })).toHaveCount(0)
   await page.evaluate(() => {
     const e = (window as any).__editor, s = e.getState()
     const v1 = s.project.sequence.tracks.find((t: any) => t.kind === 'video')

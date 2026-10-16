@@ -4,7 +4,6 @@ import { getEditor, gizmoLock, initEditor, useEditor } from './store/store'
 import Inspector from './inspector/Inspector'
 import Stage from './viewer/Stage'
 import StagePanes from './viewer/StagePanes'
-import { videoTrack } from './model/video'
 import ProjectPanel from './project/ProjectPanel'
 import Timeline from './timeline/Timeline'
 import ExportDialog from './export/ExportDialog'
@@ -29,8 +28,6 @@ export function CrossfadeHint() {
 
 function Menubar() {
   const st = useEditor(s => s)
-  const videoMode = useEditor(s => s.videoMode), videoOpacity = useEditor(s => s.videoOpacity)
-  const hasVideo = useEditor(s => !!videoTrack(s.project)?.items.length)
   const [exporting, setExporting] = useState(false)
   const [physicsOpen, setPhysicsOpen] = useState(false)
   const [blocksOpen, setBlocksOpen] = useState(false)
@@ -54,14 +51,6 @@ function Menubar() {
       <FileMenu onExport={() => setExporting(true)} onPhysics={() => setPhysicsOpen(true)} onBlocks={() => setBlocksOpen(true)} />
       <span className="mb-title">{title}</span>
       {msg && <span role="status" className="mb-msg">{msg}</span>}
-      {hasVideo && (
-        <span role="group" aria-label="영상" className="mb-group">
-          <span>영상:</span>
-          {([['overlay', '오버레이'], ['split', '분할']] as const).map(([m, label]) =>
-            <button key={m} aria-pressed={videoMode === m} onClick={() => st.setVideoMode(m)}>{label}</button>)}
-          {videoMode === 'overlay' && <input type="range" aria-label="영상 투명도" min={0} max={1} step={0.05} value={videoOpacity} onChange={e => st.setVideoOpacity(+e.target.value)} />}
-        </span>
-      )}
       <PhysicsDialog open={physicsOpen} onClose={() => setPhysicsOpen(false)} />
       <Go2BlockDialog open={blocksOpen} onClose={() => setBlocksOpen(false)} />
       <ExportDialog open={exporting} onClose={() => setExporting(false)} />
