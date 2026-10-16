@@ -16,6 +16,12 @@ const ROOT_RANGE: Record<string, [number, number]> = {
 }
 const isAngle = (ch: string, joint: boolean) => joint || /roll|pitch|yaw/.test(ch)
 const INTERPS: [Interp, string][] = [['linear', '선형'], ['bezier', '이즈'], ['hold', '홀드']]
+// A slider drag ends on the next release anywhere: the slider may be disabled or unmounted mid-drag (selection cleared,
+// lock), and a gesture left open would merge every later edit into one undo step.
+const endOnRelease = () => {
+  const end = () => { getEditor().getState().endGesture(); removeEventListener('pointerup', end); removeEventListener('pointercancel', end) }
+  addEventListener('pointerup', end); addEventListener('pointercancel', end)
+}
 
 /** What the panel (and the inspector's 값) edit for the current selection; null when nothing editable is selected. */
 export function editView(s: EditorState) {
@@ -106,8 +112,7 @@ export default function JointPanel() {
               <div key={c} className={c === sel ? 'jp-row sel' : 'jp-row'} onPointerDown={() => { if (c !== sel) act.select(v.actor.id, c) }}>
                 <span className="jp-name" title={c}>{c.replace(/_joint$/, '').replace(/^root\./, '')}</span>
                 <input type="range" className={near ? 'near' : ''} min={lo} max={hi} step={0.001} value={x} disabled={blocked(c)} aria-label={`${c} 슬라이더`}
-                  onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); act.beginGesture() }}
-                  onPointerUp={() => act.endGesture()} onPointerCancel={() => act.endGesture()}
+                  onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); act.beginGesture(); endOnRelease() }}
                   onChange={e => set(c, +e.target.value)} />
                 <span className="jp-val">
                   <input type="number" key={`${v.f}-${x}-${d}`} defaultValue={num(x, d)} step={d ? 1 : 0.001} disabled={blocked(c)} aria-label={`${c} 숫자`}
