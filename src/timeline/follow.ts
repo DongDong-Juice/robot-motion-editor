@@ -51,3 +51,21 @@ export function followStep(g: FollowGeom, now = performance.now()): boolean {
   if (p >= 1) anim = null
   return anim !== null
 }
+
+/** Edge auto-scroll while the playhead follows the pointer (hover scrub or a ruler drag, user): past 90% of the track area [left, right]
+ *  the window scrolls right, before 10% left, faster the deeper in, within [min, max] scroll frames; `tick(x)` puts the playhead back
+ *  under the pointer after each step. `at(x)` on every pointer move, `stop()` when the pointer leaves or the scrub ends. */
+export function edgeScroll(area: () => [number, number], bounds: () => [number, number], tick: (x: number) => void) {
+  let raf = 0, x = 0
+  const step = () => {
+    raf = 0
+    const [l, r] = area(), fr = (x - l) / Math.max(r - l, 1)
+    const v = fr > 0.9 ? Math.min((fr - 0.9) / 0.1, 1) : fr < 0.1 ? -Math.min((0.1 - fr) / 0.1, 1) : 0
+    if (!v) return
+    const [lo, hi] = bounds(), next = Math.min(Math.max(tv.scrollF + v * 14 / tv.ppf, lo), Math.max(lo, hi))
+    if (next === tv.scrollF) return
+    markUserScroll(); tv.scrollF = next; tick(x)
+    raf = requestAnimationFrame(step)
+  }
+  return { at(nx: number) { x = nx; if (!raf) raf = requestAnimationFrame(step) }, stop() { cancelAnimationFrame(raf); raf = 0 } }
+}

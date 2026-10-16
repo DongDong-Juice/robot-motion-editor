@@ -40,6 +40,8 @@ export interface EditorState {
   videoMode: 'off' | 'overlay' | 'split'; videoOpacity: number // viewer preference: not undoable, not saved, survives loadProject
   setVideoMode(m: 'off' | 'overlay' | 'split'): void; setVideoOpacity(v: number): void
   comparePanes: string[] // clip ids shown in preview-only compare panes (max 2): not undoable, not saved, pruned when clips go away
+  /** 구간 프리뷰: sequence frames [from, to) looping in their own pane (right-drag on the sequence, user); null = closed. Not saved. */
+  spanPreview: [number, number] | null; setSpanPreview(r: [number, number] | null): void
   openComparePane(clipId: string): void; closeComparePane(clipId: string): void
   itemPreview: string | null // item id looping in the clip preview pane: not undoable, not saved, pruned when the item goes away
   /** The clip preview's own playhead (sequence frames, from the piece's lead-in start; independent of `frame`, user) and whether it
@@ -92,6 +94,8 @@ export interface EditorState {
   // Add the clip to the assets (name deduped) and place it right after the actor's last item; new item id, null = locked/unknown/robot mismatch. One undo entry.
   // actorId null: a new actor for the clip's robot, with the clip at 0 (목록 ▸ 라이브러리 tab on a project without a GO2).
   appendClip(actorId: string | null, clip: Clip): string | null
+  /** The clip into the assets only (목록에만 추가; name deduped), one undo entry; its name as stored, null = refused. */
+  addClipAsset(clip: Clip): string | null
   simplifyClip(clipId: string, rot?: number, pos?: number): number
   deleteClip(clipId: string): boolean
   addMedia(name: string, durationF: number): string
@@ -103,8 +107,11 @@ export interface EditorState {
   addClip(clip: Clip): string // assets only, top level, name deduped (`_2`); returns the clip id
   deleteMedia(mediaId: string): boolean
   addVideoItem(mediaId: string, start: number): boolean
-  addItem(actorId: string, clipId: string, start: number): boolean
+  addItem(actorId: string, clipId: string, start: number, shift?: { ids: string[]; by: number }): boolean // shift: pieces pushed later first (a drop that inserts)
   moveItem(itemId: string, start: number): boolean
+  /** Two pieces of one motion track trade places in time (lane drag, user); the pieces re-flow end to end and each slot keeps its
+   *  gap / crossfade overlap to the one before. One undo; false = other track / locked / invalid. */
+  swapItems(aId: string, bId: string): boolean
   trimItem(itemId: string, side: 'in' | 'out', df: number): boolean
   splitItem(itemId: string, frame: number): boolean
   deleteItem(itemId: string): boolean
@@ -112,8 +119,8 @@ export interface EditorState {
   // mode 'prepend' = 덧붙이기, null = off (덮어쓰기 was removed).
   setRestPose(itemId: string, mode: Item['restPose'] | null): boolean
   setRestTail(itemId: string, on: boolean): boolean
-  /** 덧붙이기 lead-in lengths of a piece, in frames (rounded, clamped); null = back to the default / auto. One undo step. */
-  setRestLead(itemId: string, patch: { restHold?: number | null; restBlend?: number | 'auto' | null; inertia?: number | null }): boolean
+  /** 덧붙이기 lead-in and 끝 기본자세 lengths of a piece, in frames (rounded, clamped); null = back to the default / auto. One undo step. */
+  setRestLead(itemId: string, patch: { restHold?: number | null; restBlend?: number | 'auto' | null; inertia?: number | null; tailHold?: number | null; tailBlend?: number | null }): boolean
   setPhysics(next: PhysicsSettings): void // project-wide physics-assist settings: one undo step
   beginGesture(): void; endGesture(): void
   inGesture: boolean // a slider/gizmo drag is under way (views may skip heavy recomputation until it ends)
@@ -480,6 +487,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       comparePanes: [],
       openComparePane: id => set(s => s.comparePanes.includes(id) || !s.project.clips[id] ? s : { comparePanes: [...s.comparePanes, id].slice(-2) }),
       closeComparePane: id => set(s => ({ comparePanes: s.comparePanes.filter(x => x !== id) })),
+      spanPreview: null, setSpanPreview: r => set({ spanPreview: r && r[1] > r[0] ? [Math.max(0, Math.round(r[0])), Math.round(r[1])] : null }),
       itemPreview: null, compareOverlay: false,
       setCompareOverlay: on => set({ compareOverlay: on }),
       openItemPreview: (id, play) => {
@@ -670,6 +678,11 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         })
         return out
       },
+      addClipAsset: clip => {
+        let name: string | null = null
+        tryEdit(p => { addUniqueClip(p, clip); name = p.clips[clip.id].name; return true })
+        return name
+      },
       appendClip: (actorId, clip) => {
         let out: string | null = null
         tryEdit(p => {
@@ -678,7 +691,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
           const actor = p.actors.find(a => a.id === id)
           const track = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === id)
           if (!actor || !track || track.locked || actor.robot !== clip.robot) return false
-          addUniqueClip(p, clip)
+          if (!p.clips[clip.id]) addUniqueClip(p, clip) // a clip already in the assets is placed as it is (no copy)
           const item = { id: crypto.randomUUID(), refId: clip.id, start: Math.max(0, ...track.items.map(i => i.start + itemLen(i))), trimIn: 0, trimOut: clip.length }
           track.items.push(item)
           out = item.id
@@ -776,11 +789,12 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         t.items.push({ id: crypto.randomUUID(), refId: mediaId, start: Math.round(start), trimIn: 0, trimOut: m.durationF })
         return validItems(p, t)
       }),
-      addItem: (actorId, clipId, start) => tryEdit(p => {
+      addItem: (actorId, clipId, start, shift) => tryEdit(p => {
         const clip = p.clips[clipId]
         const track = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actorId)
         const actor = p.actors.find(a => a.id === actorId)
         if (!clip || !track || track.locked || !actor || actor.robot !== clip.robot) return false
+        if (shift) for (const it of track.items) if (shift.ids.includes(it.id)) it.start += Math.round(shift.by)
         track.items.push({ id: crypto.randomUUID(), refId: clipId, start: Math.round(start), trimIn: 0, trimOut: clip.length })
         return validTrack(track.items)
       }),
@@ -811,11 +825,26 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         f.t.items.push(right)
         return validItems(p, f.t)
       }),
+      swapItems: (aId, bId) => tryEdit(p => {
+        const f = findItem(p, aId), g = findItem(p, bId)
+        if (!f || !g || f.t !== g.t || f.t.locked || f.t.kind !== 'motion' || aId === bId) return false
+        const items = sortedItems(f.t), i = items.indexOf(f.it), j = items.indexOf(g.it)
+        const gaps = items.map((it, k) => k ? it.start - (items[k - 1].start + itemLen(items[k - 1])) : it.start)
+        ;[items[i], items[j]] = [items[j], items[i]]
+        let end = 0
+        items.forEach((it, k) => { it.start = Math.max(0, (k ? end : 0) + gaps[k]); end = it.start + itemLen(it) })
+        return validItems(p, f.t)
+      }),
       deleteItem: itemId => {
         const ok = tryEdit(p => {
           const f = findItem(p, itemId)
           if (!f || f.t.locked) return false
           f.t.items = f.t.items.filter(i => i.id !== itemId)
+          if (f.t.kind === 'motion') { // no hole left (user): the pieces after it move back so the next starts where the one before ends
+            const before = f.t.items.filter(i => i.start < f.it.start), after = f.t.items.filter(i => i.start >= f.it.start)
+            const d = after.length ? Math.min(...after.map(i => i.start)) - Math.max(0, ...before.map(i => i.start + itemLen(i))) : 0
+            if (d > 0) for (const i of after) i.start -= d
+          }
           // last clip of a motion track gone -> the robot goes with it (the clip stays in the assets)
           if (f.t.kind === 'motion' && !f.t.items.length) {
             p.actors = p.actors.filter(a => a.id !== f.t.actorId)
@@ -844,8 +873,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       setRestLead: (itemId, patch) => tryEdit(p => {
         const f = findItem(p, itemId)
         if (!f || f.t.locked || f.t.kind !== 'motion') return false
-        const lim = { restHold: HOLD_RANGE, restBlend: BLEND_RANGE, inertia: [0, Math.min(INERTIA_CAP, f.it.trimIn)] } as const
-        for (const k of ['restHold', 'restBlend', 'inertia'] as const) {
+        const lim = { restHold: HOLD_RANGE, restBlend: BLEND_RANGE, inertia: [0, Math.min(INERTIA_CAP, f.it.trimIn)], tailHold: HOLD_RANGE, tailBlend: BLEND_RANGE } as const
+        for (const k of ['restHold', 'restBlend', 'inertia', 'tailHold', 'tailBlend'] as const) {
           const v = patch[k]
           if (v === undefined) continue
           if (v === null) delete f.it[k]
@@ -859,7 +888,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       loadProject: (project, fileName) => {
         generation++
         undoS = []; redoS = []; gesture = false; gestureMoved = false; suspended = false
-        set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] }, comparePanes: [], itemPreview: null, clipEdit: null, clipEditReturn: null, range: null, layer: get().clipEditReturn?.layer ?? get().layer })
+        set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] }, comparePanes: [], spanPreview: null, itemPreview: null, clipEdit: null, clipEditReturn: null, range: null, layer: get().clipEditReturn?.layer ?? get().layer })
       },
       markSaved: fileName => set({ fileName, dirty: false }),
       newProjectFile: () => get().loadProject(emptyProject(), null),

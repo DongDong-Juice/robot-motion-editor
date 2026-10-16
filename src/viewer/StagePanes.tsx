@@ -23,6 +23,18 @@ const useCompareLabel = (id: string) => useEditor(s => {
   const c = s.project.clips[id]
   return c ? `${c.name} (${c.robot.toUpperCase()})` : ''
 })
+// 구간 프리뷰 (right-drag on the sequence): the span's frames and length, ✕ closes it
+function SpanPane({ span }: { span: [number, number] }) {
+  return (
+    <>
+      <div className="pane-title static">
+        <span>구간 프리뷰 · F{span[0]}–{span[1] - 1} ({sec(span[1] - span[0])}초)</span>
+        <button aria-label="구간 프리뷰 닫기" onClick={() => getEditor().getState().setSpanPreview(null)}>✕</button>
+      </div>
+      <div className="stage-3d"><Stage span /></div>
+    </>
+  )
+}
 function CompareTitle({ id }: { id: string }) {
   return (
     <div className="pane-title static">
@@ -246,7 +258,9 @@ export default function StagePanes({ robot }: { robot: ReactNode }) {
 
   // robot row: [main | clip preview? | compare...]; equal widths whenever the pane set changes (not persisted)
   const compare = useEditor(s => s.comparePanes), itemPreview = useEditor(s => s.itemPreview)
-  const extra = [...(itemPreview ? [{ preview: true, id: itemPreview }] : []), ...compare.map(id => ({ preview: false, id }))]
+  const spanA = useEditor(s => s.spanPreview?.[0] ?? null), spanB = useEditor(s => s.spanPreview?.[1] ?? null) // numbers: a new array per call would re-render forever
+  const extra = [...(spanA !== null && spanB !== null ? [{ preview: false, span: true, id: 'span' }] : []), ...(itemPreview ? [{ preview: true, span: false, id: itemPreview }] : []),
+    ...compare.map(id => ({ preview: false, span: false, id }))]
   const n = extra.length + 1, ids = extra.map(e => e.id).join()
   const [row, setRow] = useState({ ids, r: [1] })
   const ratios = row.ids === ids && row.r.length === n ? row.r : equalRatios(n)
@@ -299,16 +313,16 @@ export default function StagePanes({ robot }: { robot: ReactNode }) {
           {titled && <div className={split ? 'pane-title' : 'pane-title static'} {...(split ? titleProps('robot') : {})}><span>로봇 프리뷰</span></div>}
           {robot}
         </section>
-        {extra.map(({ preview: pv, id }, i) => { // divider i sits between pane i and i+1
+        {extra.map(({ preview: pv, span: sp, id }, i) => { // divider i sits between pane i and i+1
           return (
-            <Fragment key={(pv ? 'pv:' : 'cmp:') + id}>
-              <div className="pane-sep" role="separator" tabIndex={0} aria-label={pv ? '클립 프리뷰 분할' : `비교 프리뷰 분할 ${i + 1 - (itemPreview ? 1 : 0)}`} aria-orientation="vertical"
+            <Fragment key={(sp ? 'span:' : pv ? 'pv:' : 'cmp:') + id}>
+              <div className="pane-sep" role="separator" tabIndex={0} aria-label={sp ? '구간 프리뷰 분할' : pv ? '클립 프리뷰 분할' : `비교 프리뷰 분할 ${i + 1 - (itemPreview ? 1 : 0) - (spanA !== null ? 1 : 0)}`} aria-orientation="vertical"
                 aria-valuenow={Math.round(ratios[i] * 100)} aria-valuemin={ROW_MIN * 100} aria-valuemax={Math.round((ratios[i] + ratios[i + 1] - ROW_MIN) * 100)}
                 onPointerDown={e => { if (e.button !== 0) return; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); e.currentTarget.focus(); setRowDrag(i) }}
                 onPointerMove={e => rowMove(e, i)} onPointerUp={rowEnd} onPointerCancel={rowEnd}
                 onDoubleClick={() => setRatios(equalRatios(n))} onKeyDown={e => rowKey(e, i)} />
-              <section className="pane pane-robot" aria-label={pv ? '클립 프리뷰' : '비교 프리뷰'} style={{ flex: `${ratios[i + 1]} 1 0` }}>
-                {pv ? <ItemPreview id={id} /> : <><CompareTitle id={id} /><div className="stage-3d"><Stage compareClipId={id} /></div></>}
+              <section className="pane pane-robot" aria-label={sp ? '구간 프리뷰' : pv ? '클립 프리뷰' : '비교 프리뷰'} style={{ flex: `${ratios[i + 1]} 1 0` }}>
+                {sp ? <SpanPane span={[spanA!, spanB!]} /> : pv ? <ItemPreview id={id} /> : <><CompareTitle id={id} /><div className="stage-3d"><Stage compareClipId={id} /></div></>}
               </section>
             </Fragment>
           )

@@ -115,6 +115,10 @@ body {
 #stage video.overlay, #stage video.split { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 #stage video.overlay { pointer-events: none; }
 #stage video.split { background: #000; }
+/* joint gizmo label (Stage): angle, change while dragging, limits */
+.gz-tag { position: absolute; z-index: 2; transform: translate(14px, -50%); pointer-events: none; white-space: nowrap; font-size: 11px; font-variant-numeric: tabular-nums;
+  color: var(--text); background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--line); border-radius: 3px; padding: 2px 6px; }
+.gz-tag.near { border-color: var(--warn); }
 .stage-hint { position: absolute; left: 8px; bottom: 6px; z-index: 1; font-size: 11px; color: var(--dim); pointer-events: none; }
 #inspector { grid-area: inspector; }
 #timeline { grid-area: timeline; }
@@ -285,6 +289,10 @@ body {
 .pp-blk input:focus { outline: none; border-color: var(--accent); }
 .pp-blk .ps-unit input { padding-right: 24px; }
 .pp-blk .pp-tools { align-items: center; }
+.pp-blk .pp-gap { flex: 1; }
+.pp-blk .pp-why { white-space: normal; overflow-wrap: anywhere; line-height: 1.45; font-size: 11px; } /* why a loop block's value moves in whole steps */
+.pp-blk select { width: 100%; height: 26px; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 3px; font: inherit; padding: 0 6px; }
+.pp-blk select:focus { outline: none; border-color: var(--accent); }
 .pp-cols { color: var(--dim); font-size: 11px; border-bottom: 1px solid var(--line); }
 .pp-tree { flex: 1; min-height: 40px; border-radius: 3px; }
 .pp-tree.over { outline: 1px dashed var(--accent); outline-offset: -1px; }
@@ -365,6 +373,18 @@ body {
 .sr-only:not(:focus-within) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .sr-only:focus-within { position: absolute; z-index: 3; left: 0; top: 0; background: var(--panel); }
 #menubar .ps-foot button:disabled { opacity: .45; cursor: default; filter: none; }
+/* GO2 loop block step list (Go2BlockPanel StepPicker): a select-like button, a short scrolling list under it */
+.step-pick { position: relative; width: 100%; }
+.step-pick > button { width: 100%; height: 28px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 3px; font: inherit; padding: 0 8px; cursor: pointer; text-align: left; }
+.step-pick > button:hover:not(:disabled) { border-color: var(--line-hi); }
+.step-pick > button:focus-visible, .step-pick > button[aria-expanded="true"] { outline: none; border-color: var(--accent); }
+.step-pick > button i { font-style: normal; color: var(--dim); font-size: 10px; }
+.step-pick ul { position: fixed; z-index: 1000; box-sizing: border-box; margin: 0; padding: 3px 0; /* fixed: over the page, not clipped by the dialog (left/top/width from the button) */ list-style: none; max-height: 210px; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 3px; font-variant-numeric: tabular-nums; }
+.step-pick li { padding: 4px 9px; cursor: pointer; white-space: nowrap; }
+.step-pick li:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.step-pick li[aria-selected="true"] { color: var(--accent); }
 
 /* 클립 편집 bar */
 .tl-clipedit { display: inline-flex; align-items: center; gap: 6px; }

@@ -5,7 +5,7 @@ import { actorOf, clampDf, CLIP_ACTOR, clipLocked, editingItem, editTarget, getE
 import type { Interp, Sequence } from '../model/types'
 import { tv } from './viewState'
 import { buildRows, frameToX, hitKey, hoverFrame, hoverScrub, keysIn, rowKey, xToFrame, type TimeScale } from './timeScale'
-import { followStep, markHover, markUserScroll, resetFollow } from './follow'
+import { edgeScroll, followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { drawRuler, LABEL_W, RULER_H } from './ruler'
 import { drawPieceBounds, drawRangeBand, minScrollF, startRangeDrag } from './rangeBand'
 import { drawScrollbar, pressScrollbar, SB_W, sbGeom } from './vscroll'
@@ -176,7 +176,7 @@ export default function TrackCanvas() {
       if (y < RULER_H && startRangeDrag(e, x, scale, m => pos(m).x, drag)) return // Shift+drag on the ruler: 구간
       if (y < top()) { // ruler (and 보조력 band) scrub
         s.setFrame(frameAtX(x))
-        drag(m => s.setFrame(frameAtX(pos(m).x)), () => {})
+        drag(m => { const mx = pos(m).x; s.setFrame(frameAtX(mx)); edgeDrag = true; edge.at(mx) }, () => { edgeDrag = false; edge.stop() })
         return
       }
       const sb = sbar()
@@ -242,12 +242,15 @@ export default function TrackCanvas() {
     }
 
     const hover = hoverScrub(() => ed.getState().frame, f => { markHover(); ed.getState().setFrame(f) })
+    let edgeDrag = false // past 90% / before 10% of the track area while the playhead follows the pointer: scroll
+    const edge = edgeScroll(() => [LABEL_W, W - SB_W], () => { const e = editingItem(ed.getState()); return [minScrollF(), (e?.item.trimOut ?? 0) - (W - SB_W - LABEL_W) / tv.ppf * 0.5] },
+      x => { if (edgeDrag) ed.getState().setFrame(frameAtX(x)); else { const f = hoverFrame(x, LABEL_W, scale(), false); if (f !== null) hover.push(toSeq(f)) } schedule() })
     const onMove = (e: MouseEvent) => {
       const { x, y } = pos(e), over = y >= top() && x >= W - SB_W && !!sbar()
       if (over !== sbHover) { sbHover = over; schedule() }
-      if (over) return
+      if (over) { if (!edgeDrag) edge.stop(); return }
       const f = hoverFrame(pos(e).x, LABEL_W, scale(), e.buttons !== 0 || ed.getState().playing || menuOpen.current || !editingItem(ed.getState()))
-      if (f !== null) hover.push(toSeq(f))
+      if (f !== null) { hover.push(toSeq(f)); edge.at(x) } else if (!edgeDrag) edge.stop()
     }
 
     const onWheel = (e: WheelEvent) => {
@@ -313,13 +316,13 @@ export default function TrackCanvas() {
 
     canvas.addEventListener('mousedown', onDown)
     canvas.addEventListener('mousemove', onMove)
-    const onLeave = () => { if (sbHover) { sbHover = false; schedule() } }
+    const onLeave = () => { if (!edgeDrag) edge.stop(); if (sbHover) { sbHover = false; schedule() } }
     canvas.addEventListener('mouseleave', onLeave)
     canvas.addEventListener('wheel', onWheel, { passive: false })
     canvas.addEventListener('contextmenu', onContext)
     window.addEventListener('keydown', onKey)
     return () => {
-      ro.disconnect(); document.fonts?.removeEventListener('loadingdone', schedule); unsub(); unsubPhys(); cancelAnimationFrame(raf); hover.stop()
+      ro.disconnect(); document.fonts?.removeEventListener('loadingdone', schedule); unsub(); unsubPhys(); cancelAnimationFrame(raf); hover.stop(); edge.stop()
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('mouseleave', onLeave)

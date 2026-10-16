@@ -37,7 +37,7 @@ function place(asset: Asset, pl: Exclude<Placement, { kind: 'reject' }>): string
     return null
   }
   const track = () => getEditor().getState().project.sequence.tracks.find(t => pl.kind === 'video' ? t.kind === 'video' : t.id === pl.trackId)
-  const ok = pl.kind === 'video' ? s.addVideoItem(asset.id, pl.start) : s.addItem(s.project.actors.find(a => a.id === track()?.actorId)!.id, asset.id, pl.start)
+  const ok = pl.kind === 'video' ? s.addVideoItem(asset.id, pl.start) : s.addItem(s.project.actors.find(a => a.id === track()?.actorId)!.id, asset.id, pl.start, pl.shift)
   if (!ok) return '이 위치에 놓을 수 없습니다'
   const t = track()!
   getEditor().getState().selectItem(t.items.at(-1)!.id)

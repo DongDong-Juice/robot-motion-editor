@@ -10,6 +10,7 @@ import { footContact, footMat, legsOf, reachDrop, rootMat, solveLeg, STEP_FAST, 
 export const REST_HOLD = 30 // frames held at the rest pose (0.5 s); 덧붙이기 default, 덮어쓰기 max
 export const REST_BLEND = 60 // frames easing back into the motion (1 s); 덧붙이기 default, 덮어쓰기 max
 const MAX_DROP = 0.15 // m the pelvis may go below its blended height so a leg reaches its foothold
+const RISE_OK = 0.006 // m per frame (0.36 m/s): planned peak speed of the pelvis between the motion's height and 차렷 height (전이 자동)
 const PELVIS_FIRST = 0.5 // share of the 전이 in which the pelvis reaches the motion's height when the feet step
 export const HOLD_RANGE = [0, 180] as const, BLEND_RANGE = [0, 180] as const, INERTIA_CAP = 180 // per-piece 덧붙이기 limits (frames); 전이 0 = snap (export warns)
 const AUTO_BLEND = [15, 180] as const // 전이 자동 search range
@@ -18,14 +19,21 @@ const ROOT = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw
 // The 기본자세 (차렷) value of a channel: the robot's rest joint angles and floor height; roll/pitch 0 (x/y/yaw are kept by the callers).
 const restValue = (def: RobotDef, n: string) => n === 'root.z' ? def.rest.z : def.rest.q[def.joints.findIndex(j => j.name === n)] ?? 0
 const smooth = (t: number) => 3 * t * t - 2 * t * t * t
+// the pelvis height near the 차렷: its knees are almost straight, where the knee angle goes with √(height gap) — a height
+// that eases in as u² still brings the knee in at full speed and stops it dead (user: 전이 → 기본자세 looked off); u⁴ eases it
+const smooth2 = (t: number) => smooth(smooth(t))
+const smoothIn = (t: number) => smooth(t) ** 2 // u⁴ at the 차렷 end only (the motion end stays u²); peaks at 1.9 × its average speed
 
 const VEL_SPAN = 10 // frames over which the motion's own speed shapes the end of the 전이
+const CARRY_MAX = 0.26 // rad (15°): how far the motion's own speed may carry a channel past T (user: a fast arm swung far past
+// the 기본자세 and back — not a natural way into it); a faster channel bends over fewer frames, still arriving with slope v
 /** 전이 curve from R (still) into T arriving with slope v (per frame), at u ∈ [0, 1] of a `blend`-frame 전이: the motion's line
- * T + v·(f − a), bent to stay within v·VEL_SPAN of T (a fast start over a long 전이 must not swing far away), eased from R over
- * the first `reach` of the 전이. Zero speed at u = 0, slope v at u = 1. */
-export function easeInto(R: number, T: number, v: number, blend: number, u: number, reach = 1): number {
-  const line = T - v * VEL_SPAN * Math.tanh(blend * (1 - u) / VEL_SPAN)
-  return line + (R - line) * (1 - smooth(Math.min(u / reach, 1)))
+ * T + v·(f − a), bent to stay within v·span of T (span = VEL_SPAN, shorter so v·span ≤ CARRY_MAX: a fast start must not swing
+ * far away), eased from R over the first `reach` of the 전이. Zero speed at u = 0, slope v at u = 1. */
+export function easeInto(R: number, T: number, v: number, blend: number, u: number, reach = 1, ease = smooth): number {
+  const span = Math.min(VEL_SPAN, CARRY_MAX / (Math.abs(v) || 1e-9))
+  const line = T - v * span * Math.tanh(blend * (1 - u) / span)
+  return line + (R - line) * (1 - ease(Math.min(u / reach, 1)))
 }
 const lerp = (a: [number, number], b: [number, number], s: number): [number, number] => [a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s]
 
@@ -100,13 +108,14 @@ export function prependRestPose(clip: Clip, def: RobotDef, a: number, hold = RES
     const v = a + 1 < clip.length ? evalCurve(orig, a + 1, fb) - T : a > 0 ? T - evalCurve(orig, a - 1, fb) : 0 // per frame
     const keep = n === 'root.x' || n === 'root.y' || n === 'root.yaw'
     const jd = def.joints.find(j => j.name === n)
-    const R = keep ? T : restValue(def, n)
+    // roll/pitch: the turn of the 차렷 value nearest T (after a flip the curve is unwrapped to ±2π: no turning the body back a lap)
+    const R = keep ? T : n === 'root.roll' || n === 'root.pitch' ? 2 * Math.PI * Math.round(T / (2 * Math.PI)) : restValue(def, n)
     // pelvis height with stepping feet: reach the motion's height in the first half (squat, then step: a planted leg can reach the
     // floor at a wide stance), then follow the motion's own slope into it. The tilt (roll/pitch) stays on the late curve, finishing
     // with the steps (a lean ahead of the feet would push the standing hip past its limit)
     const early = planted && n === 'root.z'
     const at = (u: number) => keep ? T
-      : early ? Math.min(Math.max(R, T), easeInto(R, T, v, blend, u, PELVIS_FIRST)) // never above both ends
+      : early ? Math.min(Math.max(R, T), easeInto(R, T, v, blend, u, PELVIS_FIRST, smoothIn)) // never above both ends
       : easeInto(R, T, v, blend, u)
     vals[n] = Array.from({ length: P }, (_, k) => { const y = k <= hold ? R : at((k - hold) / blend); return jd ? Math.min(Math.max(y, jd.lower), jd.upper) : y })
   }
@@ -148,7 +157,7 @@ function plantFeet(clip: Clip, def: RobotDef, a: number, hold: number, blend: nu
   const need = feetAt.map((feet, i) => Math.min(MAX_DROP, Math.max(0, ...legs.map((l, j) => reachDrop(l, rootAt(K0 + i), feet[j])))))
   const env = need.map((_, i) => Math.max(...need.slice(Math.max(0, i - W), Math.min(n, i + W + 1))))
   const avg = (x: number[]) => x.map((_, i) => { let t = 0, c = 0; for (let j = Math.max(0, i - W); j < Math.min(n, i + W + 1); j++) { t += x[j]; c++ } return t / c })
-  const taper = (k: number) => smooth(Math.min(1, (k - hold) / (W + 1), (K1 - k) / (W + 1))) // eased: no kink in pelvis speed
+  const taper = (k: number) => smooth2(Math.min(1, (k - hold) / (W + 1), (K1 - k) / (W + 1))) // eased: no kink in pelvis or knee speed
   avg(avg(env)).forEach((d, i) => { zs[K0 + i] -= d * taper(K0 + i) })
   // legs of every frame, seeded with the blended angles (keeps the knee on its bending side)
   const solved: number[][] = def.joints.map(() => new Array<number>(n).fill(0)), legJoints = legs.flatMap(l => l.qis)
@@ -158,7 +167,10 @@ function plantFeet(clip: Clip, def: RobotDef, a: number, hold: number, blend: nu
     legs.forEach((l, i) => solveLeg(def, l, root, feetAt[k - K0][i], q))
     for (const qi of legJoints) solved[qi][k - K0] = q[qi]
   }
-  for (const qi of legJoints) for (let k = K0; k < K1; k++) vals[def.joints[qi].name][k] = solved[qi][k - K0]
+  // next to the hold, hand the legs over from IK to the blended angles (= 차렷 there): near a straight knee IK leaves a few degrees
+  // that would snap to 차렷 in one frame. Only before the first step (stepPlan starts at 10% of the 전이): the feet barely move
+  const H = Math.max(2, 0.1 * blend), hand = (k: number) => smooth2(Math.min(1, (k - hold) / H))
+  for (const qi of legJoints) for (let k = K0; k < K1; k++) { const b = vals[def.joints[qi].name][k]; vals[def.joints[qi].name][k] = b + (solved[qi][k - K0] - b) * hand(k) }
 }
 
 const TAIL_WIN = 240 // frames before the piece's end the 끝 기본자세 looks at (its 전이 and steps only need the last few)
@@ -209,10 +221,13 @@ export function tailClipFor(clip: Clip, def: RobotDef, a: number, b: number, hol
 }
 
 export interface Tail { hold: number; blend: number; tail: number; blendOver: boolean }
-/** The 끝 기본자세 of an item: 전이 (auto, from the joint velocity limits like 덧붙이기 'auto') then 정지 0.5 s, in frames. */
+/** The 끝 기본자세 of an item: 전이 (auto, from the joint velocity limits like 덧붙이기 'auto', unless set: `tailBlend`) then 정지
+ * (`tailHold`, default 0.5 s), in frames. */
 export function tailOf(item: Item, clip: Clip, def: RobotDef): Tail {
-  const ab = autoBlend(reversedEnd(clip, def, item.trimIn, item.trimOut), def, 0)
-  return { hold: REST_HOLD, blend: ab.blend, tail: REST_HOLD + ab.blend, blendOver: ab.over }
+  const hold = clampI(item.tailHold ?? REST_HOLD, HOLD_RANGE[0], HOLD_RANGE[1])
+  const ab = item.tailBlend === undefined ? autoBlend(reversedEnd(clip, def, item.trimIn, item.trimOut), def, 0) : null
+  const blend = ab ? ab.blend : clampI(item.tailBlend!, BLEND_RANGE[0], BLEND_RANGE[1])
+  return { hold, blend, tail: hold + blend, blendOver: !!ab?.over }
 }
 
 /** 끝 기본자세 frames of an item in project `p` (null unless restTail). */
@@ -260,7 +275,7 @@ const clampI = (v: number, lo: number, hi: number) => Math.min(Math.max(Math.rou
 
 const blendCache = new WeakMap<Clip, Map<number, { blend: number; over: boolean }>>()
 /** Shortest transition (frames, AUTO_BLEND in steps of 6) from the standing pose into clip frame `a` with time for its steps (feet
- * under 1.2 m/s) and whose 전이 curve (easeInto) keeps
+ * under 1.2 m/s) and its change of pelvis height (under 0.24 m/s), and whose 전이 curve (easeInto) keeps
  * every joint at ≤ 50% of its URDF velocity limit; `over` when even the longest one does not. Cached per clip and frame. */
 export function autoBlend(clip: Clip, def: RobotDef, a: number): { blend: number; over: boolean } {
   let m = blendCache.get(clip)
@@ -273,7 +288,10 @@ export function autoBlend(clip: Clip, def: RobotDef, a: number): { blend: number
     return { R: def.rest.q[i] ?? 0, T, v, lim: 0.5 * j.velocity / 60 } // rad per frame
   })
   const steps = stepLength(clip, def, a)
-  const ok = (B: number) => stepSpeed(steps, B) <= STEP_OK && js.every(({ R, T, v, lim }) => {
+  // time to stand up from the motion's pelvis height (user: a low end stood up 8 cm in the last 0.17 s, looked rushed): with
+  // planted feet the pelvis gets PELVIS_FIRST of the 전이 (smoothIn)
+  const zc = clip.channels['root.z'], dz = legsOf(def).length && zc ? Math.abs(def.rest.z - evalCurve(zc, a, def.standingHeight)) : 0
+  const ok = (B: number) => stepSpeed(steps, B) <= STEP_OK && 1.9 * dz / (PELVIS_FIRST * B) <= RISE_OK && js.every(({ R, T, v, lim }) => {
     for (let k = 0; k < B; k++) { // per-frame change of the 전이 curve in prependRestPose
       if (Math.abs(easeInto(R, T, v, B, (k + 1) / B) - easeInto(R, T, v, B, k / B)) > lim) return false
     }

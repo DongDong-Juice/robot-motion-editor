@@ -49,7 +49,7 @@ interface Entry { rig: RobotRig; trail: THREE.Line; dot: THREE.Points; ghost: bo
  * With `itemId` + `range`, an item with 기본자세 덧붙이기 plays its lead-in clip instead (preview only).
  * With `range` = [from, to) clip frames, the compare robot shows that range, root re-based so frame `from` sits at the origin: with `itemId` it follows
  * the main playhead (item start = `from`), else it loops on its own 60 fps clock. */
-export default function Stage({ compareClipId: cid, range, itemId, children }: { compareClipId?: string; range?: [number, number]; itemId?: string; children?: ReactNode }) {
+export default function Stage({ compareClipId: cid, range, itemId, span, children }: { compareClipId?: string; range?: [number, number]; itemId?: string; span?: boolean /* 구간 프리뷰: the store's spanPreview frames looped, every robot, read-only */; children?: ReactNode }) {
   const [lo, hi] = range ?? [0, 0]
   const host = useRef<HTMLDivElement>(null)
   // 로봇 따라가기: per-pane local UI state, read by the render loop through a ref
@@ -82,6 +82,10 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
     const renderer = new THREE.WebGLRenderer({ antialias: true })
     renderer.setPixelRatio(window.devicePixelRatio)
     el.appendChild(renderer.domElement)
+    // joint gizmo label: angle now, change since the drag began, limits (user: show how the angle is being turned)
+    const tag = document.createElement('div')
+    tag.className = 'gz-tag'; tag.hidden = true; el.appendChild(tag)
+    let dragFrom: number | null = null
     const orbit = new OrbitControls(camera, renderer.domElement)
     orbit.target.copy(target)
     orbit.update()
@@ -92,15 +96,16 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
     const editPane = !!(cid && itemId && hi > lo)
     const paneActor = editPane ? store.getState().project.sequence.tracks.find(t => t.items.some(i => i.id === itemId))?.actorId : undefined
     const paneKey = paneActor ?? cid
-    if (!cid || editPane) scene.add(tc.getHelper())
+    const mainView = !cid && !span // the editable main view (picking, gizmo, overlay)
+    if (mainView || editPane) scene.add(tc.getHelper())
     // dev/e2e hook
     // dev/e2e hook: __stage = main pane, __stages = every pane by key ('main' or the compare clip id)
     const hook = { camera, tc, entries: () => entries, renderer, camTarget: () => orbit.target.toArray(), overlay: () => overlays.values().next().value?.rig ?? null, overlays: () => overlays }
-    const hookKey = ranged ? 'preview' : cid ?? 'main'
+    const hookKey = span ? 'span' : ranged ? 'preview' : cid ?? 'main'
     if (import.meta.env.DEV) {
       const w = window as any
       ;(w.__stages ??= {})[hookKey] = hook
-      if (!cid) w.__stage = hook
+      if (mainView) w.__stage = hook
     }
 
     let dirty = true, raf = 0
@@ -123,7 +128,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       return !!t && (t.hidden || (!s.editing && hiddenAt(t, s.frame)))
     }
     // the actors drawn here: the project's, or (클립 편집 모드) the virtual one for the open clip
-    const viewActors = (s: ReturnType<typeof store.getState>) => s.clipEdit ? [actorOf(s, CLIP_ACTOR)].filter(a => !!a) : s.project.actors
+    const viewActors = (s: ReturnType<typeof store.getState>) => s.clipEdit && !span ? [actorOf(s, CLIP_ACTOR)].filter(a => !!a) : s.project.actors
     // 클립 편집: the clip as edited (baseClip), or while 원본 보기 is held the original
     const clipEditPose = (s: ReturnType<typeof store.getState>, original: boolean) => {
       const clip = original ? s.project.clips[s.clipEdit!] : baseClip(s.project, s.defs, s.clipEdit!)!
@@ -164,7 +169,24 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
         o.rig.applyPose(pose())
       }
     }
+    const spanT0 = performance.now()
     const applyAll = () => {
+      if (span) { // 구간 프리뷰: the stored sequence on its own loop over spanPreview (read each frame: a right-drag reshapes it live)
+        const s = store.getState(), sp = s.spanPreview
+        if (!sp) return
+        const f = sp[0] + Math.floor((performance.now() - spanT0) * 60 / 1000) % Math.max(sp[1] - sp[0], 1)
+        for (const a of s.project.actors) {
+          const e = entries.get(a.id)
+          if (!e) continue
+          const hid = offStage({ ...s, frame: f, editing: null }, a.id)
+          e.rig.root.visible = e.dot.visible = !hid; e.trail.visible = false
+          if (hid) continue
+          const pose = evaluate(s.project, s.defs, a.id, f)
+          e.rig.applyPose(pose); e.dot.position.set(pose.rootPos[0], pose.rootPos[1], 0.002)
+        }
+        dirty = true
+        return
+      }
       const s = store.getState(), vp = s.project
       const ei = editingItem(s)
       for (const a of viewActors(s)) {
@@ -187,7 +209,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
         e.rig.applyPose(pose)
         e.dot.position.set(pose.rootPos[0], pose.rootPos[1], 0.002)
       }
-      if (!cid) applyOverlay(s)
+      if (mainView) applyOverlay(s)
       dirty = true
     }
 
@@ -245,10 +267,10 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       // item preview follows the main playhead: range frame lo shows at the item start, or (기본자세 덧붙이기) 1.5 s before it,
       // where the timeline draws the lead-in, so preview, lane, physics graph and CSV rows line up; clamped to the range outside it
       const it = itemId ? s.project.sequence.tracks.flatMap(t => t.items).find(i => i.id === itemId) : undefined
-      const f = !ranged ? s.frame
+      const f = !ranged ? Math.floor((performance.now() - t0) * 60 / 1000) % Math.max(clip.length, 1) // ⇄ 비교: its own loop, not the sequence (user)
         : it ? lo + Math.min(Math.max(s.frame - it.start + (itemLead(s.project, s.defs, it)?.lead ?? 0), 0), hi - lo - 1)
         : lo + Math.floor((performance.now() - t0) * 60 / 1000) % Math.max(hi - lo, 1)
-      if (ranged && f === shownF) return
+      if (f === shownF) return
       shownF = f
       const pose = clipPose(clip, s.defs[clip.robot], Math.min(Math.max(f, 0), clip.length - 1))
       e.rig.applyPose(pose)
@@ -363,8 +385,51 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       if (e.value) store.getState().beginGesture()
       else store.getState().endGesture()
       if (e.value && store.getState().sel.channel?.startsWith('root')) last = rootValues().map(v => v[1])
+      dragFrom = e.value ? jointAngle()?.a ?? null : null
     })
     tc.addEventListener('change', () => { dirty = true })
+    const jointAngle = () => { // the gizmo's joint and its angle now, or null (root / no gizmo)
+      const s = store.getState(), ch = s.sel.channel, o = tc.object, actor = s.sel.actorId ? actorOf(s, s.sel.actorId) : undefined
+      const j = o && ch && actor ? s.defs[actor.robot].joints.find(j => j.name === ch) : undefined
+      return j && o ? { j, o, a: pivotAngle(o, j.axis) } : null
+    }
+    const tagPos = new THREE.Vector3()
+    // rings around the joint gizmo (user: like Blender's rotate gizmo): X red, Y green, Z blue in the joint's frame, the axis it
+    // turns on bright and the others faint (drawn only: TransformControls handles the one real axis), a white ring facing the camera
+    const ringMat = (color: string) => new THREE.MeshBasicMaterial({ color, transparent: true, depthTest: false, depthWrite: false })
+    const torus = (r: number, color: string) => { const m = new THREE.Mesh(new THREE.TorusGeometry(r, 0.012, 6, 72), ringMat(color)); m.renderOrder = 998; return m }
+    const axisRings = new THREE.Group(), viewRing = torus(0.62, '#ffffff')
+    const rings = [torus(0.5, '#E5484D'), torus(0.5, '#6CC24A'), torus(0.5, '#4C8DF6')] // normals X, Y, Z
+    rings[0].rotation.y = Math.PI / 2; rings[1].rotation.x = Math.PI / 2
+    axisRings.add(...rings); axisRings.visible = viewRing.visible = false
+    ;(viewRing.material as THREE.MeshBasicMaterial).opacity = 0.55
+    if (mainView || editPane) scene.add(axisRings, viewRing)
+    const ringQ = new THREE.Quaternion()
+    let ringPx = 0
+    const updateRings = () => {
+      const g = jointAngle()
+      axisRings.visible = viewRing.visible = !!g
+      if (!g) return
+      g.o.getWorldPosition(tagPos); g.o.getWorldQuaternion(ringQ)
+      // same on-screen size as TransformControls' rotate rings (its scale rule: factor * size / 4)
+      const s = tagPos.distanceTo(camera.position) * Math.min(1.9 * Math.tan(Math.PI * camera.fov / 360) / camera.zoom, 7) * 0.8 / 4
+      axisRings.position.copy(tagPos); axisRings.quaternion.copy(ringQ); axisRings.scale.setScalar(s)
+      viewRing.position.copy(tagPos); viewRing.quaternion.copy(camera.quaternion); viewRing.scale.setScalar(s)
+      const ax = g.j.axis.map(Math.abs), on = ax.indexOf(Math.max(...ax))
+      rings.forEach((r, i) => { (r.material as THREE.MeshBasicMaterial).opacity = i === on ? 0.9 : 0.35 })
+      ringPx = 0.62 * s / (tagPos.distanceTo(camera.position) * Math.tan(Math.PI * camera.fov / 360)) * el.clientHeight / 2 // white ring radius on screen
+    }
+    const updateTag = () => {
+      const g = jointAngle()
+      if (!g) { tag.hidden = true; return }
+      const deg = store.getState().degrees, f = (v: number) => deg ? `${(v * 180 / Math.PI).toFixed(1)}°` : v.toFixed(3)
+      const d = dragFrom === null ? '' : ` (${g.a - dragFrom >= 0 ? '+' : '−'}${f(Math.abs(g.a - dragFrom))})`
+      tag.textContent = `${g.j.name.replace(/_joint$/, '')} ${f(g.a)}${d} · 범위 ${f(g.j.lower)} ~ ${f(g.j.upper)}`
+      tag.classList.toggle('near', g.a - g.j.lower < 0.1 * (g.j.upper - g.j.lower) || g.j.upper - g.a < 0.1 * (g.j.upper - g.j.lower))
+      g.o.getWorldPosition(tagPos).project(camera)
+      tag.style.left = `${(tagPos.x + 1) / 2 * el.clientWidth + ringPx}px`; // just outside the white ring tag.style.top = `${(1 - tagPos.y) / 2 * el.clientHeight}px`
+      tag.hidden = false
+    }
     tc.addEventListener('objectChange', () => {
       const s = store.getState(), { actorId, channel } = s.sel
       if (!actorId || !channel) return
@@ -402,7 +467,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       if (best) store.getState().select(best.id, best.via)
       else store.getState().select(null)
     }
-    if (!cid || editPane) { dom.addEventListener('pointerdown', onDown); dom.addEventListener('pointerup', onUp) }
+    if (mainView || editPane) { dom.addEventListener('pointerdown', onDown); dom.addEventListener('pointerup', onUp) }
 
     const onKey = (ev: KeyboardEvent) => {
       const v = VIEWS[ev.key]
@@ -410,7 +475,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
         const d = camera.position.distanceTo(orbit.target)
         camera.position.copy(followRef.current ? orbit.target : target).add(new THREE.Vector3(...v).normalize().multiplyScalar(d))
         orbit.update()
-      } else if (!cid && ev.key.toLowerCase() === 'r' && store.getState().sel.channel?.startsWith('root')) {
+      } else if (mainView && ev.key.toLowerCase() === 'r' && store.getState().sel.channel?.startsWith('root')) {
         rootMode = rootMode === 'translate' ? 'rotate' : 'translate'
         syncSelection()
       }
@@ -428,7 +493,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
     ro.observe(el)
 
     let wasLocked = false
-    if (cid) { syncClip(); applyClip(); if (editPane) syncSelection() } else { syncActors(); applyAll(); syncSelection() }
+    if (cid) { syncClip(); applyClip(); if (editPane) syncSelection() } else { syncActors(); applyAll(); if (mainView) syncSelection() }
     const unsub = store.subscribe((s, prev) => {
       if (cid) {
         if (s.project !== prev.project) { syncClip(); shownF = -1 }
@@ -438,6 +503,7 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       }
       if (s.project !== prev.project || s.clipEdit !== prev.clipEdit) syncActors()
       applyAll()
+      if (span) return // read-only: no selection or gizmo
       const key = (p: typeof s.project) => p.actors.map(a => a.id + a.robot).join() + (s.clipEdit ?? '')
       const lk = locked()
       if (s.sel !== prev.sel || key(s.project) !== key(prev.project) || lk !== wasLocked) syncSelection()
@@ -471,11 +537,14 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
         if (cid) for (const e of entries.values()) e.trail.visible = shownTrail
         dirty = true
       }
-      if (ranged) applyClip()
+      if (cid) applyClip() // panes play on their own (item preview: its own playhead; ⇄ 비교: a loop)
+      else if (span) applyAll() // 구간 프리뷰: its own loop
       followCam()
       if (!dirty) return
       dirty = false
+      updateRings()
       renderer.render(scene, camera)
+      updateTag()
     }
     loop()
 
@@ -487,23 +556,23 @@ export default function Stage({ compareClipId: cid, range, itemId, children }: {
       el.removeEventListener('keydown', onKey)
       for (const e of entries.values()) disposeEntry(e)
       for (const o of overlays.values()) disposeObj(o.rig.root)
-      disposeObj(grid)
+      disposeObj(grid); disposeObj(axisRings); disposeObj(viewRing)
       tc.dispose(); orbit.dispose()
       // dispose() alone keeps the WebGL context alive until GC; release it now so opening/closing
       // preview panes never hits the browser's context limit (which kills the oldest pane's context)
       renderer.forceContextLoss(); renderer.dispose()
-      el.removeChild(dom)
+      el.removeChild(dom); el.removeChild(tag)
       if (import.meta.env.DEV) {
         const w = window as any
         if (w.__stages?.[hookKey] === hook) delete w.__stages[hookKey]
         if (w.__stage === hook) delete w.__stage
       }
     }
-  }, [cid, lo, hi, itemId])
+  }, [cid, lo, hi, itemId, span])
 
   return (
     <>
-      <div ref={host} tabIndex={0} style={{ width: '100%', height: '100%', outline: 'none' }} />
+      <div ref={host} tabIndex={0} style={{ width: '100%', height: '100%', outline: 'none', position: 'relative' }} />
       <div className="pv-tools">
         <button className="pv-btn" aria-pressed={follow} onClick={() => setFollow(f => !f)}>로봇 따라가기</button>
         {cid && <button className="pv-btn" aria-pressed={trail} onClick={() => setTrail(v => !v)} title="로봇 골반이 지나간 바닥 경로를 선으로 보여 줍니다">경로 표시</button>}
