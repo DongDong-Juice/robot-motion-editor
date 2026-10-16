@@ -5,7 +5,7 @@ import { validVideoTrack, videoTrack } from './video'
 
 export interface Asset { kind: 'clip' | 'media'; id: string }
 export type Placement =
-  | { kind: 'existing'; trackId: string; start: number }
+  | { kind: 'existing'; trackId: string; start: number; shift?: { ids: string[]; by: number } /* pieces pushed later to make room */ }
   | { kind: 'newActor'; robot: RobotKind; start: number }
   | { kind: 'video'; start: number }
   | { kind: 'reject'; reason: string }
@@ -18,6 +18,21 @@ function snap(items: Item[], refId: string, len: number, frame: number, ok: (ite
   const cands = [frame, hit.length ? Math.max(...hit.map(end)) : frame, Math.max(0, ...items.map(end))]
   const free = (s: number) => items.every(i => s + len <= i.start || end(i) <= s)
   return cands.find(start => free(start) && ok([...items, { id: '', refId, start, trimIn: 0, trimOut: len }])) ?? null
+}
+
+// Motion track: the clip goes where it is dropped (user). Inside a piece: at its start (front half) or its end (back half), that piece /
+// the ones after it pushed later by the clip's length (their gaps and crossfades kept). In a gap: at the drop frame, the pieces after
+// it pushed only as far as needed. Never overlaps.
+function insertAt(items: Item[], len: number, f: number): { start: number; shift?: { ids: string[]; by: number } } {
+  const sorted = [...items].sort((a, b) => a.start - b.start)
+  const k = sorted.map((it, i) => [it, i] as const).filter(([it]) => it.start <= f && f < end(it)).at(-1)?.[1] // later piece wins on overlap
+  if (k !== undefined) {
+    const it = sorted[k], front = f < it.start + itemLen(it) / 2
+    const later = sorted.slice(front ? k : k + 1)
+    return { start: front ? it.start : end(it), shift: later.length ? { ids: later.map(i => i.id), by: len } : undefined }
+  }
+  const later = sorted.filter(i => i.start >= f), by = later.length ? f + len - later[0].start : 0
+  return { start: f, shift: by > 0 ? { ids: later.map(i => i.id), by } : undefined }
 }
 
 /** Where a dragged asset lands for a drop at `frame` over the track `rowTrackId` (null = not over a track row). Pure; used by the ghost and the drop. */
@@ -37,8 +52,10 @@ export function dropPlacement(p: Project, asset: Asset, rowTrackId: string | nul
   const actor = t?.kind === 'motion' ? p.actors.find(a => a.id === t.actorId) : undefined
   if (t && actor?.robot === clip.robot) {
     if (t.locked) return { kind: 'reject', reason: '잠긴 트랙입니다' }
-    const start = snap(t.items, clip.id, clip.length, f, validTrack)
-    return start === null ? { kind: 'reject', reason: '이 위치에 놓을 수 없습니다' } : { kind: 'existing', trackId: t.id, start }
+    const { start, shift } = insertAt(t.items, clip.length, f)
+    const moved = t.items.map(i => shift?.ids.includes(i.id) ? { ...i, start: i.start + shift.by } : i)
+    if (!validTrack([...moved, { id: '', refId: clip.id, start, trimIn: 0, trimOut: clip.length }])) return { kind: 'reject', reason: '이 위치에 놓을 수 없습니다' }
+    return shift ? { kind: 'existing', trackId: t.id, start, shift } : { kind: 'existing', trackId: t.id, start }
   }
   const empty = p.sequence.tracks.every(t => !t.items.length)
   return { kind: 'newActor', robot: clip.robot, start: empty ? 0 : f }

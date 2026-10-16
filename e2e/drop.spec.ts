@@ -4,7 +4,7 @@ const tracks = (page: Page) => page.evaluate(() =>
   (window as any).__editor.getState().project.sequence.tracks.filter((t: any) => t.kind === 'motion')
     .map((t: any) => t.items.map((i: any) => [i.start, i.trimOut - i.trimIn]))) as Promise<number[][][]>
 
-test('drop: card onto a track appends after the overlapped item; empty area makes a new actor', async ({ page }) => {
+test('drop: card onto a piece inserts at its nearer edge (front half: before it, pushing it back; back half: after it); empty area makes a new actor', async ({ page }) => {
   await page.addInitScript(() => { delete (window as any).showOpenFilePicker; delete (window as any).showDirectoryPicker })
   const errors: string[] = []
   page.on('pageerror', e => errors.push(String(e)))
@@ -27,10 +27,13 @@ test('drop: card onto a track appends after the overlapped item; empty area make
   const seq = page.locator('.seq-canvas')
   const card = page.locator('.pp-card', { hasText: 'b' }).first()
   const box = (await seq.boundingBox())!
-  await card.dragTo(seq, { targetPosition: { x: 250, y: 24 + 14 } }) // over item a, never overlapping it
-  expect(await tracks(page)).toEqual([[[0, 120], [120, 60]]])
+  const xAt = (f: number) => page.evaluate(f => { const tv = (window as any).__tv; return 160 + (f - tv.scrollF) * tv.ppf }, f)
+  await card.dragTo(seq, { targetPosition: { x: await xAt(20), y: 24 + 14 } }) // front half of a (0..120): b goes first, a moves back
+  expect(await tracks(page)).toEqual([[[60, 120], [0, 60]]])
+  await card.dragTo(seq, { targetPosition: { x: await xAt(160), y: 24 + 14 } }) // back half of a (60..180): b after it
+  expect(await tracks(page)).toEqual([[[60, 120], [0, 60], [180, 60]]])
 
   await card.dragTo(seq, { targetPosition: { x: 500, y: box.height - 20 } }) // empty area below the tracks
-  expect(await tracks(page)).toEqual([[[0, 120], [120, 60]], [[expect.any(Number), 60]]])
+  expect(await tracks(page)).toEqual([[[60, 120], [0, 60], [180, 60]], [[expect.any(Number), 60]]])
   expect(errors).toEqual([])
 })

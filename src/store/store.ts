@@ -100,7 +100,7 @@ export interface EditorState {
   addMedia(name: string, durationF: number): string
   deleteMedia(mediaId: string): boolean
   addVideoItem(mediaId: string, start: number): boolean
-  addItem(actorId: string, clipId: string, start: number): boolean
+  addItem(actorId: string, clipId: string, start: number, shift?: { ids: string[]; by: number }): boolean // shift: pieces pushed later first (a drop that inserts)
   moveItem(itemId: string, start: number): boolean
   /** Two pieces of one motion track trade places in time (lane drag, user); the pieces re-flow end to end and each slot keeps its
    *  gap / crossfade overlap to the one before. One undo; false = other track / locked / invalid. */
@@ -719,11 +719,12 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         t.items.push({ id: crypto.randomUUID(), refId: mediaId, start: Math.round(start), trimIn: 0, trimOut: m.durationF })
         return validItems(p, t)
       }),
-      addItem: (actorId, clipId, start) => tryEdit(p => {
+      addItem: (actorId, clipId, start, shift) => tryEdit(p => {
         const clip = p.clips[clipId]
         const track = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actorId)
         const actor = p.actors.find(a => a.id === actorId)
         if (!clip || !track || track.locked || !actor || actor.robot !== clip.robot) return false
+        if (shift) for (const it of track.items) if (shift.ids.includes(it.id)) it.start += Math.round(shift.by)
         track.items.push({ id: crypto.randomUUID(), refId: clipId, start: Math.round(start), trimIn: 0, trimOut: clip.length })
         return validTrack(track.items)
       }),
