@@ -8,7 +8,7 @@ import { loadDef } from '../test/defs'
 
 const dir = new URL('../../public/physics/g1/', import.meta.url)
 const read = (p: string) => new Uint8Array(readFileSync(new URL(p, dir)))
-const def = loadDef('g1')
+const def = loadDef('g1'), gdef = loadDef('go2') // parsed once per file, outside any test's timeout (a full parallel run can take >20 s per parse)
 const S = DEFAULT_PHYSICS
 let mj: any, L: Loaded
 
@@ -78,7 +78,6 @@ it.skipIf(!existsSync(csv))('Track1 first 600 rows: spike-like range', () => {
 
 describe('go2', () => {
   const gdir = new URL('../../public/physics/go2/', import.meta.url)
-  const gdef = loadDef('go2')
   let G: Loaded
   beforeAll(async () => {
     const names: string[] = JSON.parse(readFileSync(new URL('files.json', gdir), 'utf8'))

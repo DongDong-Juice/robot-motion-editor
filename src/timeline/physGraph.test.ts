@@ -36,8 +36,9 @@ test('segmentAt finds the segment holding CSV frame k (inclusive)', () => {
   expect(segmentAt(segs, 22)).toBe(segs[1])
 })
 
+const defs = { g1: loadDef('g1'), go2: loadDef('go2') } // parsed once per file, outside any test's timeout (a full parallel run can take >20 s per parse)
+
 test('seqFrameOf: CSV frame 0 is itemFrameRange(item).from (= item.start, rest pose or not)', () => {
-  const defs = { g1: loadDef('g1'), go2: loadDef('go2') }
   const p = { clips: { c: { id: 'c', name: 'c', robot: 'g1', length: 200, channels: {} } } } as unknown as Project
   const at = (it: object, k: number) => seqFrameOf(p, defs, { ...item, ...it }, k)
   expect(at({}, 0)).toBe(100)

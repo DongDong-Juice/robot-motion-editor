@@ -4,11 +4,11 @@ import { expect, test } from 'vitest'
 import { createEditorStore } from './store/store'
 import { cutAtFrame, splitAtPlayhead, splitTarget } from './transport'
 
-const load = loadDef
+const defs = { g1: loadDef('g1'), go2: loadDef('go2') } // parsed once per file, outside any test's timeout (a full parallel run can take >20 s per parse)
 
 // Two g1 actors with an item each at 0..; item ids [a1 (first actor), b1 (second actor)]
 function setup() {
-  const st = createEditorStore({ g1: load('g1'), go2: load('go2') }), s = () => st.getState()
+  const st = createEditorStore(defs), s = () => st.getState()
   const a = s().project.actors[0].id
   const track = (id: string) => s().project.sequence.tracks.find(t => t.actorId === id)!
   const clip = track(a).items[0].refId
