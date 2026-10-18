@@ -9,7 +9,7 @@ import { loadDef } from '../test/defs'
 import { GO2_BLOCKS, type Block } from './blocks'
 import { blockActual, buildBlockClip, emptyBlockClip } from './build'
 
-const defs = { go2: loadDef('go2') } as RobotDefs
+const defs = { go2: loadDef('go2') } as RobotDefs, g1 = loadDef('g1') // parsed once per file, outside any test's timeout (a full parallel run can take >20 s per parse)
 const pose = (x: number, yaw: number, f: number): Pose =>
   ({ rootPos: [x, 0, 0.3], rootQuat: yawQuat(yaw), q: Array.from({ length: 12 }, (_, j) => j === 0 ? Math.sin(2 * Math.PI * f / 10) : 0) })
 // 50fps, walking 0.01m/frame, joint 0 period 10 frames
@@ -97,7 +97,7 @@ test.each([['move', 1.8], ['move', 4], ['rotate', 90], ['rotate', -90], ['rotate
 })
 
 test('real Rotate template: only base + n × step angles (n ≥ 1), so 100° and 110° both give the smallest, base + one step', () => {
-  const { poses } = parseCsvPoses(readFileSync('public/go2-blocks/rotate.csv', 'utf8'), { ...defs, g1: loadDef('g1') } as RobotDefs, undefined)
+  const { poses } = parseCsvPoses(readFileSync('public/go2-blocks/rotate.csv', 'utf8'), { ...defs, g1 } as RobotDefs, undefined)
   const rot = GO2_BLOCKS.find(b => b.id === 'rotate')!
   const a = blockActual(rot, poses, 100)!, b = blockActual(rot, poses, 110)!, c = blockActual(rot, poses, 250)!
   expect([a.n, b.n]).toEqual([1, 1])
