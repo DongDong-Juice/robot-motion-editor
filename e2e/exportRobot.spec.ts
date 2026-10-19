@@ -1,6 +1,6 @@
 import { test, expect, type Download } from '@playwright/test'
 
-test('내보내기: G1 / GO2 내보내기 buttons export one robot, a row's 내보내기 exports one item', async ({ page }) => {
+test('내보내기: G1 / GO2 내보내기 buttons export one robot, each row 내보내기 exports one item', async ({ page }) => {
   await page.addInitScript(() => { delete (window as any).showOpenFilePicker; delete (window as any).showSaveFilePicker; delete (window as any).showDirectoryPicker })
   const downloads: Download[] = []
   page.on('download', d => downloads.push(d))
