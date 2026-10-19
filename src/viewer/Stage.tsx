@@ -8,11 +8,14 @@ import { evaluate, evaluateClip, evaluateItem, evaluateRoot, placeItemPose } fro
 import { rebasePose } from '../model/pose'
 import { itemLead, leadInPose, restClipFor, tailedClip } from '../model/restPose'
 import { baseClip, editedClip, offsetKeyCount, withUse } from '../model/itemClip'
-import { nearestAngle } from '../model/rootMath'
-import { hiddenAt, resolve, sortedItems, stitchTransforms, worldToClipRoot } from '../model/sequence'
+import { nearestAngle, quatYaw } from '../model/rootMath'
+import { hiddenAt, itemLen, resolve, sortedItems, stitchTransforms, worldToClipRoot } from '../model/sequence'
 import type { Actor, Clip, Project } from '../model/types'
-import { actorOf, CLIP_ACTOR, clipLocked, editingItem, editLock, editTarget, getEditor, gizmoLock, targetItem, trackLocked, useEditor } from '../store/store'
+import { actorOf, CLIP_ACTOR, clipLocked, editingItem, editTarget, getEditor, gizmoLock, targetItem, trackLocked, useEditor } from '../store/store'
 import { sequenceEnd } from '../transport'
+import { cancelDrag, trackDrag } from '../timeline/drag'
+import { loadTemplate } from '../go2blocks/Go2BlockPanel'
+import { trackEnd, walkStart, walkToClip } from '../go2blocks/walkTo'
 import { buildRobot, pivotAngle, type RobotRig } from './buildRobot'
 import type { RobotDef } from '../robot/types'
 import { followStep } from './follow'
@@ -66,6 +69,12 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
   const [stageLocal, setStageLocal] = useState(true)
   const stageStore = useEditor(s => s.stageShown)
   const stageOn = main ? stageStore : stageLocal
+  const walk = useEditor(s => s.walkMode)
+  const seqView = useEditor(s => !s.editing && !s.clipEdit)
+  // 배치 이동 notices (too close, locked, logs not loaded), 3 s
+  const [walkMsg, setWalkMsgState] = useState('')
+  const msgTimer = useRef(0)
+  const setWalkMsg = (m: string) => { setWalkMsgState(m); clearTimeout(msgTimer.current); msgTimer.current = window.setTimeout(() => setWalkMsgState(''), 3000) }
   const stageRef = useRef(true)
   stageRef.current = stageOn
 
@@ -476,10 +485,13 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
     let down: [number, number] | null = null, onGizmo = false
     const dom = renderer.domElement
     // the nearest visible, non-ghost robot link under the pointer (sets `ray`)
-    const pick = (ev: PointerEvent) => {
+    const aim = (ev: MouseEvent) => {
       const r = dom.getBoundingClientRect()
       ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1)
       ray.setFromCamera(ndc, camera)
+    }
+    const pick = (ev: PointerEvent) => {
+      aim(ev)
       let best: { id: string; via: string; d: number } | null = null
       for (const [id, e] of entries) {
         if (e.ghost || !e.rig.root.visible) continue
@@ -489,23 +501,49 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       }
       return best
     }
-    // 3D 끌기 (main view): the robot's 무대 X·Y can be written at this frame (the gizmo's lock rules for root.x)
+    // 3D 끌기 (main view): moves the actor's placement (no keys, no 수정 층)
     const canDrag = (id: string) => {
-      const s = store.getState(), t = editTarget(s, id), it = t && targetItem(s, t.itemId)
-      if (!t || !it || s.playing || s.clipEdit || offStage(s, id) || trackLocked(s.project, id) || clipLocked(s.project, t.clipId) || editLock(s, id, 'root.x')) return false
-      if (!s.editing && s.itemPreview === t.itemId) return false // edited in the clip preview
-      return s.frame >= it.start && s.frame < it.start + it.trimOut - it.trimIn // off the piece / its lead-in or 끝 기본자세
+      const s = store.getState()
+      return !!actorOf(s, id) && !s.playing && !s.clipEdit && !offStage(s, id) && !trackLocked(s.project, id)
     }
     const floor = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), hitP = new THREE.Vector3()
     // grab candidate from pointerdown on a draggable robot; `on` once it moved past 4 px
-    let grab: { id: string; at: THREE.Vector3; pos: THREE.Vector3; quat: THREE.Quaternion; on: boolean } | null = null
+    let grab: { id: string; at: THREE.Vector3; x: number; y: number; on: boolean } | null = null
+    // 배치 이동 + GO2: the robot stays; a dashed line from its track-end spot to the cursor, release appends a walk clip
+    // there (trackDrag, so Ctrl+Z mid-drag cancels it)
+    let walking = false
+    const walkDrag = (id: string, ev: MouseEvent) => {
+      const s = store.getState(), start = walkStart(s.project, s.defs, id)
+      const color = css('--accent') || '#F0A43A'
+      const line = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({ color, dashSize: 0.1, gapSize: 0.06 }))
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.16, 32), new THREE.MeshBasicMaterial({ color }))
+      const show = (ev: MouseEvent) => {
+        aim(ev)
+        if (!ray.ray.intersectPlane(floor, hitP)) return
+        line.geometry.setFromPoints([new THREE.Vector3(start.x, start.y, 0.01), new THREE.Vector3(hitP.x, hitP.y, 0.01)]); line.computeLineDistances()
+        ring.position.set(hitP.x, hitP.y, 0.01); dirty = true
+      }
+      const stop = () => { scene.remove(line, ring); disposeObj(line); disposeObj(ring); walking = false; orbit.enabled = true; dom.style.cursor = ''; dirty = true }
+      walking = true; dom.style.cursor = 'grabbing'; scene.add(line, ring); show(ev)
+      trackDrag(show, async ev => {
+        stop(); aim(ev)
+        if (!ray.ray.intersectPlane(floor, hitP)) return
+        const target = { x: hitP.x, y: hitP.y }
+        const t = await Promise.all([loadTemplate('rotate'), loadTemplate('move')]).catch(() => null)
+        if (!t) return setWalkMsg('걷기 로그를 불러오지 못했습니다')
+        const r = walkToClip(t[0], t[1], start, target, store.getState().defs)
+        if ('error' in r) return setWalkMsg(r.error)
+        if (!store.getState().appendClip(id, r.clip)) return setWalkMsg('트랙이 잠겨 있어 걷기를 붙이지 못했습니다')
+        store.getState().setFrame(trackEnd(store.getState().project, id) - 1)
+      }, stop)
+    }
     const onDown = (ev: PointerEvent) => {
       down = [ev.clientX, ev.clientY]; onGizmo = tc.axis !== null; el.focus()
       if (!mainView || onGizmo || ev.button !== 0) return
       const b = pick(ev)
       if (!b || !canDrag(b.id) || !ray.ray.intersectPlane(floor, hitP)) return
-      const o = entries.get(b.id)!.rig.root
-      grab = { id: b.id, at: hitP.clone(), pos: o.position.clone(), quat: o.quaternion.clone(), on: false }
+      const pl = actorOf(store.getState(), b.id)!.placement
+      grab = { id: b.id, at: hitP.clone(), x: pl.x, y: pl.y, on: false }
       orbit.enabled = false // on a robot: no camera
     }
     let hoverEv: PointerEvent | null = null, hoverRaf = 0
@@ -517,12 +555,13 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       }
       if (!grab.on) {
         if (Math.hypot(ev.clientX - down![0], ev.clientY - down![1]) <= 4) return
-        grab.on = true; store.getState().beginGesture(); dom.style.cursor = 'grabbing'
+        const s = store.getState()
+        if (s.walkMode && !s.editing && !s.clipEdit && actorOf(s, grab.id)!.robot === 'go2') { const id = grab.id; grab = null; return walkDrag(id, ev) }
+        grab.on = true; s.beginGesture(); dom.style.cursor = 'grabbing'
       }
       pick(ev)
       if (!ray.ray.intersectPlane(floor, hitP)) return
-      const r = toClipRoot(grab.id, hitP.sub(grab.at).add(grab.pos).setZ(grab.pos.z), grab.quat)
-      store.getState().editPose(grab.id, { 'root.x': r.x, 'root.y': r.y })
+      store.getState().setPlacement(grab.id, { x: grab.x + hitP.x - grab.at.x, y: grab.y + hitP.y - grab.at.y })
     }
     const onCancel = () => {
       const g = grab
@@ -636,6 +675,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       dom.removeEventListener('pointercancel', onCancel)
       dom.removeEventListener('pointermove', onMove); cancelAnimationFrame(hoverRaf)
       if (grab?.on) store.getState().endGesture()
+      if (walking) cancelDrag()
       el.removeEventListener('keydown', onKey)
       for (const e of entries.values()) disposeEntry(e)
       for (const o of overlays.values()) disposeObj(o.rig.root)
@@ -659,6 +699,8 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       <div className="pv-tools">
         <button className="pv-btn" aria-pressed={follow} onClick={() => setFollow(f => !f)}>로봇 따라가기</button>
         <button className="pv-btn" aria-pressed={stageOn} onClick={() => main ? getEditor().getState().setStageShown(!stageOn) : setStageLocal(v => !v)} title="무대와 객석 방향을 보여 줍니다">무대</button>
+        {main && seqView && <button className="pv-btn" aria-pressed={walk} onClick={() => { if (!walk) { loadTemplate('rotate').catch(() => {}); loadTemplate('move').catch(() => {}) } getEditor().getState().setWalkMode(!walk) }} title="GO2를 끌어 놓은 곳까지 걷는 클립을 트랙 끝에 붙입니다">배치 이동</button>}
+        {walkMsg && <span className="pv-msg" role="status">{walkMsg}</span>}
         {cid && <button className="pv-btn" aria-pressed={trail} onClick={() => setTrail(v => !v)} title="로봇 골반이 지나간 바닥 경로를 선으로 보여 줍니다">경로 표시</button>}
         {children}
       </div>
