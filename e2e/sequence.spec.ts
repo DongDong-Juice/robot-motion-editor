@@ -40,7 +40,7 @@ test('import CSV, place two items with crossfade, export all', async ({ page }) 
 
   await menu(page, '내보내기')
   await expect(page.getByRole('group', { name: 'G1' })).toContainText('Untitled-G1-2') // rows grouped by robot, cut pieces by piece name
-  await expect(page.getByRole('group', { name: 'GO2' })).toContainText('clip_01')
+  await expect(page.getByRole('group', { name: 'GO2' })).toContainText('Untitled-GO2-1') // GO2 pieces: <project>-GO2-<n>
   await page.getByLabel('물리 검증 건너뛰기').check() // keep CSV checks independent of physics load
   await page.getByRole('button', { name: /CSV 내보내기|무시하고 내보내기/ }).click()
   await expect.poll(() => downloads.length).toBe(1) // several files → one zip
@@ -54,7 +54,7 @@ test('import CSV, place two items with crossfade, export all', async ({ page }) 
   expect(lines(imp.text)[0].split(',')).toHaveLength(41)
   const [x, y] = lines(imp.text)[1].split(',').slice(4, 6)
   expect([Number(x), Number(y)]).toEqual([0, 0])
-  expect(files.some(f => f.name.startsWith('GO2_') && lines(f.text)[1].split(',').length === 24)).toBe(true)
+  expect(files.some(f => f.name.startsWith('Untitled-GO2-') && lines(f.text)[1].split(',').length === 24)).toBe(true)
 })
 
 test('save and reopen restores sequence', async ({ page }) => {

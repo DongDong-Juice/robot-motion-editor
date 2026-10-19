@@ -82,9 +82,10 @@ export function csvFileName(p: Project, actorId: string, itemId: string, taken: 
   const shared = p.actors.filter(a => a.robot === actor.robot).length > 1
   const clean = (s: string) => s.replace(/[/\\:*?"<>|#\s]/g, '_')
   // Cut pieces share one clip: number them by start (1-based) on this actor's tracks so each piece keeps its own name.
+  // GO2: every piece is numbered by start (user: library blocks too), as pieceName shows it.
   const pieces = p.sequence.tracks.filter(t => t.actorId === actorId).flatMap(t => t.items)
-    .filter(it => it.refId === item.refId).sort((a, b) => a.start - b.start)
-  const base = pieces.length > 1 ? `${clean(project)}-${LABEL[actor.robot]}-${pieces.indexOf(item) + 1}` // same as the piece's display name
+    .filter(it => actor.robot === 'go2' || it.refId === item.refId).sort((a, b) => a.start - b.start)
+  const base = pieces.length > 1 || actor.robot === 'go2' ? `${clean(project)}-${LABEL[actor.robot]}-${pieces.indexOf(item) + 1}` // same as the piece's display name
     : `${clean(shared ? actor.name : LABEL[actor.robot])}_${clean(clip?.name ?? 'clip')}`
   let name = `${base}.csv`
   for (let n = 2; taken.has(name); n++) name = `${base}_${n}.csv`
