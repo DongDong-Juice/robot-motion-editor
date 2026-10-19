@@ -6,11 +6,12 @@ import { evaluateClip, type RobotDefs } from '../model/evaluate'
 import { inCrossfade, itemLen, resolve, sortedItems, validTrack } from '../model/sequence'
 import type { Actor, Bin, Item, Clip, Curve, Interp, Project, StageSize, Tan, Track } from '../model/types'
 import { validVideoTrack, videoTrack } from '../model/video'
-import { baseClip, offsetKeyCount } from '../model/itemClip'
+import { groundZ, lockFeet, standQ, type Body } from '../model/bodyPose'
+import { baseClip, editedClip, offsetKeyCount } from '../model/itemClip'
 import { addOverRange, type Range } from '../model/rangeEdit'
 import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP, previewRange } from '../model/restPose'
 import { SEAM_MAX } from '../model/seam'
-import type { RobotKind } from '../robot/types'
+import type { RobotDef, RobotKind } from '../robot/types'
 import type { PhysicsSettings } from '../physics/settings'
 
 // Bumped whenever a different project is loaded; async work started against one project checks it before landing.
@@ -79,6 +80,12 @@ export interface EditorState {
   setInterp(clipId: string, keys: KeyRef[], interp: Interp): void
   setTangent(clipId: string, channel: string, f: number, side: 'in' | 'out', t: Tan, linked: boolean): void
   keyGroup(actorId: string, group: string): void
+  keyPose(actorId: string): void // key every root and joint channel at the frame
+  feetLock: boolean; setFeetLock(on: boolean): void // body edits keep the feet where they are (legs re-solved by IK)
+  autoGround: boolean; setAutoGround(on: boolean): void // root.z follows the lowest foot
+  poseAt(actorId: string): { def: RobotDef; f: number; body: Body; q: number[] } | null // the pose the joint panel shows
+  editPose(actorId: string, values: Record<string, number>): boolean // channel -> target, one undo step (joins an open gesture); false = refused, nothing written
+  standPose(actorId: string): void // 차렷 joints, no tilt, rest height; x/y/yaw kept; no foot lock
   setTrackFlag(trackId: string, flag: 'hidden' | 'locked' | 'trail', on: boolean): void // trail: 경로 표시 (display only, also on a locked track)
   setItemHidden(itemId: string, on: boolean): void // display only, also on a locked track (like the track's 숨기기)
   setClip(clipId: string, patch: { name?: string; length?: number }): boolean
@@ -427,6 +434,58 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
     }
     const findKey = (clip: Owner, r: KeyRef) => clip.channels[r.channel]?.keys.find(k => k.f === r.f)
 
+    const keyChannels = (actorId: string, names: string[]) => {
+        const actor = actorOf(get(), actorId)
+        if (!actor) return // stale id: the actor may have been removed with its last clip
+        const def = defs[actor.robot]
+        const t = keyTarget(get(), actorId)
+        if (!t || trackLocked(get().project, actorId) || clipLocked(get().project, t.clipId)) return
+        const { clipId, f } = t
+        if (names.some(n => editLock(get(), actorId, n))) return
+        if (t.owner !== clipId) { // 수정 층: key every channel at its current difference
+          edit(p => { const o = ownerOf(p, t.owner)!; for (const n of names) putKey(o, n, f, evalCurve(o.channels[n] ?? { keys: [] }, f, 0)) }, [{ clipId: t.owner, channels: [] }])
+          return
+        }
+        edit(p => {
+          const clip = p.clips[clipId]
+          const pose = evaluateClip(clip, def, f)
+          for (const n of names) {
+            const v = ROOT.includes(n)
+              ? evalCurve(clip.channels[n] ?? { keys: [] }, f, n === 'root.z' ? def.standingHeight : 0)
+              : pose.q[def.joints.findIndex(j => j.name === n)]
+            putKey(clip, n, f, v)
+          }
+        }, [{ clipId, channels: names }])
+      }
+    const poseAt: EditorState['poseAt'] = actorId => {
+      const s = get(), actor = actorOf(s, actorId), t = actor && editTarget(s, actorId), item = t && targetItem(s, t.itemId)
+      if (!actor || !t || !item) return null
+      const def = defs[actor.robot], shown = (s.clipEdit ? baseClip(s.project, defs, t.clipId) : editedClip(s.project, defs, item)) ?? s.project.clips[t.clipId]
+      const r = (c: string) => evalCurve(shown.channels[c] ?? { keys: [] }, t.f, c === 'root.z' ? def.standingHeight : 0)
+      return { def, f: t.f, body: { x: r('root.x'), y: r('root.y'), z: r('root.z'), roll: r('root.roll'), pitch: r('root.pitch'), yaw: r('root.yaw') }, q: [...evaluateClip(shown, def, t.f).q] }
+    }
+    const editPose = (actorId: string, values: Record<string, number>, lock: boolean) => {
+      const cur = poseAt(actorId)
+      if (!cur) return false
+      const { def } = cur, body: Body = { ...cur.body }
+      let q = [...cur.q]
+      for (const k of ['x', 'y', 'z', 'roll', 'pitch', 'yaw'] as const) if (values[`root.${k}`] !== undefined) body[k] = values[`root.${k}`]
+      def.joints.forEach((j, i) => { if (values[j.name] !== undefined) q[i] = Math.min(Math.max(values[j.name], j.lower), j.upper) })
+      if (lock && ROOT.some(c => values[c] !== undefined)) {
+        const solved = lockFeet(def, q, cur.body, body)
+        if (!solved) return false
+        q = solved
+      }
+      if (get().autoGround && values['root.z'] === undefined) body.z = groundZ(def, q, body)
+      const was = gesture
+      if (!was) get().beginGesture()
+      const chan = (b: Body, qq: number[]) => [...ROOT.map(c => [c, b[c.slice(5) as keyof Body]] as const), ...def.joints.map((j, i) => [j.name, qq[i]] as const)]
+      const had = new Map(chan(cur.body, cur.q))
+      for (const [c, x] of chan(body, q)) if (Math.abs(x - had.get(c)!) > 1e-9) get().setValue(actorId, c, x)
+      if (!was) get().endGesture()
+      return true
+    }
+
     return {
       selItem: null, selectItem: selItem => set({ selItem }),
       editing: null,
@@ -592,27 +651,25 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       keyGroup: (actorId, group) => {
         const actor = actorOf(get(), actorId)
         if (!actor) return // stale id: the actor may have been removed with its last clip
-        const def = defs[actor.robot]
-        const t = keyTarget(get(), actorId)
-        if (!t || trackLocked(get().project, actorId) || clipLocked(get().project, t.clipId)) return
-        const { clipId, f } = t
-        const names = group === '루트' ? ROOT : def.groups.find(g => g.name === group)?.joints
+        const names = group === '루트' ? ROOT : defs[actor.robot].groups.find(g => g.name === group)?.joints
         if (!names) throw new Error(`unknown group ${group}`)
-        if (names.some(n => editLock(get(), actorId, n))) return
-        if (t.owner !== clipId) { // 수정 층: key every channel at its current difference
-          edit(p => { const o = ownerOf(p, t.owner)!; for (const n of names) putKey(o, n, f, evalCurve(o.channels[n] ?? { keys: [] }, f, 0)) }, [{ clipId: t.owner, channels: [] }])
-          return
-        }
-        edit(p => {
-          const clip = p.clips[clipId]
-          const pose = evaluateClip(clip, def, f)
-          for (const n of names) {
-            const v = ROOT.includes(n)
-              ? evalCurve(clip.channels[n] ?? { keys: [] }, f, n === 'root.z' ? def.standingHeight : 0)
-              : pose.q[def.joints.findIndex(j => j.name === n)]
-            putKey(clip, n, f, v)
-          }
-        }, [{ clipId, channels: names }])
+        keyChannels(actorId, names)
+      },
+      keyPose: actorId => {
+        const actor = actorOf(get(), actorId)
+        if (actor) keyChannels(actorId, [...ROOT, ...defs[actor.robot].joints.map(j => j.name)])
+      },
+      feetLock: false, setFeetLock: on => set({ feetLock: on }),
+      autoGround: false, setAutoGround: on => set({ autoGround: on }),
+      poseAt,
+      editPose: (actorId, values) => editPose(actorId, values, get().feetLock),
+      standPose: actorId => {
+        const p = poseAt(actorId)
+        if (!p) return
+        const v: Record<string, number> = { 'root.pitch': 0, 'root.roll': 0 }
+        if (!get().autoGround) v['root.z'] = p.def.rest.z
+        standQ(p.def).forEach((x, i) => { v[p.def.joints[i].name] = x })
+        editPose(actorId, v, false)
       },
       setStage: patch => {
         const clean: Partial<StageSize> = {}
