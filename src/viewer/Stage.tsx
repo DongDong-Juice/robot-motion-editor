@@ -11,7 +11,7 @@ import { baseClip, editedClip, offsetKeyCount, withUse } from '../model/itemClip
 import { nearestAngle } from '../model/rootMath'
 import { hiddenAt, resolve, sortedItems, stitchTransforms, worldToClipRoot } from '../model/sequence'
 import type { Actor, Clip, Project } from '../model/types'
-import { actorOf, CLIP_ACTOR, clipLocked, editingItem, editTarget, getEditor, gizmoLock, trackLocked, useEditor } from '../store/store'
+import { actorOf, CLIP_ACTOR, clipLocked, editingItem, editLock, editTarget, getEditor, gizmoLock, targetItem, trackLocked, useEditor } from '../store/store'
 import { sequenceEnd } from '../transport'
 import { buildRobot, pivotAngle, type RobotRig } from './buildRobot'
 import type { RobotDef } from '../robot/types'
@@ -382,14 +382,20 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       dirty = true
     }
 
-    // current gizmo values for the root, in clip-local channels: undo placement, then the item's stitch transform
+    // a rig root world pose in clip-local root channels: undo placement, then the item's stitch transform
+    const toClipRoot = (actorId: string, pos: THREE.Vector3, q: THREE.Quaternion) => {
+      const s = store.getState(), actor = actorOf(s, actorId)!, target = editTarget(s, actorId)
+      const track = s.project.sequence.tracks.find(t => t.items.some(i => i.id === target?.itemId))
+      const xf = (track && target && stitchTransforms(s.project, s.defs, track).get(target.itemId)) || { x: 0, y: 0, yaw: 0 }
+      return worldToClipRoot({ pos: [pos.x, pos.y, pos.z], quat: [q.x, q.y, q.z, q.w] }, actor.placement, xf)
+    }
+    // current gizmo values for the root, in clip-local channels
     const rootValues = (): [string, number][] => {
       const s = store.getState(), actor = actorOf(s, s.sel.actorId)!
       const target = editTarget(s, actor.id)
       const track = s.project.sequence.tracks.find(t => t.items.some(i => i.id === target?.itemId))
-      const xf = (track && target && stitchTransforms(s.project, s.defs, track).get(target.itemId)) || { x: 0, y: 0, yaw: 0 }
       const o = entries.get(actor.id)!.rig.root
-      const r = worldToClipRoot({ pos: [o.position.x, o.position.y, o.position.z], quat: [o.quaternion.x, o.quaternion.y, o.quaternion.z, o.quaternion.w] }, actor.placement, xf)
+      const r = toClipRoot(actor.id, o.position, o.quaternion)
       if (rootMode === 'translate') return [['root.x', r.x], ['root.y', r.y], ['root.z', r.z]]
       // euler read-back wraps to (-pi, pi]; keep each angle continuous with the stored channel value
       if (!target) return [['root.roll', r.roll], ['root.pitch', r.pitch], ['root.yaw', r.yaw]]
@@ -469,9 +475,8 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
     const ray = new THREE.Raycaster(), ndc = new THREE.Vector2()
     let down: [number, number] | null = null, onGizmo = false
     const dom = renderer.domElement
-    const onDown = (ev: PointerEvent) => { down = [ev.clientX, ev.clientY]; onGizmo = tc.axis !== null; el.focus() }
-    const onUp = (ev: PointerEvent) => {
-      if (!down || Math.hypot(ev.clientX - down[0], ev.clientY - down[1]) > 4 || onGizmo) return
+    // the nearest visible, non-ghost robot link under the pointer (sets `ray`)
+    const pick = (ev: PointerEvent) => {
       const r = dom.getBoundingClientRect()
       ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1)
       ray.setFromCamera(ndc, camera)
@@ -482,10 +487,59 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
         const via = hit && e.rig.linkToJoint.get(hit.object)
         if (via && (!best || hit.distance < best.d)) best = { id, via, d: hit.distance }
       }
+      return best
+    }
+    // 3D 끌기 (main view): the robot's 무대 X·Y can be written at this frame (the gizmo's lock rules for root.x)
+    const canDrag = (id: string) => {
+      const s = store.getState(), t = editTarget(s, id), it = t && targetItem(s, t.itemId)
+      if (!t || !it || s.playing || s.clipEdit || offStage(s, id) || trackLocked(s.project, id) || clipLocked(s.project, t.clipId) || editLock(s, id, 'root.x')) return false
+      if (!s.editing && s.itemPreview === t.itemId) return false // edited in the clip preview
+      return s.frame >= it.start && s.frame < it.start + it.trimOut - it.trimIn // off the piece / its lead-in or 끝 기본자세
+    }
+    const floor = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), hitP = new THREE.Vector3()
+    // grab candidate from pointerdown on a draggable robot; `on` once it moved past 4 px
+    let grab: { id: string; at: THREE.Vector3; pos: THREE.Vector3; quat: THREE.Quaternion; on: boolean } | null = null
+    const onDown = (ev: PointerEvent) => {
+      down = [ev.clientX, ev.clientY]; onGizmo = tc.axis !== null; el.focus()
+      if (!mainView || onGizmo || ev.button !== 0) return
+      const b = pick(ev)
+      if (!b || !canDrag(b.id) || !ray.ray.intersectPlane(floor, hitP)) return
+      const o = entries.get(b.id)!.rig.root
+      grab = { id: b.id, at: hitP.clone(), pos: o.position.clone(), quat: o.quaternion.clone(), on: false }
+      orbit.enabled = false // on a robot: no camera
+    }
+    let hoverEv: PointerEvent | null = null, hoverRaf = 0
+    const onMove = (ev: PointerEvent) => {
+      if (!grab) { // hover cursor, one raycast per frame
+        if (!ev.buttons && !hoverRaf) hoverRaf = requestAnimationFrame(() => { hoverRaf = 0; const b = hoverEv && pick(hoverEv); dom.style.cursor = b && canDrag(b.id) ? 'grab' : '' })
+        hoverEv = ev
+        return
+      }
+      if (!grab.on) {
+        if (Math.hypot(ev.clientX - down![0], ev.clientY - down![1]) <= 4) return
+        grab.on = true; store.getState().beginGesture(); dom.style.cursor = 'grabbing'
+      }
+      pick(ev)
+      if (!ray.ray.intersectPlane(floor, hitP)) return
+      const r = toClipRoot(grab.id, hitP.sub(grab.at).add(grab.pos).setZ(grab.pos.z), grab.quat)
+      store.getState().editPose(grab.id, { 'root.x': r.x, 'root.y': r.y })
+    }
+    const onCancel = () => {
+      const g = grab
+      if (g) { grab = null; orbit.enabled = true }
+      if (g?.on) { store.getState().endGesture(); dom.style.cursor = '' }
+    }
+    const onUp = (ev: PointerEvent) => {
+      const g = grab
+      if (g) { grab = null; orbit.enabled = true }
+      if (g?.on) { store.getState().endGesture(); dom.style.cursor = 'grab'; return }
+      if (!down || Math.hypot(ev.clientX - down[0], ev.clientY - down[1]) > 4 || onGizmo) return
+      const best = pick(ev)
       if (best) store.getState().select(best.id, best.via)
       else store.getState().select(null)
     }
-    if (mainView || editPane) { dom.addEventListener('pointerdown', onDown); dom.addEventListener('pointerup', onUp) }
+    if (mainView || editPane) { dom.addEventListener('pointerdown', onDown); dom.addEventListener('pointerup', onUp); dom.addEventListener('pointercancel', onCancel) }
+    if (mainView) dom.addEventListener('pointermove', onMove)
 
     const onKey = (ev: KeyboardEvent) => {
       const v = VIEWS[ev.key]
@@ -579,6 +633,9 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       unsub(); ro.disconnect()
       dom.removeEventListener('pointerdown', onDown)
       dom.removeEventListener('pointerup', onUp)
+      dom.removeEventListener('pointercancel', onCancel)
+      dom.removeEventListener('pointermove', onMove); cancelAnimationFrame(hoverRaf)
+      if (grab?.on) store.getState().endGesture()
       el.removeEventListener('keydown', onKey)
       for (const e of entries.values()) disposeEntry(e)
       for (const o of overlays.values()) disposeObj(o.rig.root)
