@@ -3,7 +3,7 @@ import { onHandleArrow } from './layout/useLayout'
 import { sortedItems } from './model/sequence'
 import { previewRange } from './model/restPose'
 import type { Project } from './model/types'
-import { openProject, saveProject } from './projectActions'
+import { saveProject, showProjectHub } from './projectActions'
 import { seqFlash } from './timeline/viewState'
 import { cancelDrag, dragActive } from './timeline/drag'
 
@@ -109,7 +109,7 @@ export function startTransport(): () => void {
   const onKey = (e: KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && !e.altKey && ['s', 'o'].includes(e.key.toLowerCase())) { // file shortcuts work everywhere
       e.preventDefault()
-      if (!e.repeat) { if (e.key.toLowerCase() === 's') saveProject(e.shiftKey); else openProject() }
+      if (!e.repeat) { if (e.key.toLowerCase() === 's') saveProject(e.shiftKey); else showProjectHub() }
       return
     }
     if (typing(e.target) || e.altKey || (e.target instanceof Element && e.target.closest('[role=menu]'))) return // menus own their keys

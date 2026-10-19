@@ -1,6 +1,6 @@
 import { evaluateClip, type Pose, type RobotDefs } from './pose'
 import { quatMul, quatYaw, yawQuat, type Quat } from './rootMath'
-import type { Item, Project, Track } from './types'
+import type { Clip, Item, Project, Track } from './types'
 import { itemClip } from './itemClip'
 
 export interface Xf { x: number; y: number; yaw: number } // clip root -> track coords
@@ -14,7 +14,13 @@ export function pieceTag(t: Track, it: Item): string {
   const ps = sortedItems(t).filter(i => i.refId === it.refId)
   return ps.length > 1 ? `#${ps.findIndex(i => i.id === it.id) + 1} · F${it.trimIn}–${it.trimOut}` : ''
 }
-export const pieceName = (t: Track, it: Item, clipName: string) => { const g = pieceTag(t, it); return g ? `${g} · ${clipName}` : clipName }
+/** Project name for piece names: the saved file name without its extension, 'Untitled' before the first save. */
+export const projectTitle = (fileName: string | null) => fileName?.replace(/(\.mproj|(\.motion)?\.json)$/i, '') || 'Untitled'
+/** Display name of an item: GO2 = "<project>-GO2-<n>" for every piece (n = start order on its track, user: library blocks too);
+ * G1 = "<project>-G1-<n>" for a cut piece (n = pieceTag's #n), the clip name for a lone item. */
+export const pieceName = (t: Track, it: Item, clip: Pick<Clip, 'name' | 'robot'> | undefined, project: string) =>
+  clip?.robot === 'go2' ? `${project}-GO2-${sortedItems(t).findIndex(i => i.id === it.id) + 1}`
+    : pieceTag(t, it) ? `${project}-${clip?.robot.toUpperCase() ?? ''}-${pieceTag(t, it).split(' · ')[0].slice(1)}` : clip?.name ?? ''
 
 // `items` must be sorted by start. Item + clip frame for a stage frame: before first item -> its trimIn; gap/after -> previous item's last frame.
 export function resolve(items: Item[], frame: number): { item: Item; cf: number } | null {
@@ -63,6 +69,12 @@ export function blendPose(a: Pose, b: Pose, w: number): Pose {
 
 const cache = new WeakMap<Project, Map<string, Map<string, Xf>>>() // Project is immutable per edit
 
+/** One frame on at the last velocity (x, y, yaw wrapped): where a piece cut onto `last` starts (see stitchTransforms). */
+export const advanceXf = (prev: Xf, last: Xf): Xf => ({
+  x: 2 * last.x - prev.x, y: 2 * last.y - prev.y,
+  yaw: last.yaw + Math.atan2(Math.sin(last.yaw - prev.yaw), Math.cos(last.yaw - prev.yaw)),
+})
+
 export function stitchTransforms(p: Project, defs: RobotDefs, track: Track): Map<string, Xf> {
   let perTrack = cache.get(p)
   if (!perTrack) cache.set(p, perTrack = new Map())
@@ -84,8 +96,7 @@ export function stitchTransforms(p: Project, defs: RobotDefs, track: Track): Map
       if (it.start - prev.start >= itemLen(prev)) {
         // cut (no overlap): B's first frame follows A's last, so advance one frame at A's last velocity — else the root stalls a frame
         const P0 = applyXf(evaluateClip(prevClip, def, Math.max(pcf - 1, prev.trimIn)), out.get(prev.id)!)
-        const dyaw = pyaw - quatYaw(P0.rootQuat)
-        px += px - P0.rootPos[0]; py += py - P0.rootPos[1]; pyaw += Math.atan2(Math.sin(dyaw), Math.cos(dyaw))
+        ;({ x: px, y: py, yaw: pyaw } = advanceXf({ x: P0.rootPos[0], y: P0.rootPos[1], yaw: quatYaw(P0.rootQuat) }, { x: px, y: py, yaw: pyaw }))
       }
       const C = evaluateClip(clip, def, it.trimIn)
       const yaw = pyaw - quatYaw(C.rootQuat)

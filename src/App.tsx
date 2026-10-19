@@ -8,12 +8,13 @@ import ProjectPanel from './project/ProjectPanel'
 import Timeline from './timeline/Timeline'
 import ExportDialog from './export/ExportDialog'
 import { startTransport } from './transport'
-import { onMessage } from './projectActions'
+import { onMessage, onShowHub } from './projectActions'
 import FileMenu from './FileMenu'
 import PhysicsDialog from './physics/PhysicsDialog'
 import { usePhysics } from './physics/physicsStore'
 import { stale } from './physics/runItem'
 import CsvFpsDialog from './project/CsvFpsDialog'
+import StartScreen from './StartScreen'
 import { MENUBAR_H, layoutBounds, useLayout, type Layout } from './layout/useLayout'
 import { tv } from './timeline/viewState'
 
@@ -96,6 +97,12 @@ function Resizer({ k, axis, value, min, max, sign, style, label, set, reset }: {
 export default function App() {
   const [status, setStatus] = useState<string>('loading')
   const [layout, setLayout, resetLayout] = useLayout()
+  // 프로젝트 팝업: at start (must pick, e2e skips it) and from 메뉴 새 프로젝트·열기 (closable); n remounts it fresh
+  const [hub, setHub] = useState<{ n: number; closable: boolean; adding: boolean } | null>(() => {
+    try { if (localStorage.getItem('me.noStart') === '1') return null } catch { /* storage blocked: show it */ }
+    return { n: 0, closable: false, adding: false }
+  })
+  useEffect(() => onShowHub(adding => setHub(h => ({ n: (h?.n ?? 0) + 1, closable: true, adding }))), [])
 
   useEffect(() => {
     Promise.all([fetchRobotDef('g1'), fetchRobotDef('go2')])
@@ -111,6 +118,7 @@ export default function App() {
       <header id="menubar">{status === 'ready' ? <Menubar /> : 'Motion Editor'}</header>
       <aside id="project">{status === 'ready' && <ProjectPanel />}</aside>
       {status === 'ready' && <CsvFpsDialog />}
+      {status === 'ready' && hub && <StartScreen key={hub.n} closable={hub.closable} adding={hub.adding} onDone={() => setHub(null)} />}
       <main id="stage">
         {status === 'ready'
           ? <StagePanes robot={<div className="stage-3d"><CrossfadeHint /><Stage /></div>} />

@@ -1,16 +1,17 @@
 import { createStore, useStore, type StoreApi } from 'zustand'
 import { evalCurve, makeKey } from '../model/curve'
 import { simplifyCurve, simplifyTolerance } from '../model/simplify'
-import { addActor as addActorTo, emptyProject, newProject, nextClipName } from '../model/defaults'
+import { addActor as addActorTo, emptyProject, newProject, nextClipName, stageOf } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
 import { inCrossfade, itemLen, resolve, sortedItems, validTrack } from '../model/sequence'
-import type { Actor, Bin, Item, Clip, Curve, Interp, Project, Tan, Track } from '../model/types'
+import type { Actor, Bin, Item, Clip, Curve, Interp, Project, StageSize, Tan, Track } from '../model/types'
 import { validVideoTrack, videoTrack } from '../model/video'
-import { baseClip, offsetKeyCount } from '../model/itemClip'
+import { groundZ, lockFeet, standQ, type Body } from '../model/bodyPose'
+import { baseClip, editedClip, offsetKeyCount } from '../model/itemClip'
 import { addOverRange, type Range } from '../model/rangeEdit'
 import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP, previewRange } from '../model/restPose'
 import { SEAM_MAX } from '../model/seam'
-import type { RobotKind } from '../robot/types'
+import type { RobotDef, RobotKind } from '../robot/types'
 import type { PhysicsSettings } from '../physics/settings'
 
 // Bumped whenever a different project is loaded; async work started against one project checks it before landing.
@@ -43,6 +44,8 @@ export interface EditorState {
   comparePanes: string[] // clip ids shown in preview-only compare panes (max 2): not undoable, not saved, pruned when clips go away
   /** 구간 프리뷰: sequence frames [from, to) looping in their own pane (right-drag on the sequence, user); null = closed. Not saved. */
   spanPreview: [number, number] | null; setSpanPreview(r: [number, number] | null): void
+  /** 배치 이동 toggle (editor state, not saved): on = the playhead sits at the selected GO2's track end - 1. */
+  walkMode: boolean; setWalkMode(on: boolean): void
   openComparePane(clipId: string): void; closeComparePane(clipId: string): void
   itemPreview: string | null // item id looping in the clip preview pane: not undoable, not saved, pruned when the item goes away
   /** The clip preview's own playhead (sequence frames, from the piece's lead-in start; independent of `frame`, user) and whether it
@@ -66,6 +69,8 @@ export interface EditorState {
   /** 구간 (clip frames, clip view / 클립 편집 only): value edits add the same difference over [a, b], easing out over `fade`
    *  frames each side. Not saved; cleared when the open clip changes. */
   range: Range | null; setRange(r: Range | null): void
+  stageShown: boolean; setStageShown(on: boolean): void // 무대 floor on/off in the 3D previews (UI only, not saved)
+  setStage(patch: Partial<StageSize>): void // 무대 size in m (0.1 steps, 1..30): one undo step
   degrees: boolean; setDegrees(on: boolean): void // angle unit of the value fields (inspector and joint panel)
   clearOffset(itemId: string): boolean // drop the piece's whole 수정 층 (one undo step); false = none / locked
   clearClipOffset(clipId: string): boolean // drop the clip's whole 수정 층 (one undo step); false = none
@@ -77,6 +82,12 @@ export interface EditorState {
   setInterp(clipId: string, keys: KeyRef[], interp: Interp): void
   setTangent(clipId: string, channel: string, f: number, side: 'in' | 'out', t: Tan, linked: boolean): void
   keyGroup(actorId: string, group: string): void
+  keyPose(actorId: string): void // key every root and joint channel at the frame
+  feetLock: boolean; setFeetLock(on: boolean): void // body edits keep the feet where they are (legs re-solved by IK)
+  autoGround: boolean; setAutoGround(on: boolean): void // root.z follows the lowest foot
+  poseAt(actorId: string): { def: RobotDef; f: number; body: Body; q: number[] } | null // the pose the joint panel shows
+  editPose(actorId: string, values: Record<string, number>): boolean // channel -> target, one undo step (joins an open gesture); false = refused, nothing written
+  standPose(actorId: string): void // 차렷 joints, no tilt, rest height; x/y/yaw kept; no foot lock
   setTrackFlag(trackId: string, flag: 'hidden' | 'locked' | 'trail', on: boolean): void // trail: 경로 표시 (display only, also on a locked track)
   setItemHidden(itemId: string, on: boolean): void // display only, also on a locked track (like the track's 숨기기)
   setClip(clipId: string, patch: { name?: string; length?: number }): boolean
@@ -425,6 +436,60 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
     }
     const findKey = (clip: Owner, r: KeyRef) => clip.channels[r.channel]?.keys.find(k => k.f === r.f)
 
+    const keyChannels = (actorId: string, names: string[]) => {
+        const actor = actorOf(get(), actorId)
+        if (!actor) return // stale id: the actor may have been removed with its last clip
+        const def = defs[actor.robot]
+        const t = keyTarget(get(), actorId)
+        if (!t || trackLocked(get().project, actorId) || clipLocked(get().project, t.clipId)) return
+        const { clipId, f } = t
+        if (names.some(n => editLock(get(), actorId, n))) return
+        if (t.owner !== clipId) { // 수정 층: key every channel at its current difference
+          edit(p => { const o = ownerOf(p, t.owner)!; for (const n of names) putKey(o, n, f, evalCurve(o.channels[n] ?? { keys: [] }, f, 0)) }, [{ clipId: t.owner, channels: [] }])
+          return
+        }
+        edit(p => {
+          const clip = p.clips[clipId]
+          const pose = evaluateClip(clip, def, f)
+          for (const n of names) {
+            const v = ROOT.includes(n)
+              ? evalCurve(clip.channels[n] ?? { keys: [] }, f, n === 'root.z' ? def.standingHeight : 0)
+              : pose.q[def.joints.findIndex(j => j.name === n)]
+            putKey(clip, n, f, v)
+          }
+        }, [{ clipId, channels: names }])
+      }
+    const poseAt: EditorState['poseAt'] = actorId => {
+      const s = get(), actor = actorOf(s, actorId), t = actor && editTarget(s, actorId), item = t && targetItem(s, t.itemId)
+      if (!actor || !t || !item) return null
+      const def = defs[actor.robot], shown = (s.clipEdit ? baseClip(s.project, defs, t.clipId) : editedClip(s.project, defs, item)) ?? s.project.clips[t.clipId]
+      const r = (c: string) => evalCurve(shown.channels[c] ?? { keys: [] }, t.f, c === 'root.z' ? def.standingHeight : 0)
+      return { def, f: t.f, body: { x: r('root.x'), y: r('root.y'), z: r('root.z'), roll: r('root.roll'), pitch: r('root.pitch'), yaw: r('root.yaw') }, q: [...evaluateClip(shown, def, t.f).q] }
+    }
+    const editPose = (actorId: string, values: Record<string, number>, lock: boolean) => {
+      if (suspended) return false // the gesture was cancelled by undo and is still held
+      const cur = poseAt(actorId)
+      if (!cur) return false
+      const { def } = cur, body: Body = { ...cur.body }
+      let q = [...cur.q]
+      for (const k of ['x', 'y', 'z', 'roll', 'pitch', 'yaw'] as const) if (values[`root.${k}`] !== undefined) body[k] = values[`root.${k}`]
+      def.joints.forEach((j, i) => { if (values[j.name] !== undefined) q[i] = Math.min(Math.max(values[j.name], j.lower), j.upper) })
+      const locked = lock && ROOT.some(c => values[c] !== undefined)
+      if (locked) {
+        const solved = lockFeet(def, q, cur.body, body)
+        if (!solved) return false
+        q = solved
+      }
+      if (!locked && get().autoGround && values['root.z'] === undefined) body.z = groundZ(def, q, body)
+      const was = gesture
+      if (!was) get().beginGesture()
+      const chan = (b: Body, qq: number[]) => [...ROOT.map(c => [c, b[c.slice(5) as keyof Body]] as const), ...def.joints.map((j, i) => [j.name, qq[i]] as const)]
+      const had = new Map(chan(cur.body, cur.q))
+      for (const [c, x] of chan(body, q)) if (Math.abs(x - had.get(c)!) > 1e-9) get().setValue(actorId, c, x)
+      if (!was) get().endGesture()
+      return true
+    }
+
     return {
       selItem: null, selectItem: selItem => set({ selItem }),
       editing: null,
@@ -459,6 +524,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         const top = e.clip.length - 1, a = Math.min(Math.max(Math.round(Math.min(r.a, r.b)), 0), top), b = Math.min(Math.max(Math.round(Math.max(r.a, r.b)), 0), top)
         return { range: { a, b, fade: Math.min(Math.max(Math.round(r.fade), 0), 600) } }
       }),
+      stageShown: true, setStageShown: stageShown => set({ stageShown }),
       degrees: true, setDegrees: degrees => set({ degrees }),
       setClipPeek: on => set({ clipPeek: on }),
       openClipEdit: clipId => {
@@ -488,6 +554,15 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       comparePanes: [],
       openComparePane: id => set(s => s.comparePanes.includes(id) || !s.project.clips[id] ? s : { comparePanes: [...s.comparePanes, id].slice(-2) }),
       closeComparePane: id => set(s => ({ comparePanes: s.comparePanes.filter(x => x !== id) })),
+      walkMode: false,
+      setWalkMode: on => {
+        set({ walkMode: on })
+        const s = get()
+        if (!on || s.editing || s.clipEdit) return // sequence frames only mean something in the sequence view
+        const a = actorOf(s, s.sel.actorId), go2 = a?.robot === 'go2' ? a : s.project.actors.find(x => x.robot === 'go2')
+        const items = s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === go2?.id)?.items ?? []
+        if (items.length) set({ frame: Math.max(...items.map(i => i.start + itemLen(i))) - 1 })
+      },
       spanPreview: null, setSpanPreview: r => set({ spanPreview: r && r[1] > r[0] ? [Math.max(0, Math.round(r[0])), Math.round(r[1])] : null }),
       itemPreview: null, compareOverlay: false,
       setCompareOverlay: on => set({ compareOverlay: on }),
@@ -589,27 +664,31 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       keyGroup: (actorId, group) => {
         const actor = actorOf(get(), actorId)
         if (!actor) return // stale id: the actor may have been removed with its last clip
-        const def = defs[actor.robot]
-        const t = keyTarget(get(), actorId)
-        if (!t || trackLocked(get().project, actorId) || clipLocked(get().project, t.clipId)) return
-        const { clipId, f } = t
-        const names = group === '루트' ? ROOT : def.groups.find(g => g.name === group)?.joints
+        const names = group === '루트' ? ROOT : defs[actor.robot].groups.find(g => g.name === group)?.joints
         if (!names) throw new Error(`unknown group ${group}`)
-        if (names.some(n => editLock(get(), actorId, n))) return
-        if (t.owner !== clipId) { // 수정 층: key every channel at its current difference
-          edit(p => { const o = ownerOf(p, t.owner)!; for (const n of names) putKey(o, n, f, evalCurve(o.channels[n] ?? { keys: [] }, f, 0)) }, [{ clipId: t.owner, channels: [] }])
-          return
-        }
-        edit(p => {
-          const clip = p.clips[clipId]
-          const pose = evaluateClip(clip, def, f)
-          for (const n of names) {
-            const v = ROOT.includes(n)
-              ? evalCurve(clip.channels[n] ?? { keys: [] }, f, n === 'root.z' ? def.standingHeight : 0)
-              : pose.q[def.joints.findIndex(j => j.name === n)]
-            putKey(clip, n, f, v)
-          }
-        }, [{ clipId, channels: names }])
+        keyChannels(actorId, names)
+      },
+      keyPose: actorId => {
+        const actor = actorOf(get(), actorId)
+        if (actor) keyChannels(actorId, [...ROOT, ...defs[actor.robot].joints.map(j => j.name)])
+      },
+      feetLock: false, setFeetLock: on => set({ feetLock: on }),
+      autoGround: false, setAutoGround: on => set({ autoGround: on }),
+      poseAt,
+      editPose: (actorId, values) => editPose(actorId, values, get().feetLock),
+      standPose: actorId => {
+        const p = poseAt(actorId)
+        if (!p) return
+        const v: Record<string, number> = { 'root.pitch': 0, 'root.roll': 0 }
+        if (!get().autoGround) v['root.z'] = p.def.rest.z
+        standQ(p.def).forEach((x, i) => { v[p.def.joints[i].name] = x })
+        editPose(actorId, v, false)
+      },
+      setStage: patch => {
+        const clean: Partial<StageSize> = {}
+        for (const k of ['width', 'depth'] as const) { const v = patch[k]; if (v !== undefined && Number.isFinite(v)) clean[k] = Math.min(30, Math.max(1, Math.round(v * 10) / 10)) }
+        const cur = stageOf(get().project)
+        if (Object.entries(clean).some(([k, v]) => cur[k as keyof StageSize] !== v)) edit(p => { p.stage = { ...stageOf(p), ...clean } }, [])
       },
       setPhysics: next => edit(p => { p.physics = next }, []),
       setTrackFlag: (trackId, flag, on) => edit(p => {

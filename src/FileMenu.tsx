@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { importCsvFiles, importVideoFiles } from './importActions'
-import { newProjectFile, openProject, saveProject } from './projectActions'
+import { saveProject, showProjectHub } from './projectActions'
 
 type Item = { label: string; hint?: string; tip: string; run: () => void } // tip: hover help
 
@@ -10,9 +10,9 @@ export default function FileMenu({ onExport, onPhysics }: { onExport: () => void
   const menu = useRef<HTMLDivElement>(null)
   const first = useRef(false) // focus the first item once the menu has rendered
   const groups: Item[][] = [
-    [{ label: '새 프로젝트', tip: '빈 프로젝트를 새로 시작합니다', run: newProjectFile },
-      { label: '열기', hint: 'Ctrl+O', tip: '저장해 둔 프로젝트 파일(.motion.json)을 엽니다. 지금 작업은 닫히고 그 프로젝트의 로봇·클립·타임라인·기본자세 설정이 그대로 돌아옵니다', run: openProject },
-      { label: '저장', hint: 'Ctrl+S', tip: '프로젝트 파일(.motion.json)로 저장합니다. 나중에 열기로 이어서 작업할 수 있습니다', run: () => saveProject() },
+    [{ label: '새 프로젝트', tip: '이름을 정해 서버 폴더에 빈 프로젝트를 만듭니다', run: () => showProjectHub(true) },
+      { label: '열기', hint: 'Ctrl+O', tip: '서버 폴더의 프로젝트나 이 PC의 프로젝트 파일(.mproj)을 엽니다. 지금 작업은 닫히고 그 프로젝트의 로봇·클립·타임라인·기본자세 설정이 그대로 돌아옵니다', run: () => showProjectHub() },
+      { label: '저장', hint: 'Ctrl+S', tip: '프로젝트 파일(.mproj)로 저장합니다. 나중에 열기로 이어서 작업할 수 있습니다', run: () => saveProject() },
       { label: '다른 이름으로 저장', hint: 'Ctrl+Shift+S', tip: '프로젝트를 새 파일 이름으로 저장합니다', run: () => saveProject(true) }],
     [{ label: 'CSV 가져오기', tip: '모션 CSV(RL 학습용 형식)를 지금 프로젝트에 클립으로 추가합니다. 지금 작업은 그대로 두고 로봇 트랙에 이어 붙입니다', run: importCsvFiles },
       { label: '영상 가져오기', tip: '참조 영상을 V1 트랙에 추가합니다(프로젝트에는 저장되지 않아 다시 열면 재연결 필요)', run: importVideoFiles }],

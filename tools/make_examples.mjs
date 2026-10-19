@@ -280,6 +280,6 @@ const project = {
     markers: [{ f: cut, name: '자른 곳' }], inF: null, outF: null,
   },
 }
-writeFileSync(new URL('examples.motion.json', out), JSON.stringify(project))
-console.log(Object.keys(files).concat('examples.motion.json').join('\n'))
+writeFileSync(new URL('examples.mproj', out), JSON.stringify(project))
+console.log(Object.keys(files).concat('examples.mproj').join('\n'))
 console.log(`project: walk ${wl} frames (cut at ${cut}), wave from ${wl - 20}`)

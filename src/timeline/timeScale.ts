@@ -21,24 +21,12 @@ export function formatTimecode(f: number): string {
   return `${p2(Math.floor(sec / 60))}:${p2(sec % 60)}.${p2(f % 60)}`
 }
 
-export interface Row { kind: 'group' | 'channel'; actorId: string; label: string; channels: string[]; expanded?: boolean }
+export interface Row { kind: 'group'; actorId: string; label: string; channels: string[] }
 export const ROOT_CHANNELS = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw']
-export const rowKey = (actorId: string, label: string) => `${actorId}/${label}`
 
-export function buildRows(p: Project, defs: RobotDefs, expanded: Set<string>, actors: Pick<Actor, 'id' | 'name' | 'robot'>[] = p.actors): Row[] {
-  const rows: Row[] = []
-  for (const a of actors) {
-    rows.push({ kind: 'group', actorId: a.id, label: a.name, channels: [] })
-    const groups = [{ name: '루트', joints: ROOT_CHANNELS }, ...defs[a.robot].groups]
-    for (const g of groups) {
-      const open = expanded.has(rowKey(a.id, g.name))
-      rows.push({ kind: 'group', actorId: a.id, label: g.name, channels: g.joints, expanded: open })
-      if (open) for (const ch of g.joints) {
-        rows.push({ kind: 'channel', actorId: a.id, label: ch.replace(/_joint$/, ''), channels: [ch] })
-      }
-    }
-  }
-  return rows
+// One key row per actor: its channels are the root and every joint, so a diamond stands for the whole pose at that frame.
+export function buildRows(p: Project, defs: RobotDefs, actors: Pick<Actor, 'id' | 'name' | 'robot'>[] = p.actors): Row[] {
+  return actors.map(a => ({ kind: 'group', actorId: a.id, label: a.name, channels: [...ROOT_CHANNELS, ...defs[a.robot].joints.map(j => j.name)] }))
 }
 
 // y is relative to the top of rows[0]; returns clip frames of keys under the point (group rows: every channel key at that frame).

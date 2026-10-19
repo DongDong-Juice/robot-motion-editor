@@ -12,6 +12,10 @@ const r6 = (x: number) => Math.round(x * 1e6) / 1e6 + 0 // +0 turns -0 into 0
 const packCurves = (chs: Record<string, Curve>) => Object.fromEntries(Object.entries(chs).map(([ch, cv]) => [ch, {
   k: cv.keys.flatMap(k => [k.f, r6(k.v), INTERP.indexOf(k.interp), r6(k.inTan.df), r6(k.inTan.dv), r6(k.outTan.df), r6(k.outTan.dv)]),
 }]))
+// project files are saved as <title>.mproj; older *.motion.json (and plain .json) still open and save under the new name
+export const PROJECT_EXT = '.mproj'
+export const projectFileName = (name: string) => name.replace(/(\.mproj|(\.motion)?\.json)$/i, '') + PROJECT_EXT
+
 export const serializeProject = (p: Project): string => JSON.stringify({
   ...p, version: 2,
   clips: Object.fromEntries(Object.entries(p.clips).map(([id, c]) => [id, c.offset ? { ...c, channels: packCurves(c.channels), offset: packCurves(c.offset) } : { ...c, channels: packCurves(c.channels) }])),
@@ -160,5 +164,6 @@ export function parseProject(text: string, defs: RobotDefs): Project {
   }
   p.version = 2
   if (!isObj(p.physics)) delete p.physics
+  if (!(isObj(p.stage) && [p.stage.width, p.stage.depth].every(v => typeof v === 'number' && v >= 1 && v <= 30))) delete p.stage
   return p as Project
 }

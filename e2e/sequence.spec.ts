@@ -39,20 +39,22 @@ test('import CSV, place two items with crossfade, export all', async ({ page }) 
   expect(placed).toEqual({ ok: true, len: 60 })
 
   await menu(page, '내보내기')
+  await expect(page.getByRole('group', { name: 'G1' })).toContainText('Untitled-G1-2') // rows grouped by robot, cut pieces by piece name
+  await expect(page.getByRole('group', { name: 'GO2' })).toContainText('Untitled-GO2-1') // GO2 pieces: <project>-GO2-<n>
   await page.getByLabel('물리 검증 건너뛰기').check() // keep CSV checks independent of physics load
   await page.getByRole('button', { name: /CSV 내보내기|무시하고 내보내기/ }).click()
   await expect.poll(() => downloads.length).toBe(1) // several files → one zip
   const files = unzip(fs.readFileSync((await downloads[0].path())!))
   expect(files).toHaveLength(3)
   const lines = (t: string) => t.trim().split('\n')
-  expect(files.map(f => f.name)).toEqual(expect.arrayContaining(['G1_walk_g1_1.csv', 'G1_walk_g1_2.csv'])) // two placements of one clip
-  const imp = files.find(f => f.name === 'G1_walk_g1_1.csv')!
+  expect(files.map(f => f.name)).toEqual(expect.arrayContaining(['Untitled-G1-1.csv', 'Untitled-G1-2.csv'])) // two placements of one clip
+  const imp = files.find(f => f.name === 'Untitled-G1-1.csv')!
   expect(imp).toBeTruthy()
   expect(lines(imp.text)).toHaveLength(61)
   expect(lines(imp.text)[0].split(',')).toHaveLength(41)
   const [x, y] = lines(imp.text)[1].split(',').slice(4, 6)
   expect([Number(x), Number(y)]).toEqual([0, 0])
-  expect(files.some(f => f.name.startsWith('GO2_') && lines(f.text)[1].split(',').length === 24)).toBe(true)
+  expect(files.some(f => f.name.startsWith('Untitled-GO2-') && lines(f.text)[1].split(',').length === 24)).toBe(true)
 })
 
 test('save and reopen restores sequence', async ({ page }) => {
@@ -82,9 +84,14 @@ test('save and reopen restores sequence', async ({ page }) => {
   const saved = fs.readFileSync((await downloads[0].path())!)
   const name = downloads[0].suggestedFilename()
 
-  await menu(page, '새 프로젝트')
+  const hub = page.getByRole('dialog', { name: '프로젝트' })
+  await menu(page, '새 프로젝트') // 프로젝트 팝업, new-project row open
+  await hub.getByLabel('프로젝트 이름').fill(`e2e-${Date.now()}`)
+  await hub.getByRole('button', { name: '만들기' }).click()
+  await expect(hub).toHaveCount(0)
   expect(await snap()).not.toBe(before)
-  const [fc] = await Promise.all([page.waitForEvent('filechooser'), menu(page, '열기')])
+  await menu(page, '열기')
+  const [fc] = await Promise.all([page.waitForEvent('filechooser'), hub.getByRole('button', { name: '이 PC에서 열기' }).click()])
   await fc.setFiles([{ name, mimeType: 'application/json', buffer: saved }])
   await expect.poll(snap).toBe(before)
   expect(await page.evaluate(() => (window as any).__editor.getState().dirty)).toBe(false)

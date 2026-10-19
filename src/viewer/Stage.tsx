@@ -3,19 +3,23 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { evalCurve } from '../model/curve'
-import { COLOR } from '../model/defaults'
+import { COLOR, stageOf } from '../model/defaults'
 import { evaluate, evaluateClip, evaluateItem, evaluateRoot, placeItemPose } from '../model/evaluate'
 import { rebasePose } from '../model/pose'
 import { itemLead, leadInPose, restClipFor, tailedClip } from '../model/restPose'
 import { baseClip, editedClip, offsetKeyCount, withUse } from '../model/itemClip'
-import { nearestAngle } from '../model/rootMath'
-import { hiddenAt, resolve, sortedItems, stitchTransforms, worldToClipRoot } from '../model/sequence'
+import { nearestAngle, quatYaw } from '../model/rootMath'
+import { hiddenAt, itemLen, resolve, sortedItems, stitchTransforms, worldToClipRoot } from '../model/sequence'
 import type { Actor, Clip, Project } from '../model/types'
-import { actorOf, CLIP_ACTOR, clipLocked, editingItem, editTarget, getEditor, gizmoLock, trackLocked } from '../store/store'
+import { actorOf, CLIP_ACTOR, clipLocked, editingItem, editTarget, getEditor, gizmoLock, targetItem, trackLocked, useEditor } from '../store/store'
 import { sequenceEnd } from '../transport'
+import { cancelDrag, trackDrag } from '../timeline/drag'
+import { loadTemplate } from '../go2blocks/Go2BlockPanel'
+import { trackEnd, walkStart, walkToClip } from '../go2blocks/walkTo'
 import { buildRobot, pivotAngle, type RobotRig } from './buildRobot'
 import type { RobotDef } from '../robot/types'
 import { followStep } from './follow'
+import { disposeStage, makeStage } from './stageFloor'
 
 const css = (n: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim()
 const EXTENT = 5
@@ -60,6 +64,19 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
   const [trail, setTrail] = useState(false)
   const trailRef = useRef(false)
   trailRef.current = trail
+  // 무대: the main pane shares the store flag, the clip/compare/span panes toggle their own
+  const main = !cid && !span
+  const [stageLocal, setStageLocal] = useState(true)
+  const stageStore = useEditor(s => s.stageShown)
+  const stageOn = main ? stageStore : stageLocal
+  const walk = useEditor(s => s.walkMode)
+  const seqView = useEditor(s => !s.editing && !s.clipEdit)
+  // 배치 이동 notices (too close, locked, logs not loaded), 3 s
+  const [walkMsg, setWalkMsgState] = useState('')
+  const msgTimer = useRef(0)
+  const setWalkMsg = (m: string) => { setWalkMsgState(m); clearTimeout(msgTimer.current); msgTimer.current = window.setTimeout(() => setWalkMsgState(''), 3000) }
+  const stageRef = useRef(true)
+  stageRef.current = stageOn
 
   useEffect(() => {
     const el = host.current!
@@ -70,6 +87,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
     scene.background = new THREE.Color(css('--bg') || '#22262D')
     const grid = makeGrid()
     scene.add(grid)
+    let stageG: THREE.Group | null = null, stageKey = ''
     const hemi = new THREE.HemisphereLight(0xffffff, 0x4a505c, 1.4)
     hemi.position.set(0, 0, 1)
     const sun = new THREE.DirectionalLight(0xffffff, 1.6)
@@ -100,7 +118,16 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
     if (mainView || editPane) scene.add(tc.getHelper())
     // dev/e2e hook
     // dev/e2e hook: __stage = main pane, __stages = every pane by key ('main' or the compare clip id)
-    const hook = { camera, tc, entries: () => entries, renderer, camTarget: () => orbit.target.toArray(), overlay: () => overlays.values().next().value?.rig ?? null, overlays: () => overlays }
+    const hook = { stage: () => (stageG?.visible ? stageG : null), camera, tc, entries: () => entries, renderer, camTarget: () => orbit.target.toArray(), overlay: () => overlays.values().next().value?.rig ?? null, overlays: () => overlays }
+    const syncStage = () => {
+      const { width, depth } = stageOf(store.getState().project), key = `${width}x${depth}`
+      if (key === stageKey) return
+      stageKey = key
+      if (stageG) { scene.remove(stageG); disposeStage(stageG) }
+      stageG = makeStage(width, depth, { floor: css('--panel') || '#2B3038', line: css('--line') || '#3B424D', edge: css('--dim') || '#8d96a3', front: css('--accent') || '#F0A43A' })
+      stageG.visible = stageRef.current; grid.visible = !stageRef.current
+      scene.add(stageG); dirty = true
+    }
     const hookKey = span ? 'span' : ranged ? 'preview' : cid ?? 'main'
     if (import.meta.env.DEV) {
       const w = window as any
@@ -364,14 +391,20 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       dirty = true
     }
 
-    // current gizmo values for the root, in clip-local channels: undo placement, then the item's stitch transform
+    // a rig root world pose in clip-local root channels: undo placement, then the item's stitch transform
+    const toClipRoot = (actorId: string, pos: THREE.Vector3, q: THREE.Quaternion) => {
+      const s = store.getState(), actor = actorOf(s, actorId)!, target = editTarget(s, actorId)
+      const track = s.project.sequence.tracks.find(t => t.items.some(i => i.id === target?.itemId))
+      const xf = (track && target && stitchTransforms(s.project, s.defs, track).get(target.itemId)) || { x: 0, y: 0, yaw: 0 }
+      return worldToClipRoot({ pos: [pos.x, pos.y, pos.z], quat: [q.x, q.y, q.z, q.w] }, actor.placement, xf)
+    }
+    // current gizmo values for the root, in clip-local channels
     const rootValues = (): [string, number][] => {
       const s = store.getState(), actor = actorOf(s, s.sel.actorId)!
       const target = editTarget(s, actor.id)
       const track = s.project.sequence.tracks.find(t => t.items.some(i => i.id === target?.itemId))
-      const xf = (track && target && stitchTransforms(s.project, s.defs, track).get(target.itemId)) || { x: 0, y: 0, yaw: 0 }
       const o = entries.get(actor.id)!.rig.root
-      const r = worldToClipRoot({ pos: [o.position.x, o.position.y, o.position.z], quat: [o.quaternion.x, o.quaternion.y, o.quaternion.z, o.quaternion.w] }, actor.placement, xf)
+      const r = toClipRoot(actor.id, o.position, o.quaternion)
       if (rootMode === 'translate') return [['root.x', r.x], ['root.y', r.y], ['root.z', r.z]]
       // euler read-back wraps to (-pi, pi]; keep each angle continuous with the stored channel value
       if (!target) return [['root.roll', r.roll], ['root.pitch', r.pitch], ['root.yaw', r.yaw]]
@@ -451,12 +484,14 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
     const ray = new THREE.Raycaster(), ndc = new THREE.Vector2()
     let down: [number, number] | null = null, onGizmo = false
     const dom = renderer.domElement
-    const onDown = (ev: PointerEvent) => { down = [ev.clientX, ev.clientY]; onGizmo = tc.axis !== null; el.focus() }
-    const onUp = (ev: PointerEvent) => {
-      if (!down || Math.hypot(ev.clientX - down[0], ev.clientY - down[1]) > 4 || onGizmo) return
+    // the nearest visible, non-ghost robot link under the pointer (sets `ray`)
+    const aim = (ev: MouseEvent) => {
       const r = dom.getBoundingClientRect()
       ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1)
       ray.setFromCamera(ndc, camera)
+    }
+    const pick = (ev: PointerEvent) => {
+      aim(ev)
       let best: { id: string; via: string; d: number } | null = null
       for (const [id, e] of entries) {
         if (e.ghost || !e.rig.root.visible) continue
@@ -464,10 +499,86 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
         const via = hit && e.rig.linkToJoint.get(hit.object)
         if (via && (!best || hit.distance < best.d)) best = { id, via, d: hit.distance }
       }
+      return best
+    }
+    // 3D 끌기 (main view): moves the actor's placement (no keys, no 수정 층)
+    const canDrag = (id: string) => {
+      const s = store.getState()
+      return !!actorOf(s, id) && !s.playing && !s.clipEdit && !offStage(s, id) && !trackLocked(s.project, id)
+    }
+    const floor = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), hitP = new THREE.Vector3()
+    // grab candidate from pointerdown on a draggable robot; `on` once it moved past 4 px
+    let grab: { id: string; at: THREE.Vector3; x: number; y: number; on: boolean } | null = null
+    // 배치 이동 + GO2: the robot stays; a dashed line from its track-end spot to the cursor, release appends a walk clip
+    // there (trackDrag, so Ctrl+Z mid-drag cancels it)
+    let walking = false
+    const walkDrag = (id: string, ev: MouseEvent) => {
+      const s = store.getState(), start = walkStart(s.project, s.defs, id)
+      const color = css('--accent') || '#F0A43A'
+      const line = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({ color, dashSize: 0.1, gapSize: 0.06 }))
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.16, 32), new THREE.MeshBasicMaterial({ color }))
+      const show = (ev: MouseEvent) => {
+        aim(ev)
+        if (!ray.ray.intersectPlane(floor, hitP)) return
+        line.geometry.setFromPoints([new THREE.Vector3(start.x, start.y, 0.01), new THREE.Vector3(hitP.x, hitP.y, 0.01)]); line.computeLineDistances()
+        ring.position.set(hitP.x, hitP.y, 0.01); dirty = true
+      }
+      const stop = () => { scene.remove(line, ring); disposeObj(line); disposeObj(ring); walking = false; orbit.enabled = true; dom.style.cursor = ''; dirty = true }
+      walking = true; dom.style.cursor = 'grabbing'; scene.add(line, ring); show(ev)
+      trackDrag(show, async ev => {
+        stop(); aim(ev)
+        if (!ray.ray.intersectPlane(floor, hitP)) return
+        const target = { x: hitP.x, y: hitP.y }
+        const t = await Promise.all([loadTemplate('rotate'), loadTemplate('move')]).catch(() => null)
+        if (!t) return setWalkMsg('걷기 로그를 불러오지 못했습니다')
+        const r = walkToClip(t[0], t[1], start, target, store.getState().defs)
+        if ('error' in r) return setWalkMsg(r.error)
+        if (!store.getState().appendClip(id, r.clip)) return setWalkMsg('트랙이 잠겨 있어 걷기를 붙이지 못했습니다')
+        store.getState().setFrame(trackEnd(store.getState().project, id) - 1)
+      }, stop)
+    }
+    const onDown = (ev: PointerEvent) => {
+      down = [ev.clientX, ev.clientY]; onGizmo = tc.axis !== null; el.focus()
+      if (!mainView || onGizmo || ev.button !== 0) return
+      const b = pick(ev)
+      if (!b || !canDrag(b.id) || !ray.ray.intersectPlane(floor, hitP)) return
+      const pl = actorOf(store.getState(), b.id)!.placement
+      grab = { id: b.id, at: hitP.clone(), x: pl.x, y: pl.y, on: false }
+      orbit.enabled = false // on a robot: no camera
+    }
+    let hoverEv: PointerEvent | null = null, hoverRaf = 0
+    const onMove = (ev: PointerEvent) => {
+      if (!grab) { // hover cursor, one raycast per frame
+        if (!ev.buttons && !hoverRaf) hoverRaf = requestAnimationFrame(() => { hoverRaf = 0; const b = hoverEv && pick(hoverEv); dom.style.cursor = b && canDrag(b.id) ? 'grab' : '' })
+        hoverEv = ev
+        return
+      }
+      if (!grab.on) {
+        if (Math.hypot(ev.clientX - down![0], ev.clientY - down![1]) <= 4) return
+        const s = store.getState()
+        if (s.walkMode && !s.editing && !s.clipEdit && actorOf(s, grab.id)!.robot === 'go2') { const id = grab.id; grab = null; return walkDrag(id, ev) }
+        grab.on = true; s.beginGesture(); dom.style.cursor = 'grabbing'
+      }
+      pick(ev)
+      if (!ray.ray.intersectPlane(floor, hitP)) return
+      store.getState().setPlacement(grab.id, { x: grab.x + hitP.x - grab.at.x, y: grab.y + hitP.y - grab.at.y })
+    }
+    const onCancel = () => {
+      const g = grab
+      if (g) { grab = null; orbit.enabled = true }
+      if (g?.on) { store.getState().endGesture(); dom.style.cursor = '' }
+    }
+    const onUp = (ev: PointerEvent) => {
+      const g = grab
+      if (g) { grab = null; orbit.enabled = true }
+      if (g?.on) { store.getState().endGesture(); dom.style.cursor = 'grab'; return }
+      if (!down || Math.hypot(ev.clientX - down[0], ev.clientY - down[1]) > 4 || onGizmo) return
+      const best = pick(ev)
       if (best) store.getState().select(best.id, best.via)
       else store.getState().select(null)
     }
-    if (mainView || editPane) { dom.addEventListener('pointerdown', onDown); dom.addEventListener('pointerup', onUp) }
+    if (mainView || editPane) { dom.addEventListener('pointerdown', onDown); dom.addEventListener('pointerup', onUp); dom.addEventListener('pointercancel', onCancel) }
+    if (mainView) dom.addEventListener('pointermove', onMove)
 
     const onKey = (ev: KeyboardEvent) => {
       const v = VIEWS[ev.key]
@@ -494,7 +605,9 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
 
     let wasLocked = false
     if (cid) { syncClip(); applyClip(); if (editPane) syncSelection() } else { syncActors(); applyAll(); if (mainView) syncSelection() }
+    syncStage()
     const unsub = store.subscribe((s, prev) => {
+      if (s.project !== prev.project) syncStage()
       if (cid) {
         if (s.project !== prev.project) { syncClip(); shownF = -1 }
         applyClip()
@@ -529,9 +642,15 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       orbit.target.fromArray(r.target); camera.position.fromArray(r.camera)
       if (moved) { orbit.update(); dirty = true }
     }
-    let shownTrail = trailRef.current
+    let shownTrail = trailRef.current, shownStage = stageRef.current
     const loop = () => {
       raf = requestAnimationFrame(loop)
+      if (stageRef.current !== shownStage) { // 무대 toggled
+        shownStage = stageRef.current
+        if (stageG) stageG.visible = shownStage
+        grid.visible = !shownStage
+        dirty = true
+      }
       if (trailRef.current !== shownTrail) { // 경로 표시 toggled
         shownTrail = trailRef.current
         if (cid) for (const e of entries.values()) e.trail.visible = shownTrail
@@ -553,10 +672,14 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       unsub(); ro.disconnect()
       dom.removeEventListener('pointerdown', onDown)
       dom.removeEventListener('pointerup', onUp)
+      dom.removeEventListener('pointercancel', onCancel)
+      dom.removeEventListener('pointermove', onMove); cancelAnimationFrame(hoverRaf)
+      if (grab?.on) store.getState().endGesture()
+      if (walking) cancelDrag()
       el.removeEventListener('keydown', onKey)
       for (const e of entries.values()) disposeEntry(e)
       for (const o of overlays.values()) disposeObj(o.rig.root)
-      disposeObj(grid); disposeObj(axisRings); disposeObj(viewRing)
+      disposeObj(grid); if (stageG) { scene.remove(stageG); disposeStage(stageG) }; disposeObj(axisRings); disposeObj(viewRing)
       tc.dispose(); orbit.dispose()
       // dispose() alone keeps the WebGL context alive until GC; release it now so opening/closing
       // preview panes never hits the browser's context limit (which kills the oldest pane's context)
@@ -575,6 +698,9 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       <div ref={host} tabIndex={0} style={{ width: '100%', height: '100%', outline: 'none', position: 'relative' }} />
       <div className="pv-tools">
         <button className="pv-btn" aria-pressed={follow} onClick={() => setFollow(f => !f)}>로봇 따라가기</button>
+        <button className="pv-btn" aria-pressed={stageOn} onClick={() => main ? getEditor().getState().setStageShown(!stageOn) : setStageLocal(v => !v)} title="무대와 객석 방향을 보여 줍니다">무대</button>
+        {main && seqView && <button className="pv-btn" aria-pressed={walk} onClick={() => { if (!walk) { loadTemplate('rotate').catch(() => {}); loadTemplate('move').catch(() => {}) } getEditor().getState().setWalkMode(!walk) }} title="GO2를 끌어 놓은 곳까지 걷는 클립을 트랙 끝에 붙입니다">배치 이동</button>}
+        {walkMsg && <span className="pv-msg" role="status">{walkMsg}</span>}
         {cid && <button className="pv-btn" aria-pressed={trail} onClick={() => setTrail(v => !v)} title="로봇 골반이 지나간 바닥 경로를 선으로 보여 줍니다">경로 표시</button>}
         {children}
       </div>

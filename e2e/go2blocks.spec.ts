@@ -20,9 +20,11 @@ const trackItems = (page: Page, actorId: string) => page.evaluate(id => {
 }, actorId)
 const clipCount = (page: Page) => page.evaluate(() => Object.keys((window as any).__editor.getState().project.clips).length)
 const actors = (page: Page) => page.evaluate(() => (window as any).__editor.getState().project.actors.map((a: any) => ({ id: a.id, robot: a.robot })))
-const library = async (page: Page) => {
+const library = async (page: Page) => { // the tab, with the real-log folder (the original blocks) opened
   await page.getByRole('tab', { name: '라이브러리' }).click()
-  return page.getByRole('tree', { name: '라이브러리' })
+  const tree = page.getByRole('tree', { name: '라이브러리' }), real = tree.locator('[data-id="dir:리얼데이터"]')
+  if (await real.getAttribute('aria-expanded') !== 'true') await real.click()
+  return tree
 }
 const row = (page: Page, label: string) => page.locator('.pp-row[data-kind=block]').filter({ has: page.locator('.pp-name', { hasText: new RegExp(`^${label}$`) }) })
 const add = (page: Page) => page.getByRole('button', { name: '추가', exact: true })
@@ -32,7 +34,7 @@ test('GO2 selected → 라이브러리 adds Move then Stretch at the track end',
   const id = await addGo2(page)
   const before = await trackItems(page, id), end0 = Math.max(0, ...before.map(i => i.start + i.len))
   const tree = await library(page)
-  await expect(tree.locator('.pp-row')).toHaveCount(16)
+  await expect(tree.locator('.pp-row[data-kind=block]')).toHaveCount(16) // Empty + the 15 real-log blocks; the other folders stay folded
   await expect(row(page, 'Move forward').locator('.pp-col-kind')).toHaveText('거리')
   await expect(row(page, 'Rotate').locator('.pp-col-kind')).toHaveText('각도')
   await expect(row(page, 'Stretch').locator('.pp-col-kind')).toHaveText('고정')
@@ -126,11 +128,11 @@ test('loop blocks list only the values the log can make (whole steps), smallest 
   await expect(add(page)).toBeEnabled()
   await page.getByLabel('필터').fill('flip')
   await expect(page.locator('.pp-row[data-kind=block]')).toHaveCount(4)
-  await expect(page.locator('.pp-count')).toHaveText('4 항목')
+  await expect(page.getByText('4 항목', { exact: true })).toBeVisible() // the panel's count (folder rows show their own)
 })
 
 test('template 404 shows error, project unchanged', async ({ page }) => {
-  await page.route('**/go2-blocks/stretch.csv', r => r.fulfill({ status: 404, body: '' }))
+  await page.route('**/go2-blocks/*/stretch.csv', r => r.fulfill({ status: 404, body: '' }))
   await boot(page)
   await addGo2(page)
   const n = await clipCount(page)
@@ -188,4 +190,25 @@ test('Empty: 추가 puts one 30-frame clip in 목록; dragged twice, both pieces
   const ok = await page.evaluate(id => { const s = (window as any).__editor.getState(); return s.trimItem(s.project.sequence.tracks.find((t: any) => t.actorId === id).items[0].id, 'out', 45) }, g1)
   expect(ok).toBe(true)
   expect([(await trackItems(page, g1))[0].len, (await trackItems(page, g2))[0].len]).toEqual([75, 30])
+})
+
+test('라이브러리 folders: folded by default, open on click, a name filter opens the folders it hits; a folder block adds like a fixed one', async ({ page }) => {
+  await boot(page)
+  await page.getByRole('tab', { name: '라이브러리' }).click()
+  const tree = page.getByRole('tree', { name: '라이브러리' }), dir = (n: string) => tree.locator(`[data-id="dir:${n}"]`)
+  await expect(tree.locator('[data-kind=blockdir] .pp-name')).toHaveText(['기본 자세', '리얼데이터', '앉기_엎드리기', '일어서기_제스처'])
+  await expect(tree.locator('.pp-row[data-kind=block]')).toHaveCount(1) // Empty only
+  await dir('앉기_엎드리기').click()
+  await expect(dir('앉기_엎드리기')).toHaveAttribute('aria-expanded', 'true')
+  await expect(row(page, '앉기')).toBeVisible()
+  await dir('앉기_엎드리기').press('ArrowLeft')
+  await expect(dir('앉기_엎드리기')).toHaveAttribute('aria-expanded', 'false')
+
+  await page.getByLabel('필터').fill('스핑크스')
+  await expect(tree.locator('[data-kind=blockdir]')).toHaveCount(1)
+  await expect(row(page, '스핑크스')).toBeVisible()
+  await row(page, '스핑크스').click()
+  await page.getByLabel('붙일 로봇').selectOption('asset')
+  await add(page).click()
+  await expect.poll(() => page.evaluate(() => Object.values((window as any).__editor.getState().project.clips).some((c: any) => c.name === '스핑크스' && c.robot === 'go2'))).toBe(true)
 })

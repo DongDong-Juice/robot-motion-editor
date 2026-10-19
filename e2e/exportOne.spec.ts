@@ -42,9 +42,9 @@ test('right-click an item bar or tree child row → export하기 saves exactly t
 
   await page.mouse.click(box.x + 400, box.y + LANE2, { button: 'right' })
   await page.keyboard.press('Enter')
-  await expect(page.locator('.seq-msg')).toContainText('G1_a_2.csv 을(를) 내보냈습니다', { timeout: 45_000 }) // waits for the physics check
+  await expect(page.locator('.seq-msg')).toContainText('Untitled-G1-2.csv 을(를) 내보냈습니다', { timeout: 45_000 }) // waits for the physics check
   await expect.poll(() => downloads.length).toBe(1)
-  expect(downloads[0].suggestedFilename()).toBe('G1_a_2.csv')
+  expect(downloads[0].suggestedFilename()).toBe('Untitled-G1-2.csv')
   const lines = fs.readFileSync((await downloads[0].path())!, 'utf8').split('\n')
   expect(lines[0]).toBe(head)
   const tail = await page.evaluate(async () => { // the cut's 끝 기본자세 rows after the piece

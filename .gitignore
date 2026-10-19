@@ -5,6 +5,7 @@ test-results
 .playwright-mcp
 playwright-report
 assets/video/
+projects/
 
 # graphify output
 graphify-out/

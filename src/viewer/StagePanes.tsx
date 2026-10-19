@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
-import { pieceName } from '../model/sequence'
+import { pieceName, projectTitle } from '../model/sequence'
 import { offsetKeyCount } from '../model/itemClip'
 import { getEditor, useEditor } from '../store/store'
 import type { Item, Project } from '../model/types'
@@ -59,7 +59,7 @@ function ItemPreview({ id }: { id: string }) {
   const item = useEditor(s => findItem(s.project, id)?.it ?? null)
   const label = useEditor(s => {
     const f = findItem(s.project, id)
-    return f ? pieceName(f.t, f.it, s.project.clips[f.it.refId]?.name ?? '') : ''
+    return f ? pieceName(f.t, f.it, s.project.clips[f.it.refId], projectTitle(s.fileName)) : ''
   })
   const actorId = useEditor(s => findItem(s.project, id)?.t.actorId ?? null)
   const actor = useEditor(s => s.project.actors.find(a => a.id === actorId) ?? null)

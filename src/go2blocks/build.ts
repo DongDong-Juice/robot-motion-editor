@@ -5,7 +5,7 @@ import { applyXf, blendPose, type Xf } from '../model/sequence'
 import type { Clip } from '../model/types'
 import type { Block, LoopSpec } from './blocks'
 
-const SEAM = 5 // source frames blended after each loop seam
+export const SEAM = 5 // source frames blended after each loop seam
 const MAX_LOOPS = 100 // Move ≈ 62m, Rotate ≈ 7200°; keeps a typo like 10000 from hanging the tab
 const DEG = 180 / Math.PI
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a))
@@ -61,25 +61,29 @@ export function emptyBlockClip(frames: number, defs: RobotDefs): Clip {
 /** The 목록's Empty clip (every Empty piece shares it, user), or a new 30-frame one. */
 export const emptyClipFor = (clips: Record<string, Clip>, defs: RobotDefs) => Object.values(clips).find(c => c.hold) ?? emptyBlockClip(EMPTY_FRAMES, defs)
 
+/** Loop blocks: head + loop × n + tail source poses (n from `value`, as `blockActual`); fixed blocks: `poses`. */
+export function blockPoses(block: Block, poses: Pose[], value: number): Pose[] {
+  if (block.kind !== 'loop') return poses
+  const { spec, d, n } = loopPlan(block, poses, value)
+  const [s, e] = spec.loop
+  const out = poses.slice(spec.head[0], spec.head[1])
+  let prev = powXf(d, 0), xk = prev
+  for (let k = 0; k < n; k++) {
+    if (k > 0) { prev = xk; xk = powXf(d, 1, xk) }
+    poses.slice(s, e).forEach((p, i) => {
+      const cur = applyXf(p, xk)
+      out.push(k > 0 && i < SEAM ? blendPose(applyXf(poses[e + i], prev), cur, (i + 1) / (SEAM + 1)) : cur)
+    })
+  }
+  // the tail continues the last loop copy (d^(n-1)), as poses[e..] continue poses[s..e)
+  for (const p of poses.slice(spec.tail[0], spec.tail[1])) out.push(applyXf(p, xk))
+  return out
+}
+
 /** Source poses (at `fps`) -> 60fps GO2 clip starting at the origin. Loop blocks: head + loop × n + tail. */
 export function buildBlockClip(block: Block, poses: Pose[], fps: number, value: number, defs: RobotDefs): Clip {
-  let out: Pose[] = poses, name = block.label
-  if (block.kind === 'loop') {
-    const { spec, d, n, actual } = loopPlan(block, poses, value)
-    const [s, e] = spec.loop
-    out = poses.slice(spec.head[0], spec.head[1])
-    let prev = powXf(d, 0), xk = prev
-    for (let k = 0; k < n; k++) {
-      if (k > 0) { prev = xk; xk = powXf(d, 1, xk) }
-      poses.slice(s, e).forEach((p, i) => {
-        const cur = applyXf(p, xk)
-        out.push(k > 0 && i < SEAM ? blendPose(applyXf(poses[e + i], prev), cur, (i + 1) / (SEAM + 1)) : cur)
-      })
-    }
-    // the tail continues the last loop copy (d^(n-1)), as poses[e..] continue poses[s..e)
-    for (const p of poses.slice(spec.tail[0], spec.tail[1])) out.push(applyXf(p, xk))
-    name = block.id === 'move' ? `Move_${+actual.toFixed(1)}m` : `Rotate_${Math.round(actual)}deg`
-  }
-  const origin = out[0]
+  const out = blockPoses(block, poses, value), origin = out[0]
+  const actual = block.kind === 'loop' ? loopPlan(block, poses, value).actual : 0
+  const name = block.kind !== 'loop' ? block.label : block.id === 'move' ? `Move_${+actual.toFixed(1)}m` : `Rotate_${Math.round(actual)}deg`
   return posesToClip(out.map(p => rebasePose(p, origin)), fps, 'go2', defs, name)
 }

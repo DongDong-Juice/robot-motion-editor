@@ -7,7 +7,7 @@ import { emptyProject, newProject } from './defaults'
 import { makeKey } from './curve'
 import { samplePoses } from '../export/csv'
 import { validatePoses } from '../export/validate'
-import { parseProject, serializeProject } from './projectFile'
+import { parseProject, projectFileName, serializeProject } from './projectFile'
 
 const load = loadDef
 const defs: RobotDefs = { g1: load('g1'), go2: load('go2') }
@@ -219,6 +219,17 @@ test('physics round-trips as-is; absent stays absent; non-object is dropped', ()
   }
 })
 
+test('stage round-trips; absent stays absent; malformed is dropped', () => {
+  const p = mk()
+  expect('stage' in parseProject(serializeProject(p), defs)).toBe(false)
+  p.stage = { width: 8, depth: 5 }
+  expect(parseProject(serializeProject(p), defs).stage).toEqual({ width: 8, depth: 5 })
+  for (const v of ['abc', null, { width: -1, depth: 5 }, { width: 8 }]) {
+    const o = JSON.parse(serializeProject(p)); o.stage = v
+    expect('stage' in parseProject(JSON.stringify(o), defs)).toBe(false)
+  }
+})
+
 test('bins round-trip; clip/media bin kept', () => {
   const p = mk(), c = Object.values(p.clips)[0]
   p.bins = [{ id: 'b1', name: 'Walk', tab: 'clip' }, { id: 'b2', name: 'Ref', tab: 'media' }]
@@ -244,4 +255,11 @@ test('malformed bins are rejected', () => {
   bad(p => { p.bins = {} }, 'bins')
   bad(p => { p.bins = [{ id: 'b', name: 'x', tab: 'block' }] }, 'bins.0')
   bad(p => { p.bins = [{ id: 'b', name: 'x', tab: 'clip' }, { id: 'b', name: 'y', tab: 'clip' }] }, '중복된 ID')
+})
+
+test('projectFileName: saves as .mproj; old .motion.json / .json names map to it', () => {
+  expect(projectFileName('dance')).toBe('dance.mproj')
+  expect(projectFileName('dance.mproj')).toBe('dance.mproj')
+  expect(projectFileName('dance.motion.json')).toBe('dance.mproj')
+  expect(projectFileName('dance.json')).toBe('dance.mproj')
 })
