@@ -13,7 +13,6 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
   const ref = useRef<HTMLDialogElement>(null)
   const project = useEditor(s => s.project), defs = useEditor(s => s.defs), title = useEditor(s => projectTitle(s.fileName))
   const setFrame = useEditor(s => s.setFrame), select = useEditor(s => s.select)
-  const [off, setOff] = useState<Set<string>>(new Set()) // unchecked item ids (default: all checked)
   const [mode, setMode] = useState<RootMode>('local')
   const [dir, setDir] = useState<FileSystemDirectoryHandle | null>(null)
   const [msg, setMsg] = useState('')
@@ -32,28 +31,27 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
     return actor && t.kind === 'motion' ? t.items.map(item => ({ actor, item, t })) : []
   }), [project])
   const groups = (['g1', 'go2'] as const).map(robot => ({ robot, rows: rows.filter(r => r.actor.robot === robot) })).filter(g => g.rows.length)
-  const checked = rows.filter(r => !off.has(r.item.id))
 
   useEffect(() => {
     if (!open || skip) return
-    const todo = checked.filter(({ actor, item }) => needsRun(project, defs, actor.id, item.id, phys[item.id]))
+    const todo = rows.filter(({ actor, item }) => needsRun(project, defs, actor.id, item.id, phys[item.id]))
     if (todo.length) void runItems(todo.map(({ actor, item }) => ({ actorId: actor.id, itemId: item.id })))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project, defs, off, open, skip, phys])
+  }, [project, defs, open, skip, phys])
   const busy = (rs: typeof rows) => open && !skip && rs.some(({ item }) => ['queued', 'running'].includes(phys[item.id]?.status))
-  const running = busy(checked)
+  const running = busy(rows)
 
-  const warnings = useMemo(() => open ? checked.flatMap(({ actor, item }) =>
+  const warnings = useMemo(() => open ? rows.flatMap(({ actor, item }) =>
     [...exportItemCsv(project, defs, actor.id, item.id, 'world').warnings, ...(skip ? [] : physicsWarnings(project, defs, item, phys[item.id]))]
       .map(w => ({ ...w, actorId: actor.id, actorName: actor.name }))) : [],
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  [project, defs, off, open, skip, phys])
+  [project, defs, open, skip, phys])
 
   async function choose() {
     try { const d = await pickDirectory(); if (d) setDir(d) } catch (e) { setMsg(`폴더 선택 실패: ${e instanceof Error ? e.message : e}`) }
   }
-  // all checked items, or (G1 / GO2 내보내기) one robot's: label prefixes the message, zipName names the zip
-  async function doExport(rs = checked, zipName = 'motion_export.zip', label = '') {
+  // every item, or one robot's (G1 / GO2 내보내기) / one item (row 내보내기): label prefixes the message, zipName names the zip
+  async function doExport(rs = rows, zipName = 'motion_export.zip', label = '') {
     try {
       const taken = new Set<string>()
       const files = rs.map(({ actor, item }) => {
@@ -74,25 +72,23 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
   return (
     <dialog ref={ref} className="exp" onClose={onClose} aria-label="내보내기">
       <h2>내보내기</h2>
-      <fieldset>
+      <fieldset className="exp-items">
         <legend>항목</legend>
         {groups.map(g => {
-          const R = g.robot.toUpperCase(), mine = g.rows.filter(r => !off.has(r.item.id))
+          const R = g.robot.toUpperCase()
           return <div key={g.robot} role="group" aria-label={R}>
           <div className="exp-group">{R}
-            <button disabled={!mine.length || busy(mine)} onClick={() => doExport(mine, `${g.robot}_export.zip`, `${R} `)}
-              title={`${R} 항목 중 체크한 것만 내보냅니다`}>{R} 내보내기</button>
+            <button disabled={busy(g.rows)} onClick={() => doExport(g.rows, `${g.robot}_export.zip`, `${R} `)}
+              title={`${R} 항목을 모두 내보냅니다`}>{R} 내보내기</button>
           </div>
-          {g.rows.map(({ actor, item, t }) => {
-          const { from, to } = itemFrameRange(item)
+          {g.rows.map(r => {
+          const { actor, item, t } = r, { from, to } = itemFrameRange(item)
           return (
-            <label key={item.id} className="exp-row">
-              <input type="checkbox" checked={!off.has(item.id)} onChange={e => setOff(o => {
-                const n = new Set(o); if (e.target.checked) n.delete(item.id); else n.add(item.id); return n
-              })} />
+            <div key={item.id} className="exp-row exp-item">
               <span>{actor.name} · {pieceName(t, item, project.clips[item.refId], title)}</span>
               <span className="exp-dim">{formatTimecode(from)}–{formatTimecode(to)} · {to - from}프레임</span>
-            </label>
+              <button className="exp-one" disabled={busy([r])} onClick={() => doExport([r])} title="이 항목만 내보냅니다">내보내기</button>
+            </div>
           )
         })}
         </div>})}
@@ -107,7 +103,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
         <button onClick={choose}>폴더 선택</button>
         <span className="exp-dim">{dir ? dir.name : '다운로드 폴더'}</span>
       </div>
-      {!skip && checked.map(({ actor, item }) => ({ actor, item, st: phys[item.id] })).filter(r => r.st?.status === 'error').map(({ actor, item, st }) => (
+      {!skip && rows.map(({ actor, item }) => ({ actor, item, st: phys[item.id] })).filter(r => r.st?.status === 'error').map(({ actor, item, st }) => (
         <div key={item.id} className="exp-dim">물리 검증 생략: {actor.name} · {project.clips[item.refId]?.name} ({st?.message})</div>
       ))}
       {warnings.length > 0 && (
@@ -120,7 +116,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
         </ul>
       )}
       <div className="exp-row">
-        <button onClick={() => doExport()} disabled={!checked.length || running}>
+        <button onClick={() => doExport()} disabled={!rows.length || running}>
           {running ? '물리 검증 중…' : warnings.length ? `경고 ${warnings.length}개 무시하고 내보내기` : 'CSV 내보내기'}
         </button>
         {running && <span className="exp-dim">{loading ? '물리 엔진 불러오는 중…' : prog && `물리 검증 ${prog.done + 1}/${prog.total} · ${Math.round(prog.cur * 100)}%`}</span>}
