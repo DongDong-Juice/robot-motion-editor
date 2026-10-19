@@ -29,7 +29,7 @@ function StageSection() {
 
 export default function Inspector() {
   const ed = getEditor()
-  const { project, defs, frame, sel, editing, clipEdit } = useEditor(s => s)
+  const { project, frame, sel, editing, clipEdit } = useEditor(s => s)
   const [lenMsg, setLenMsg] = useState(false)
   const [tol, setTol] = useState(0.001)
   const [simpMsg, setSimpMsg] = useState<{ n: number; at: number } | null>(null)
@@ -38,7 +38,6 @@ export default function Inspector() {
   if (!actor) return <div className="insp"><p className="insp-hint">무대에서 링크를 클릭하거나 타임라인에서 채널을 고르세요.</p><StageSection /></div>
   const clipMode = !!clipEdit // 클립 편집 모드: the open clip on its virtual actor
 
-  const def = defs[actor.robot]
   const target = editTarget({ project, frame, editing, clipEdit }, actor.id)
   if (!target) return <div className="insp"><p className="insp-hint">이 액터에 클립이 없습니다.</p><StageSection /></div>
   const { clipId } = target
@@ -48,17 +47,9 @@ export default function Inspector() {
   const lockedTrack = clipMode ? false : trackLocked(project, actor.id) || clipLocked(project, clipId) // a clip's 수정 층 is the asset's own
 
   const channels = sel.channel === 'root' ? ROOT : sel.channel && !sel.channel.startsWith('group:') ? [sel.channel] : []
-  const group = !sel.channel ? null
-    : sel.channel.startsWith('group:') ? sel.channel.slice(6)
-    : sel.channel.startsWith('root') ? '루트'
-    : def.groups.find(g => g.joints.includes(sel.channel!))?.name ?? null
-
-  const lockOf = (ch: string) => editLock({ project, frame, editing, clipEdit }, actor.id, ch)
-  const locks = channels.map(lockOf)
-  const groupNames = group === '루트' ? ROOT : def.groups.find(g => g.name === group)?.joints ?? []
-  const groupLocks = groupNames.map(lockOf)
-  const xfade = locks.includes('crossfade') || groupLocks.includes('crossfade')
-  const stitch = locks.includes('stitch') || groupLocks.includes('stitch')
+  const locks = channels.map(ch => editLock({ project, frame, editing, clipEdit }, actor.id, ch))
+  const xfade = locks.includes('crossfade')
+  const stitch = locks.includes('stitch')
 
   const act = ed.getState()
 
@@ -82,7 +73,6 @@ export default function Inspector() {
       {xfade && <p className="insp-hint" role="status">크로스페이드 구간에서는 클립 보기에서 편집하세요</p>}
       {!xfade && stitch && <p className="insp-hint" role="status">이 프레임의 루트 위치·방향은 앞 클립 끝에 맞춰집니다</p>}
       <JointPanel />
-      {group && <button className="insp-group" disabled={lockedTrack || groupLocks.some(Boolean)} onClick={() => act.keyGroup(actor.id, group)}>{group} 전체 키</button>}
       {!clipMode && <section className="insp-sec">
       <h3 className="insp-sec-t">배치</h3>
       <div className="insp-grid3">

@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { importSynthetic } from './synth'
 
-// 관절 패널: clicking a joint on the main 3D view opens the panel with that joint's part (부위) as rows; clicking a row switches the
+// 관절 패널: clicking a joint on the main 3D view selects its row (every part is listed); clicking a row switches the
 // selected joint; ↑/↓ walk the rows; 1F steps the frame; 보간 sets the key. It sits in the right sidebar (인스펙터).
 test('3D joint click → part rows → switch rows', async ({ page }) => {
   const errors: string[] = []
@@ -29,8 +29,8 @@ test('3D joint click → part rows → switch rows', async ({ page }) => {
   await expect(panel).toBeVisible()
   const sel = () => page.evaluate(() => (window as any).__editor.getState().sel.channel as string)
   expect(await sel()).toBe('left_knee_joint')
-  await expect(panel.locator('.jp-head')).toContainText('값 · 왼다리')
-  await expect(panel.getByRole('slider')).toHaveCount(6) // hip pitch/roll/yaw, knee, ankle pitch/roll
+  await expect(panel.locator('.jp-head')).toContainText('값')
+  await expect(panel.getByRole('slider')).toHaveCount(6 + 29) // 몸통 6 + every joint
   await expect(panel.locator('.jp-row.sel')).toContainText('left_knee')
 
   // click another row → that joint is selected (inspector follows)
@@ -61,7 +61,8 @@ test('3D joint click → part rows → switch rows', async ({ page }) => {
   // it lives in the right sidebar, never over the 3D view; a click on empty floor clears the selection and hides it
   await expect(page.locator('.insp .jp')).toHaveCount(1)
   // ...even mid slider drag: the drag still ends (no gesture left open to merge later edits into one undo step)
-  const box = (await panel.getByRole('slider', { name: 'left_hip_yaw_joint 슬라이더' }).boundingBox())!
+  const yaw = panel.getByRole('slider', { name: 'left_hip_yaw_joint 슬라이더' }); await yaw.scrollIntoViewIfNeeded() // the panel lists every part now
+  const box = (await yaw.boundingBox())!
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down()
   expect(await page.evaluate(() => (window as any).__editor.getState().inGesture)).toBe(true)
   await page.evaluate(() => (window as any).__editor.getState().select(null))
