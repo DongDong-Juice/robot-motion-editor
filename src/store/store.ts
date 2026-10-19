@@ -9,6 +9,7 @@ import { validVideoTrack, videoTrack } from '../model/video'
 import { baseClip, offsetKeyCount } from '../model/itemClip'
 import { addOverRange, type Range } from '../model/rangeEdit'
 import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP, previewRange } from '../model/restPose'
+import { SEAM_MAX } from '../model/seam'
 import type { RobotKind } from '../robot/types'
 import type { PhysicsSettings } from '../physics/settings'
 
@@ -121,8 +122,8 @@ export interface EditorState {
   // mode 'prepend' = 덧붙이기, null = off (덮어쓰기 was removed).
   setRestPose(itemId: string, mode: Item['restPose'] | null): boolean
   setRestTail(itemId: string, on: boolean): boolean
-  /** 덧붙이기 lead-in and 끝 기본자세 lengths of a piece, in frames (rounded, clamped); null = back to the default / auto. One undo step. */
-  setRestLead(itemId: string, patch: { restHold?: number | null; restBlend?: number | 'auto' | null; inertia?: number | null; tailHold?: number | null; tailBlend?: number | null }): boolean
+  /** 덧붙이기 lead-in, 끝 기본자세 and GO2 이음매 보정 lengths of a piece, in frames (rounded, clamped); null = back to the default / auto. One undo step. */
+  setRestLead(itemId: string, patch: { restHold?: number | null; restBlend?: number | 'auto' | null; inertia?: number | null; tailHold?: number | null; tailBlend?: number | null; seam?: number | null }): boolean
   setPhysics(next: PhysicsSettings): void // project-wide physics-assist settings: one undo step
   beginGesture(): void; endGesture(): void
   inGesture: boolean // a slider/gizmo drag is under way (views may skip heavy recomputation until it ends)
@@ -818,6 +819,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         if (!f || f.t.locked) return false
         const d = Math.round(df), it = f.it
         if (side === 'in') { it.start += d; it.trimIn += d } else it.trimOut += d
+        const c = f.t.kind === 'motion' ? p.clips[it.refId] : undefined
+        if (c?.hold && it.trimOut > c.length) p.clips[c.id] = { ...c, length: it.trimOut } // Empty: its end drags the clip longer (never shorter: other pieces)
         return it.trimIn >= 0 && it.trimIn < it.trimOut && it.trimOut <= refLen(p, f.t, it) && validItems(p, f.t)
       }),
       splitItem: (itemId, frame) => tryEdit(p => {
@@ -892,8 +895,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       setRestLead: (itemId, patch) => tryEdit(p => {
         const f = findItem(p, itemId)
         if (!f || f.t.locked || f.t.kind !== 'motion') return false
-        const lim = { restHold: HOLD_RANGE, restBlend: BLEND_RANGE, inertia: [0, Math.min(INERTIA_CAP, f.it.trimIn)], tailHold: HOLD_RANGE, tailBlend: BLEND_RANGE } as const
-        for (const k of ['restHold', 'restBlend', 'inertia', 'tailHold', 'tailBlend'] as const) {
+        const lim = { restHold: HOLD_RANGE, restBlend: BLEND_RANGE, inertia: [0, Math.min(INERTIA_CAP, f.it.trimIn)], tailHold: HOLD_RANGE, tailBlend: BLEND_RANGE, seam: [0, SEAM_MAX] } as const
+        for (const k of ['restHold', 'restBlend', 'inertia', 'tailHold', 'tailBlend', 'seam'] as const) {
           const v = patch[k]
           if (v === undefined) continue
           if (v === null) delete f.it[k]

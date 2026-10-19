@@ -120,10 +120,10 @@ test('loop blocks list only the values the log can make (whole steps), smallest 
   await row(page, 'Move forward').click()
   await expect(page.getByRole('button', { name: '값' })).toHaveText(/1\.77 m \(1걸음\)/)
   await expect(add(page)).toBeEnabled()
-  await row(page, 'Empty').click() // no log: a length in frames
-  await expect(page.locator('.pp-blk').getByLabel('길이', { exact: true })).toHaveValue('30')
-  await page.locator('.pp-blk').getByLabel('길이', { exact: true }).fill('')
-  await expect(add(page)).toBeDisabled()
+  await row(page, 'Empty').click() // no log, no length field, no 붙일 로봇: always 30 frames into 목록
+  await expect(page.locator('.pp-blk').getByLabel('붙일 로봇')).toHaveCount(0)
+  await expect(page.locator('.pp-blk input')).toHaveCount(0)
+  await expect(add(page)).toBeEnabled()
   await page.getByLabel('필터').fill('flip')
   await expect(page.locator('.pp-row[data-kind=block]')).toHaveCount(4)
   await expect(page.locator('.pp-count')).toHaveText('4 항목')
@@ -165,4 +165,27 @@ test('a fixed block drags to the timeline without picking its row first', async 
     expect((await actors(page)).map(a => a.robot)).toEqual(['go2'])
   }).toPass()
   expect(await clipCount(page)).toBe(1)
+})
+
+test('Empty: 추가 puts one 30-frame clip in 목록; dragged twice, both pieces share it; a piece end drags it longer', async ({ page }) => {
+  await boot(page)
+  await library(page)
+  await row(page, 'Empty').click()
+  await add(page).click()
+  await expect(page.locator('.pp-msg')).toHaveText('목록에 추가했습니다: Empty_30f')
+  await add(page).click()
+  await expect(page.locator('.pp-msg')).toContainText('이미 목록에 있습니다')
+  expect(await clipCount(page)).toBe(1)
+  expect(await actors(page)).toEqual([]) // nothing on the sequence
+  const seq = page.locator('.seq-canvas'), box = (await seq.boundingBox())!
+  await row(page, 'Empty').dragTo(seq, { targetPosition: { x: 300, y: box.height - 20 } })
+  await expect.poll(async () => (await actors(page)).length).toBe(1)
+  await row(page, 'Empty').dragTo(seq, { targetPosition: { x: 300, y: box.height - 20 } }) // empty space again: a second GO2
+  await expect.poll(async () => (await actors(page)).length).toBe(2)
+  expect(await clipCount(page)).toBe(1) // both pieces use the one Empty clip
+  const [g1, g2] = (await actors(page)).map(a => a.id)
+  expect([...await trackItems(page, g1), ...await trackItems(page, g2)].map(i => [i.name, i.len])).toEqual([['Empty_30f', 30], ['Empty_30f', 30]])
+  const ok = await page.evaluate(id => { const s = (window as any).__editor.getState(); return s.trimItem(s.project.sequence.tracks.find((t: any) => t.actorId === id).items[0].id, 'out', 45) }, g1)
+  expect(ok).toBe(true)
+  expect([(await trackItems(page, g1))[0].len, (await trackItems(page, g2))[0].len]).toEqual([75, 30])
 })

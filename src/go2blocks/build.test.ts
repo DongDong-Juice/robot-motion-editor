@@ -7,7 +7,7 @@ import { yawQuat } from '../model/rootMath'
 import type { Clip } from '../model/types'
 import { loadDef } from '../test/defs'
 import { GO2_BLOCKS, type Block } from './blocks'
-import { blockActual, buildBlockClip, emptyBlockClip } from './build'
+import { blockActual, buildBlockClip, emptyBlockClip, emptyClipFor } from './build'
 
 const defs = { go2: loadDef('go2') } as RobotDefs, g1 = loadDef('g1') // parsed once per file, outside any test's timeout (a full parallel run can take >20 s per parse)
 const pose = (x: number, yaw: number, f: number): Pose =>
@@ -114,4 +114,22 @@ test('Empty block: the GO2 rest pose held n frames at the origin', () => {
   expect(first(c, 'root.z')).toBeCloseTo(defs.go2.rest.z)
   expect(last(c, 'root.x')).toBeCloseTo(0)
   defs.go2.joints.forEach((j, i) => expect(last(c, j.name)).toBeCloseTo(defs.go2.rest.q[i]))
+})
+
+test('Empty clip: shared by every Empty piece; dragging a piece end past it lengthens the clip, never shortens it (other pieces)', async () => {
+  const { createEditorStore } = await import('../store/store')
+  const { newProject } = await import('../model/defaults')
+  const allDefs = { go2: defs.go2, g1: loadDef('g1') } as RobotDefs, st = createEditorStore(allDefs, newProject()), s = () => st.getState()
+  const c = emptyClipFor(s().project.clips, allDefs)
+  expect(c).toMatchObject({ length: 30, hold: true })
+  s().addClipAsset(c)
+  expect(emptyClipFor(s().project.clips, allDefs).id).toBe(c.id)
+  const a = s().appendClip(null, c)!, b = s().appendClip(null, c)! // two GO2s, one piece each
+  expect(s().trimItem(a, 'out', 30)).toBe(true)
+  expect(s().project.clips[c.id].length).toBe(60)
+  expect(s().trimItem(a, 'out', -50)).toBe(true) // shorter: the piece only
+  expect(s().project.clips[c.id].length).toBe(60)
+  const items = s().project.sequence.tracks.flatMap(t => t.items), len = (id: string) => { const i = items.find(x => x.id === id)!; return i.trimOut - i.trimIn }
+  expect([len(a), len(b)]).toEqual([10, 30])
+  expect(s().trimItem(a, 'out', -10)).toBe(false) // at least 1 frame
 })

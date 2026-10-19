@@ -3,8 +3,9 @@ import { trackDrag } from './drag'
 import { getEditor, useEditor } from '../store/store'
 import { itemLen, sortedItems, pieceName, pieceTag } from '../model/sequence'
 import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP, itemLead, itemTail, previewRange, REST_BLEND, REST_HOLD } from '../model/restPose'
+import { SEAM_MAX } from '../model/seam'
 import type { Item, Track } from '../model/types'
-import { offsetKeyCount } from '../model/itemClip'
+import { itemSeam, offsetKeyCount } from '../model/itemClip'
 import { seqFlash, tv } from './viewState'
 import { edgeScroll, followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { sequenceEnd } from '../transport'
@@ -26,8 +27,9 @@ const ROW_H = 28, EDGE = 6, LEN_EDGE = 4 // px: piece trim handle, lead-in / 끝
 const DENY = '이 위치에 놓을 수 없습니다'
 const LOCKED = '잠긴 트랙입니다'
 // lead-in / 끝 기본자세 blocks in a lane: the outer edge of each one drags its length (user)
-type LenKey = 'restHold' | 'restBlend' | 'inertia' | 'tailBlend' | 'tailHold'
-const LEN_NAME: Record<LenKey, string> = { restHold: '기본자세', restBlend: '전이', inertia: '관성', tailBlend: '끝 전이', tailHold: '끝 기본자세' }
+type LenKey = 'restHold' | 'restBlend' | 'inertia' | 'tailBlend' | 'tailHold' | 'seam'
+const LEN_NAME: Record<LenKey, string> = { restHold: '기본자세', restBlend: '전이', inertia: '관성', tailBlend: '끝 전이', tailHold: '끝 기본자세', seam: '이음' }
+const SEAM_WARN = '이음 ⚠: 앞 조각 끝 자세와 차이가 커서 이어지는 동작이 어색할 수 있습니다'
 const ICON_HIT = 18 // hit area; icons are drawn 14px: (motion) path, eye, padlock at the label column's right edge
 const TRAIL_X = LABEL_W - 56, EYE_X = LABEL_W - 36, LOCK_X = LABEL_W - 16, PLAY_X = EYE_X - 20 // PLAY_X: piece lanes, left of the eye
 const TRI_W = 18, NAME_X = 20, CHILD_X = NAME_X + 16 // disclosure triangle hit width; track / child label x
@@ -120,7 +122,7 @@ export default function SequenceCanvas() {
     const scale = (): TimeScale => ({ x0: LABEL_W - tv.scrollF * tv.ppf, pxPerFrame: tv.ppf })
     // V1 (always first) only shows once the project has media
     const tracks = () => { const p = ed.getState().project; return p.sequence.tracks.filter(t => t.kind === 'motion' || (isVideo(t) && p.media.length > 0)) }
-    const refLen = (it: Item) => { const p = ed.getState().project; return p.clips[it.refId]?.length ?? p.media.find(m => m.id === it.refId)?.durationF ?? 0 }
+    const refLen = (it: Item) => { const p = ed.getState().project, c = p.clips[it.refId]; return c?.hold ? Infinity : c?.length ?? p.media.find(m => m.id === it.refId)?.durationF ?? 0 } // Empty: no end
     const refName = (it: Item) => { const p = ed.getState().project; return p.clips[it.refId]?.name ?? p.media.find(m => m.id === it.refId)?.name ?? '' }
     // items of a track with the drag preview applied
     const shown = (t: Track): Item[] => t.items.map(it => {
@@ -165,6 +167,8 @@ export default function SequenceCanvas() {
     const dragged = (it: Item) => lenDrag?.itemId === it.id ? { ...it, [lenDrag.key]: lenDrag.value } : null
     const leadOf = (it: Item) => { const s = ed.getState(), d = dragged(it); if (d) return itemLead(s.project, s.defs, d); if (!s.inGesture || !leads.has(it.id)) leads.set(it.id, itemLead(s.project, s.defs, it)); return leads.get(it.id)! }
     const tailOf = (it: Item) => { const s = ed.getState(), d = dragged(it); if (d) return itemTail(s.project, s.defs, d); if (!s.inGesture || !tails.has(it.id)) tails.set(it.id, itemTail(s.project, s.defs, it)); return tails.get(it.id)! }
+    const seams = new Map<string, ReturnType<typeof itemSeam>>() // GO2 이음매 보정 at a piece's start
+    const seamOf = (it: Item) => { const s = ed.getState(), d = dragged(it); if (d) return itemSeam(s.project, s.defs, d); if (!s.inGesture || !seams.has(it.id)) seams.set(it.id, itemSeam(s.project, s.defs, it)); return seams.get(it.id)! }
     seqFlash.fn = (text, itemId) => flash(text, layout().findIndex(r => !r.it && r.t.items.some(i => i.id === itemId)))
 
     const draw = () => {
@@ -212,6 +216,10 @@ export default function SequenceCanvas() {
               }
             }
             ctx.globalAlpha = ga
+          }
+          const sm = video ? null : seamOf(it)
+          if (sm) { // 이음매 보정: the first frames of the piece, eased from the piece before
+            ctx.globalAlpha = 0.45 * ga; ctx.fillStyle = sm.warn ? WARN_RED : C.blend; ctx.fillRect(x, by, sm.n * tv.ppf, lane ? bh : 4); ctx.globalAlpha = ga
           }
           const tl = tailOf(it)
           if (tl) { // 끝 기본자세 after the piece's end: 전이 then 기본자세 (정지); one row: a strip, so the next piece stays visible
@@ -291,7 +299,7 @@ export default function SequenceCanvas() {
           if (tag.text) {
             ctx.save(); ctx.textAlign = 'right'; ctx.fillStyle = tag.warn ? WARN_RED : DIM; ctx.fillText(tag.text, right, y + ROW_H / 2); ctx.restore()
           }
-          const warn = (it.restPose === 'prepend' && leadOf(it)?.why === 'review' ? '⚠ ' : '') // 관성 검토 필요, in front so it is never cut
+          const warn = (it.restPose === 'prepend' && leadOf(it)?.why === 'review' || seamOf(it)?.warn ? '⚠ ' : '') // 관성 검토 필요, in front so it is never cut
           ctx.fillText(fit(ctx, warn + laneLabel(t, it) + (hasEdit(it) ? ' 수정' : ''), right - CHILD_X - tw), CHILD_X, y + ROW_H / 2)
           ctx.font = '11px "IBM Plex Sans KR", sans-serif'
           return
@@ -369,14 +377,14 @@ export default function SequenceCanvas() {
     }
 
     // the lead-in / 끝 기본자세 block edge under (x, y) in a lane: lead-in blocks by their left edge (the piece start stays put), 끝
-    // blocks by their right edge; never over the bar itself (its ends trim the piece)
+    // blocks by their right edge, outside the bar (its ends trim the piece); the 이음 block inside the bar by its right edge
     const lenEdgeAt = (x: number, y: number) => {
       const r = layout()[rowAt(y)]
       if (!r?.it || r.t.locked || isVideo(r.t) || x < LABEL_W) return null
       const it = r.it, sc = scale(), s0 = frameToX(sc, it.start), s1 = frameToX(sc, it.start + itemLen(it))
-      if (x >= s0 && x <= s1) return null
       const cand: [LenKey, number, number][] = [] // key, edge x, current length
-      const ld = it.restPose === 'prepend' ? leadOf(it) : null, tl = tailOf(it)
+      if (x >= s0 && x <= s1) { const sm = seamOf(it), ex = sm && s0 + sm.n * tv.ppf; if (sm && ex! - s0 > EDGE && s1 - ex! > EDGE) cand.push(['seam', ex!, sm.n]) }
+      const ld = x < s0 && it.restPose === 'prepend' ? leadOf(it) : null, tl = x > s1 ? tailOf(it) : null
       if (ld) { const x0 = s0 - ld.lead * tv.ppf; cand.push(['restHold', x0, ld.hold], ['restBlend', x0 + ld.hold * tv.ppf, ld.blend], ['inertia', x0 + (ld.hold + ld.blend) * tv.ppf, ld.inertia]) }
       if (tl) cand.push(['tailBlend', s1 + tl.blend * tv.ppf, tl.blend], ['tailHold', s1 + tl.tail * tv.ppf, tl.hold])
       let best: { key: LenKey; value: number; d: number; t: Track; it: Item } | null = null
@@ -384,8 +392,8 @@ export default function SequenceCanvas() {
       return best
     }
     const lenDragFrom = (e: MouseEvent, h: NonNullable<ReturnType<typeof lenEdgeAt>>, row: number) => {
-      const x = pos(e).x, s = ed.getState(), sign = h.key.startsWith('tail') ? 1 : -1 // lead-in edges grow leftwards
-      const [lo, hi] = h.key === 'inertia' ? [0, Math.min(INERTIA_CAP, h.it.trimIn)] : h.key.endsWith('Hold') ? HOLD_RANGE : BLEND_RANGE
+      const x = pos(e).x, s = ed.getState(), sign = h.key.startsWith('tail') || h.key === 'seam' ? 1 : -1 // lead-in edges grow leftwards
+      const [lo, hi] = h.key === 'inertia' ? [0, Math.min(INERTIA_CAP, h.it.trimIn)] : h.key === 'seam' ? [0, Math.min(SEAM_MAX, itemLen(h.it))] : h.key.endsWith('Hold') ? HOLD_RANGE : BLEND_RANGE
       s.selectItem(h.it.id)
       if (h.t.actorId) s.select(h.t.actorId)
       const at = (m: MouseEvent) => Math.min(Math.max(h.value + sign * Math.round((pos(m).x - x) / tv.ppf), lo), hi)
@@ -550,7 +558,7 @@ export default function SequenceCanvas() {
       canvas.style.cursor = le || (h && h.mode !== 'move') ? 'ew-resize' : ''
       // hover help for the track label icons
       const r = x < LABEL_W && y >= RULER_H ? layout()[rowAt(y)] : undefined, near = (ix: number) => Math.abs(x - ix) <= ICON_HIT / 2
-      const tip = le ? `끌어서 ${LEN_NAME[le.key]} 길이 조절 (${le.value}프레임)` : !r ? '' : r.it ? (near(EYE_X) ? '이 조각 숨기기' : near(PLAY_X) ? (ed.getState().itemPreview === r.it.id && ed.getState().previewPlaying ? '멈춤' : '재생 (클립 프리뷰에서 반복)') : laneTip(r.t, r.it))
+      const tip = le ? `끌어서 ${LEN_NAME[le.key]} 길이 조절 (${le.value}프레임)` + (le.key === 'seam' && seamOf(le.it)?.warn ? `\n${SEAM_WARN}` : '') : !r ? '' : r.it ? (near(EYE_X) ? '이 조각 숨기기' : near(PLAY_X) ? (ed.getState().itemPreview === r.it.id && ed.getState().previewPlaying ? '멈춤' : '재생 (클립 프리뷰에서 반복)') : laneTip(r.t, r.it))
         : !isVideo(r.t) && near(TRAIL_X) ? '경로 표시: 이 로봇의 골반이 지나간 바닥 경로를 메인 화면에 선으로 보여 줍니다'
         : near(EYE_X) ? '숨기기' : near(LOCK_X) ? '잠그기' : ''
       if (canvas.title !== tip) canvas.title = tip
@@ -562,7 +570,7 @@ export default function SequenceCanvas() {
     const laneTip = (t: Track, it: Item) => {
       const s = ed.getState(), { st, old } = phys(t, it), ld = it.restPose === 'prepend' ? leadOf(it) : null
       return childLabel(t, it, s.project.clips[it.refId]?.name ?? '') + treeSuffix(st, old).replace(/^ · /, '\n물리 검증: ')
-        + (ld?.why === 'review' ? '\n관성 검토 필요' : '') + (it.restTail ? '\n끝 기본자세 (전이 · 정지 0.5초)' : '') + (hasEdit(it) ? `\n수정됨 · 수정 키 ${offsetKeyCount(it)}개 (클립 프리뷰에서 고침 · 우클릭: 수정 지우기)` : '')
+        + (ld?.why === 'review' ? '\n관성 검토 필요' : '') + (seamOf(it)?.warn ? `\n${SEAM_WARN}` : '') + (it.restTail ? '\n끝 기본자세 (전이 · 정지 0.5초)' : '') + (hasEdit(it) ? `\n수정됨 · 수정 키 ${offsetKeyCount(it)}개 (클립 프리뷰에서 고침 · 우클릭: 수정 지우기)` : '')
         + (it.id === s.itemPreview ? '\n클립 프리뷰에서 보는 중' : '')
     }
     const onWheel = (e: WheelEvent) => {
