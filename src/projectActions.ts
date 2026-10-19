@@ -13,8 +13,14 @@ const why = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 const proceed = () => !getEditor().getState().dirty || confirm('저장하지 않은 변경 사항이 있습니다. 계속할까요?')
 
+// 프로젝트 팝업 (StartScreen): 메뉴 새 프로젝트·열기·Ctrl+O. adding = open with the new-project row.
+const hubListeners = new Set<(adding: boolean) => void>()
+export const onShowHub = (fn: (adding: boolean) => void) => { hubListeners.add(fn); return () => { hubListeners.delete(fn) } }
+export function showProjectHub(adding = false) {
+  if (proceed()) hubListeners.forEach(f => f(adding)) // the popup's actions replace the project without asking again
+}
+
 export function newProjectFile() {
-  if (!proceed()) return
   handle = null; hub = null
   clearMedia()
   getEditor().getState().newProjectFile()
@@ -55,7 +61,6 @@ export function newLocalProject(title: string) {
 }
 
 export async function openProject(): Promise<boolean> {
-  if (!proceed()) return false
   try {
     const [f] = await openTextFiles('.json', false)
     if (!f) return false

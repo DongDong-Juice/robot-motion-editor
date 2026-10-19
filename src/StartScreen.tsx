@@ -13,12 +13,13 @@ function ago(ms: number) {
   return new Date(ms).toLocaleDateString('ko-KR')
 }
 
-// First screen (project hub): projects in the server folder, open one from this PC, or create one by name. Cannot be dismissed.
-export default function StartScreen({ onDone }: { onDone: () => void }) {
+// 프로젝트 팝업 (project hub): projects in the server folder, open one from this PC, or create one by name.
+// At start it cannot be dismissed; from the menu (closable) ✕ / Esc closes it.
+export default function StartScreen({ onDone, closable = false, adding: addFirst = false }: { onDone: () => void; closable?: boolean; adding?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null)
   const [list, setList] = useState<HubEntry[] | null | undefined>(undefined) // undefined = loading, null = no hub server
   const [query, setQuery] = useState(''), [asc, setAsc] = useState(false)
-  const [adding, setAdding] = useState(false), [title, setTitle] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState(false)
+  const [adding, setAdding] = useState(addFirst), [title, setTitle] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState(false)
   useEffect(() => { if (!ref.current?.open) ref.current?.showModal(); void hubList().then(setList) }, [])
 
   const run = async (f: () => Promise<boolean>) => { setBusy(true); try { if (await f()) onDone() } finally { setBusy(false) } }
@@ -34,12 +35,13 @@ export default function StartScreen({ onDone }: { onDone: () => void }) {
     .sort((a, b) => asc ? a.mtime - b.mtime : b.mtime - a.mtime)
 
   return (
-    <dialog ref={ref} className="hub" aria-label="프로젝트 시작" onCancel={e => e.preventDefault()}>
+    <dialog ref={ref} className="hub" aria-label="프로젝트" onCancel={e => { e.preventDefault(); if (closable) onDone() }}>
       <header className="hub-head">
         <h1>프로젝트</h1>
         <input type="search" className="hub-search" aria-label="검색" placeholder="검색" value={query} onChange={e => setQuery(e.target.value)} />
         <button onClick={() => run(openProject)} disabled={busy}>이 PC에서 열기</button>
         <button className="hub-primary" onClick={() => { setAdding(true); setErr('') }} disabled={busy}>+ 새 프로젝트</button>
+        {closable && <button className="hub-close" aria-label="닫기" onClick={onDone}>✕</button>}
       </header>
       <div className="hub-table" role="list" aria-label="서버 프로젝트">
         <div className="hub-row hub-cols">
@@ -52,7 +54,7 @@ export default function StartScreen({ onDone }: { onDone: () => void }) {
               <div className="hub-new-in">
                 <input aria-label="프로젝트 이름" placeholder="새 프로젝트 이름" value={title} autoFocus
                   onChange={e => { setTitle(e.target.value); setErr('') }}
-                  onKeyDown={e => { if (e.key === 'Enter') void create(); if (e.key === 'Escape') setAdding(false) }} />
+                  onKeyDown={e => { if (e.key === 'Enter') void create(); if (e.key === 'Escape') { e.preventDefault(); setAdding(false) } }} />
                 <button className="hub-primary" onClick={create} disabled={busy}>만들기</button>
                 <button onClick={() => setAdding(false)}>취소</button>
               </div>

@@ -84,9 +84,14 @@ test('save and reopen restores sequence', async ({ page }) => {
   const saved = fs.readFileSync((await downloads[0].path())!)
   const name = downloads[0].suggestedFilename()
 
-  await menu(page, '새 프로젝트')
+  const hub = page.getByRole('dialog', { name: '프로젝트' })
+  await menu(page, '새 프로젝트') // 프로젝트 팝업, new-project row open
+  await hub.getByLabel('프로젝트 이름').fill(`e2e-${Date.now()}`)
+  await hub.getByRole('button', { name: '만들기' }).click()
+  await expect(hub).toHaveCount(0)
   expect(await snap()).not.toBe(before)
-  const [fc] = await Promise.all([page.waitForEvent('filechooser'), menu(page, '열기')])
+  await menu(page, '열기')
+  const [fc] = await Promise.all([page.waitForEvent('filechooser'), hub.getByRole('button', { name: '이 PC에서 열기' }).click()])
   await fc.setFiles([{ name, mimeType: 'application/json', buffer: saved }])
   await expect.poll(snap).toBe(before)
   expect(await page.evaluate(() => (window as any).__editor.getState().dirty)).toBe(false)

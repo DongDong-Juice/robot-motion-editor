@@ -5,7 +5,7 @@ test.use({ storageState: { cookies: [], origins: [] } }) // show the start scree
 test('start screen: create on the hub, save, reopen from the list, conflict asks before overwriting', async ({ page }) => {
   const name = `e2e-${Date.now()}`, file = `${name}.motion.json`
   await page.goto('/')
-  const start = page.getByRole('dialog', { name: '프로젝트 시작' })
+  const start = page.getByRole('dialog', { name: '프로젝트' })
   await expect(start).toBeVisible({ timeout: 30000 })
   await page.keyboard.press('Escape')
   await expect(start).toBeVisible() // must pick one
@@ -48,4 +48,14 @@ test('start screen: create on the hub, save, reopen from the list, conflict asks
   await expect(start).toHaveCount(0)
   await expect(page.locator('.mb-title')).toHaveText(file)
   expect(await page.evaluate(() => (window as any).__editor.getState().project.actors.length)).toBe(2)
+
+  // 메뉴 ▸ 열기 / Ctrl+O = the same popup, closable this time
+  await page.getByRole('button', { name: '메뉴', exact: true }).click()
+  await page.getByRole('menuitem', { name: '열기', exact: true }).click()
+  await expect(start.getByLabel('프로젝트 이름')).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await expect(start).toHaveCount(0)
+  await page.keyboard.press('Control+o')
+  await start.getByRole('button', { name: '닫기' }).click()
+  await expect(start).toHaveCount(0)
 })

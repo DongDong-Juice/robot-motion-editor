@@ -206,23 +206,26 @@ body {
 .exp-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
 .exp-dim { color: var(--dim); font-variant-numeric: tabular-nums; }
 .exp-group { margin: 8px 0 2px; color: var(--dim); }
-/* 시작 화면 (프로젝트 허브): full window */
-.hub { position: fixed; inset: 0; width: 100vw; height: 100vh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; box-sizing: border-box;
+/* 프로젝트 팝업 (허브) */
+.hub { width: min(960px, 92vw); height: min(640px, 86vh); padding: 0; border: 1px solid var(--line); border-radius: 6px; box-sizing: border-box; overflow: hidden;
   background: var(--bg); color: var(--text); font-size: 14px; display: flex; flex-direction: column; }
+.hub::backdrop { background: rgba(0, 0, 0, .55); }
+.hub .hub-close { border: 0; background: none; padding: 4px 8px; color: var(--dim); }
+.hub .hub-close:hover { color: var(--text); }
 .hub:not([open]) { display: none; }
-.hub-head { display: flex; align-items: center; gap: 10px; padding: 28px 48px; }
-.hub-head h1 { flex: 1; margin: 0; font-size: 26px; font-weight: 600; }
+.hub-head { display: flex; align-items: center; gap: 10px; padding: 20px 28px; }
+.hub-head h1 { flex: 1; margin: 0; font-size: 22px; font-weight: 600; }
 .hub button, .hub input { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 7px 14px; }
 .hub button { cursor: pointer; }
 .hub button:disabled { opacity: .45; cursor: default; }
 .hub :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .hub .hub-primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
-.hub .hub-search { width: 320px; background: var(--panel); }
+.hub .hub-search { width: 240px; background: var(--panel); }
 .hub-table { flex: 1; overflow: auto; }
-.hub-row { display: grid; grid-template-columns: 1fr 220px; align-items: center; gap: 16px; padding: 0 48px; min-height: 64px; box-sizing: border-box; border-bottom: 1px solid var(--line); }
+.hub-row { display: grid; grid-template-columns: 1fr 180px; align-items: center; gap: 16px; padding: 0 28px; min-height: 60px; box-sizing: border-box; border-bottom: 1px solid var(--line); }
 .hub-cols { position: sticky; top: 0; z-index: 1; min-height: 48px; background: var(--panel); border-top: 1px solid var(--line); font-weight: 500; }
 .hub .hub-sort { justify-self: start; border: 0; background: none; padding: 4px 0; font-weight: 500; }
-.hub .hub-item { width: 100%; text-align: left; background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 0 48px; }
+.hub .hub-item { width: 100%; text-align: left; background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 0 28px; }
 .hub .hub-item:hover:not(:disabled) { background: var(--panel); }
 .hub-item b { display: block; font-weight: 500; font-size: 15px; }
 .hub-item > span:last-child { font-variant-numeric: tabular-nums; }
@@ -231,7 +234,7 @@ body {
 .hub-new { padding-top: 12px; padding-bottom: 12px; background: var(--panel); }
 .hub-new-in { display: flex; gap: 8px; margin-bottom: 4px; }
 .hub-new-in input { width: 320px; }
-.hub-empty { padding: 32px 48px; color: var(--dim); }
+.hub-empty { padding: 32px 28px; color: var(--dim); }
 .exp button { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 3px; font: inherit; padding: 2px 10px; cursor: pointer; }
 .exp button:disabled { opacity: .45; cursor: default; }
 .exp :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
