@@ -52,11 +52,14 @@ export function blockActual(block: Block, poses: Pose[], value: number): { n: nu
   return { n, actual, base, per }
 }
 
-/** The Empty block: the GO2 rest pose (standing still) held `frames` 60fps frames at the origin. */
+export const EMPTY_FRAMES = 30
+/** The Empty block: the GO2 rest pose (standing still) held `frames` 60fps frames at the origin; `hold` lets a piece's end drag it longer. */
 export function emptyBlockClip(frames: number, defs: RobotDefs): Clip {
   const { q, z } = defs.go2.rest, pose: Pose = { rootPos: [0, 0, z], rootQuat: [0, 0, 0, 1], q }
-  return posesToClip(Array(frames).fill(pose), 60, 'go2', defs, `Empty_${frames}f`)
+  return { ...posesToClip(Array(frames).fill(pose), 60, 'go2', defs, `Empty_${frames}f`), hold: true }
 }
+/** The 목록's Empty clip (every Empty piece shares it, user), or a new 30-frame one. */
+export const emptyClipFor = (clips: Record<string, Clip>, defs: RobotDefs) => Object.values(clips).find(c => c.hold) ?? emptyBlockClip(EMPTY_FRAMES, defs)
 
 /** Source poses (at `fps`) -> 60fps GO2 clip starting at the origin. Loop blocks: head + loop × n + tail. */
 export function buildBlockClip(block: Block, poses: Pose[], fps: number, value: number, defs: RobotDefs): Clip {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Go2BlockPanel, { cachedTemplate, loadTemplate } from '../go2blocks/Go2BlockPanel'
 import { GO2_BLOCKS } from '../go2blocks/blocks'
-import { buildBlockClip } from '../go2blocks/build'
+import { buildBlockClip, emptyClipFor } from '../go2blocks/build'
 import { getEditor, useEditor } from '../store/store'
 import { setDragged } from '../timeline/assetDrop'
 
@@ -43,8 +43,14 @@ export default function LibraryList({ query }: { query: string }) {
         {rows.map(b => (
           <div key={b.id} role="treeitem" className="pp-row" data-kind="block" data-id={b.id} aria-selected={sel === b.id}
             tabIndex={b.id === tabStop ? 0 : -1} onClick={() => pick(b.id)} onKeyDown={e => onKey(e, b.id)}
-            draggable={b.kind === 'fixed'}
+            draggable={b.kind === 'fixed' || b.kind === 'empty'}
             onDragStart={e => {
+              if (b.kind === 'empty') { // the one Empty clip of 목록 (or a new 30-frame one)
+                const st = getEditor().getState(), clip = emptyClipFor(st.project.clips, st.defs), have = !!st.project.clips[clip.id]
+                e.dataTransfer.setData('application/x-motion-block', b.id); e.dataTransfer.effectAllowed = 'copy'
+                setDragged(have ? { kind: 'clip', id: clip.id } : { kind: 'clip', id: clip.id, clip })
+                return
+              }
               const t = cachedTemplate(b.id)
               if (!t) { e.preventDefault(); return } // not loaded yet: picking the row loads it
               const st = getEditor().getState(), clip = buildBlockClip(b, t.poses, t.fps, 0, st.defs)
@@ -60,14 +66,14 @@ export default function LibraryList({ query }: { query: string }) {
         ))}
       </div>
       {sel && <div className="pp-blk">
-        <label className="pp-blk-field"><span>붙일 로봇</span>
+        {sel !== 'empty' && <label className="pp-blk-field"><span>붙일 로봇</span>
           <select aria-label="붙일 로봇" value={t} onChange={e => { setChoice(e.target.value); setMsg('') }}>
             {go2s.map(a => <option key={a.id} value={a.id}>{a.name} (트랙 끝에 붙임)</option>)}
             <option value="new">새 GO2 로봇 (0초부터)</option>
             <option value="asset">목록에만 추가 (시퀀스에 놓지 않음)</option>
           </select>
-        </label>
-        <Go2BlockPanel key={sel} target={target} blockId={sel} onAdded={(actorId, name, reused) => {
+        </label>}
+        <Go2BlockPanel key={sel} target={sel === 'empty' ? 'asset' : target} blockId={sel} onAdded={(actorId, name, reused) => {
           if (actorId) { setChoice(actorId); setMsg(reused ? `목록에 있는 ${name}을(를) 붙였습니다` : `추가했습니다: ${name}`) }
           else setMsg(reused ? `이미 목록에 있습니다: ${name} (새로 만들지 않음)` : `목록에 추가했습니다: ${name}`)
         }} />
