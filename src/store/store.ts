@@ -465,18 +465,20 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       return { def, f: t.f, body: { x: r('root.x'), y: r('root.y'), z: r('root.z'), roll: r('root.roll'), pitch: r('root.pitch'), yaw: r('root.yaw') }, q: [...evaluateClip(shown, def, t.f).q] }
     }
     const editPose = (actorId: string, values: Record<string, number>, lock: boolean) => {
+      if (suspended) return false // the gesture was cancelled by undo and is still held
       const cur = poseAt(actorId)
       if (!cur) return false
       const { def } = cur, body: Body = { ...cur.body }
       let q = [...cur.q]
       for (const k of ['x', 'y', 'z', 'roll', 'pitch', 'yaw'] as const) if (values[`root.${k}`] !== undefined) body[k] = values[`root.${k}`]
       def.joints.forEach((j, i) => { if (values[j.name] !== undefined) q[i] = Math.min(Math.max(values[j.name], j.lower), j.upper) })
-      if (lock && ROOT.some(c => values[c] !== undefined)) {
+      const locked = lock && ROOT.some(c => values[c] !== undefined)
+      if (locked) {
         const solved = lockFeet(def, q, cur.body, body)
         if (!solved) return false
         q = solved
       }
-      if (get().autoGround && values['root.z'] === undefined) body.z = groundZ(def, q, body)
+      if (!locked && get().autoGround && values['root.z'] === undefined) body.z = groundZ(def, q, body)
       const was = gesture
       if (!was) get().beginGesture()
       const chan = (b: Body, qq: number[]) => [...ROOT.map(c => [c, b[c.slice(5) as keyof Body]] as const), ...def.joints.map((j, i) => [j.name, qq[i]] as const)]

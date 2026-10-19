@@ -492,7 +492,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
     // 3D 끌기 (main view): the robot's 무대 X·Y can be written at this frame (the gizmo's lock rules for root.x)
     const canDrag = (id: string) => {
       const s = store.getState(), t = editTarget(s, id), it = t && targetItem(s, t.itemId)
-      if (!t || !it || s.clipEdit || offStage(s, id) || trackLocked(s.project, id) || clipLocked(s.project, t.clipId) || editLock(s, id, 'root.x')) return false
+      if (!t || !it || s.playing || s.clipEdit || offStage(s, id) || trackLocked(s.project, id) || clipLocked(s.project, t.clipId) || editLock(s, id, 'root.x')) return false
       if (!s.editing && s.itemPreview === t.itemId) return false // edited in the clip preview
       return s.frame >= it.start && s.frame < it.start + it.trimOut - it.trimIn // off the piece / its lead-in or 끝 기본자세
     }
@@ -524,6 +524,11 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       const r = toClipRoot(grab.id, hitP.sub(grab.at).add(grab.pos).setZ(grab.pos.z), grab.quat)
       store.getState().editPose(grab.id, { 'root.x': r.x, 'root.y': r.y })
     }
+    const onCancel = () => {
+      const g = grab
+      if (g) { grab = null; orbit.enabled = true }
+      if (g?.on) { store.getState().endGesture(); dom.style.cursor = '' }
+    }
     const onUp = (ev: PointerEvent) => {
       const g = grab
       if (g) { grab = null; orbit.enabled = true }
@@ -533,7 +538,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       if (best) store.getState().select(best.id, best.via)
       else store.getState().select(null)
     }
-    if (mainView || editPane) { dom.addEventListener('pointerdown', onDown); dom.addEventListener('pointerup', onUp) }
+    if (mainView || editPane) { dom.addEventListener('pointerdown', onDown); dom.addEventListener('pointerup', onUp); dom.addEventListener('pointercancel', onCancel) }
     if (mainView) dom.addEventListener('pointermove', onMove)
 
     const onKey = (ev: KeyboardEvent) => {
@@ -628,6 +633,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       unsub(); ro.disconnect()
       dom.removeEventListener('pointerdown', onDown)
       dom.removeEventListener('pointerup', onUp)
+      dom.removeEventListener('pointercancel', onCancel)
       dom.removeEventListener('pointermove', onMove); cancelAnimationFrame(hoverRaf)
       if (grab?.on) store.getState().endGesture()
       el.removeEventListener('keydown', onKey)

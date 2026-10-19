@@ -2,7 +2,8 @@ import { loadDef } from '../test/defs'
 import { beforeEach, expect, test } from 'vitest'
 import type { RobotDefs } from '../model/evaluate'
 import { createEditorStore, editTarget, keyOwner } from './store'
-import { groundZ } from '../model/bodyPose'
+import { groundZ, bodyMat } from '../model/bodyPose'
+import { footMat, legsOf } from '../model/legIk'
 
 const defs: RobotDefs = { g1: loadDef('g1'), go2: loadDef('go2') }
 let st: ReturnType<typeof createEditorStore>
@@ -61,4 +62,27 @@ test('keyPose keys every root and joint channel at the frame', () => {
   const own = keyOwner(s().project, s().project.sequence.tracks.find(t => t.actorId === actor)!.items[0].id)!
   const names = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw', ...defs.g1.joints.map(j => j.name)]
   for (const n of names) expect(own.channels[n]?.keys.some(k => k.f === f), n).toBe(true)
+})
+
+test('undo mid-gesture cancels the pose edit and ignores later editPose calls until endGesture', () => {
+  const before = s().project
+  s().beginGesture()
+  expect(s().editPose(actor, { 'root.x': 0.3 })).toBe(true)
+  s().undo()
+  expect(s().project).toBe(before)
+  expect(s().editPose(actor, { 'root.x': 0.5 })).toBe(false)
+  s().editPose(actor, { 'root.x': 0.6 })
+  expect(s().project).toBe(before)
+  s().endGesture()
+  expect(s().editPose(actor, { 'root.x': 0.7 })).toBe(true)
+  expect(s().poseAt(actor)!.body.x).toBeCloseTo(0.7)
+})
+test('feetLock + autoGround: feet stay within 1 cm while the body is raised and moved', () => {
+  s().setFeetLock(true); s().setAutoGround(true)
+  s().editPose(actor, { 'root.z': s().poseAt(actor)!.body.z + 0.03 })
+  const feet = () => { const p = s().poseAt(actor)!; return legsOf(p.def).map(l => footMat(l, bodyMat(p.body), p.q)) }
+  const a = feet()
+  expect(s().editPose(actor, { 'root.x': s().poseAt(actor)!.body.x + 0.03 })).toBe(true)
+  const b = feet()
+  a.forEach((m, i) => [3, 7, 11].forEach(k => expect(Math.abs(m[k] - b[i][k])).toBeLessThan(0.01)))
 })
