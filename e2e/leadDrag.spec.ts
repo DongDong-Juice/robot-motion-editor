@@ -88,3 +88,26 @@ test('GO2 이음 block: two pieces end to start, its right edge drags the seam l
   await page.evaluate(() => (window as any).__editor.getState().undo())
   await expect.poll(async () => (await second()).seam).toBeUndefined()
 })
+
+test('lane play button: a piece far off the view scrolls into it (and is selected, previewing)', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
+  await page.evaluate(async () => {
+    const { emptyBlockClip } = await import(/* @vite-ignore */ '/src/go2blocks/build.ts')
+    const s = (window as any).__editor.getState, c = emptyBlockClip(30, s().defs)
+    s().appendClip(null, c); const a = s().project.actors.at(-1).id
+    s().appendClip(a, c); s().moveItem([...s().project.sequence.tracks.find((t: any) => t.kind === 'motion').items].sort((x: any, y: any) => y.start - x.start)[0].id, 6000) // 100 s away
+    const tv = (window as any).__tv; tv.ppf = 4; tv.scrollF = 0; s().setFrame(0)
+  })
+  const canvas = page.locator('.seq-canvas'), box = (await canvas.boundingBox())!, x = box.x + 104 // PLAY_X
+  const far = await page.evaluate(() => [...(window as any).__editor.getState().project.sequence.tracks.find((t: any) => t.kind === 'motion').items].sort((a: any, b: any) => b.start - a.start)[0].id)
+  let y = 0 // the far piece's lane: the lower of the two play buttons
+  for (let yy = box.y + 30; yy < box.y + box.height - 4; yy += 4) {
+    await page.mouse.move(x, yy)
+    if ((await canvas.getAttribute('title') ?? '').startsWith('재생')) y = yy
+  }
+  expect(y).toBeGreaterThan(0)
+  await page.mouse.click(x, y)
+  const st = await page.evaluate(id => { const s = (window as any).__editor.getState(), tv = (window as any).__tv; return { sel: s.selItem === id, prev: s.itemPreview === id, scrolled: tv.scrollF > 5000 } }, far)
+  expect(st).toEqual({ sel: true, prev: true, scrolled: true })
+})

@@ -171,22 +171,19 @@ test.skipIf(!existsSync(SAMPLE))('export header equals the first line of the rea
   expect(posesToCsv([], defs.g1)).toBe(first)
 })
 
-test('exportItemCsv: same text as samplePoses+posesToCsv, name from csvFileName', () => {
-  const it = itemOf(proj, g1.id)
-  for (const mode of ['local', 'world'] as const) {
-    const r = exportItemCsv(proj, defs, g1.id, it.id, mode)
-    expect(r.text).toBe(posesToCsv(samplePoses(proj, defs, g1.id, it.id, mode), defs.g1))
-    expect(r.name).toBe(csvFileName(proj, g1.id, it.id, new Set()))
-  }
+test('exportItemCsv: same text as samplePoses (local root) + posesToCsv, name from csvFileName', () => {
+  const it = itemOf(proj, g1.id), r = exportItemCsv(proj, defs, g1.id, it.id)
+  expect(r.text).toBe(posesToCsv(samplePoses(proj, defs, g1.id, it.id, 'local'), defs.g1))
+  expect(r.name).toBe(csvFileName(proj, g1.id, it.id, new Set()))
 })
 
 test('exportItemCsv: a 기본자세 덧붙이기 item starts at the 기본자세 (차렷) joint angles; warnings are returned', () => {
   const rest = structuredClone(proj)
   itemOf(rest, g1.id).restPose = 'prepend'
-  const first = exportItemCsv(rest, defs, g1.id, itemOf(rest, g1.id).id, 'local').text.split('\n')[1].split(',')
+  const first = exportItemCsv(rest, defs, g1.id, itemOf(rest, g1.id).id).text.split('\n')[1].split(',')
   first.slice(11, 40).forEach((v, i) => expect(Math.abs(Number(v) - defs.g1.rest.q[i])).toBeLessThan(1e-6))
-  expect(exportItemCsv(proj, defs, g1.id, itemOf(proj, g1.id).id, 'world').warnings).toEqual(
-    validatePoses(samplePoses(proj, defs, g1.id, itemOf(proj, g1.id).id, 'world'), defs.g1, itemFrameRange(itemOf(proj, g1.id)).from))
+  expect(exportItemCsv(proj, defs, g1.id, itemOf(proj, g1.id).id).warnings).toEqual(
+    validatePoses(samplePoses(proj, defs, g1.id, itemOf(proj, g1.id).id, 'local'), defs.g1, itemFrameRange(itemOf(proj, g1.id)).from))
 })
 
 test('exportClipCsv (클립 편집 CSV 저장): one row per clip frame = the clip with its 수정 층, local root, <G1|GO2>_<clip>.csv', () => {

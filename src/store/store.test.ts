@@ -1017,7 +1017,7 @@ test('walkMode on in the clip view or clip edit leaves the playhead alone', () =
 
 test('moving placement leaves the local-root CSV unchanged', () => {
   const t = s().project.sequence.tracks.find(t => t.actorId === actor)!, it = t.items[0]
-  const csv = () => exportItemCsv(s().project, defs, actor, it.id, 'local').text
+  const csv = () => exportItemCsv(s().project, defs, actor, it.id).text
   const a = csv()
   s().setPlacement(actor, { x: 1.5, y: -2 })
   expect(csv()).toBe(a)

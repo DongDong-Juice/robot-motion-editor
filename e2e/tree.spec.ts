@@ -51,7 +51,7 @@ test('tree: a cut opens the piece rows, click a child row → clip preview; 덧�
   const rows = () => page.evaluate(async () => {
     const { exportItemCsv } = await import(/* @vite-ignore */ '/src/export/csv.ts')
     const st = (window as any).__editor.getState(), tr = st.project.sequence.tracks.find((t: any) => t.kind === 'motion')
-    return exportItemCsv(st.project, st.defs, tr.actorId, tr.items[1].id, 'local').text.split('\n').length
+    return exportItemCsv(st.project, st.defs, tr.actorId, tr.items[1].id).text.split('\n').length
   })
   const plainRows = await rows()
   const sw = pane.getByRole('switch', { name: '기본자세 덧붙이기' }) // the switch in the lead-in box (덮어쓰기 was removed)

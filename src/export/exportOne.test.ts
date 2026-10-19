@@ -14,7 +14,7 @@ const defs = { g1: loadDef('g1'), go2: loadDef('go2') }
 const p = newProject(), g1 = p.actors[0]
 const item = p.sequence.tracks.find(t => t.actorId === g1.id)!.items[0]
 const key = itemInput(p, defs, g1.id, item.id).key
-const base = exportItemCsv(p, defs, g1.id, item.id, 'local')
+const base = exportItemCsv(p, defs, g1.id, item.id)
 const seg = (from: number) => ({ from, to: from + 4, maxPct: 99.4, maxTorque: 1 })
 const done = { key, status: 'done' as const, metrics: { segments: [seg(10), seg(30)] } as never }
 const fake = (v: { byItem: Record<string, typeof done> }) => vi.mocked(runItems).mockImplementation(async () => { // like the real one: queued now, result later

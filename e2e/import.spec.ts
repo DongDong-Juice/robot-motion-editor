@@ -69,8 +69,7 @@ test('headed CSV import creates the G1 actor; export reproduces the input', asyn
   expect(placed).toEqual({ actors: ['g1'], items: [{ actor: true, items: [['gen', 0, N]] }] })
 
   await menu(page, '내보내기')
-  await page.getByRole('radio', { name: '월드' }).check()
-  await page.getByRole('button', { name: /CSV 내보내기|무시하고 내보내기/ }).click()
+  await page.getByRole('button', { name: 'G1 내보내기' }).click()
   await expect.poll(() => downloads.length).toBe(1)
   const out = fs.readFileSync((await downloads[0].path())!, 'utf8').trimEnd().split('\n')
   const inp = input.trimEnd().split('\n')

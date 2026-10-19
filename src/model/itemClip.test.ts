@@ -116,7 +116,7 @@ test('원본 클립 수정 still edits the clip and needs 자동 키', () => {
 
 test('CSV export plays clip + 수정 층', () => {
   s().setFrame(60); s().setValue(actor, ch, 0.9)
-  const { text } = exportItemCsv(s().project, defs, actor, items()[0].id, 'world')
+  const { text } = exportItemCsv(s().project, defs, actor, items()[0].id)
   const row = text.split('\n')[61].split(',')
   expect(+row[11 + j()]).toBeCloseTo(0.9, 5)
 })
@@ -162,7 +162,7 @@ test('project file keeps the 수정 층 and rejects unknown channels', () => {
 })
 
 // 원본 · 수정본 분리 보기 (spec 2026-10-14-edit-compare-design.md)
-const csvOf = () => exportItemCsv(s().project, defs, actor, items()[0].id, 'world').text
+const csvOf = () => exportItemCsv(s().project, defs, actor, items()[0].id).text
 
 test('use: original plays and exports the clip, the 수정본 stays for the editors; one undo step', () => {
   const plain = csvOf()

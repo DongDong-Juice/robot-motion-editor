@@ -27,13 +27,13 @@ test('덧붙이기 preview lines up with its exported CSV placed at the 기본�
 
   // export that piece and place the CSV's clip on a new actor at the start of the 기본자세 section (piece start − lead-in)
   await page.evaluate(async () => {
-    const { exportItemCsv, restLead, restTailRows } = await import(/* @vite-ignore */ '/src/export/csv.ts')
+    const { posesToCsv, restLead, restTailRows, samplePoses } = await import(/* @vite-ignore */ '/src/export/csv.ts')
     const st = (window as any).__editor.getState(), tr = st.project.sequence.tracks.find((t: any) => t.kind === 'motion')
     const it = [...tr.items].sort((a: any, b: any) => a.start - b.start)[1]
     ;(window as any).__piece = it
     ;(window as any).__lead = restLead(st.project, st.defs, it)
     ;(window as any).__tail = restTailRows(st.project, st.defs, it) // the cut's 끝 기본자세 after the piece
-    ;(window as any).__text = exportItemCsv(st.project, st.defs, tr.actorId, it.id, 'world').text
+    ;(window as any).__text = posesToCsv(samplePoses(st.project, st.defs, tr.actorId, it.id, 'world'), st.defs.g1) // world root: placed where the piece plays
   })
   const text = await page.evaluate(() => (window as any).__text as string)
   await page.getByRole('button', { name: '메뉴', exact: true }).click()
