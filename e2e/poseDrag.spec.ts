@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test'
 
-// 3D 끌기 (spec 2026-10-19-pose-panel-design.md §3): drag a robot on the main view to move its 무대 X·Y at the frame;
+// 3D 끌기 (spec 2026-10-19-pose-panel-design.md §3): drag a robot on the main view to move its placement (no keys);
 // a click (no move) still selects the joint, empty-space drags stay the camera's.
-test('drag the robot: body x/y moves, camera stays, Ctrl+Z restores; a click selects a joint', async ({ page }) => {
+test('drag the robot: placement moves, camera stays, Ctrl+Z restores; a click selects a joint', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', e => errors.push(String(e)))
   await page.goto('/')
@@ -22,10 +22,15 @@ test('drag the robot: body x/y moves, camera stays, Ctrl+Z restores; a click sel
     const b = (await canvas.boundingBox())!
     return [b.x + (nx + 1) / 2 * b.width, b.y + (1 - ny) / 2 * b.height] as const
   }
-  const body = () => page.evaluate(id => { const b = (window as any).__editor.getState().poseAt(id).body; return [b.x, b.y] as number[] }, id)
+  const body = () => page.evaluate(id => { const p = (window as any).__editor.getState().project.actors.find((a: any) => a.id === id).placement; return [p.x, p.y] as number[] }, id)
+  const keys = () => page.evaluate(() => {
+    const p = (window as any).__editor.getState().project
+    return [...Object.values<any>(p.clips).flatMap(c => [c.channels, c.offset ?? {}]), ...p.sequence.tracks.flatMap((t: any) => t.items.map((i: any) => i.offset ?? {}))]
+      .reduce((n, ch) => n + Object.values<any>(ch).reduce((m, cv) => m + cv.keys.length, 0), 0) as number
+  })
   const cam = () => page.evaluate(() => (window as any).__stage.camTarget() as number[])
 
-  const b0 = await body(), c0 = await cam()
+  const b0 = await body(), c0 = await cam(), k0 = await keys()
   const [x, y] = await pelvis()
   await page.mouse.move(x, y)
   await page.mouse.down()
@@ -34,6 +39,7 @@ test('drag the robot: body x/y moves, camera stays, Ctrl+Z restores; a click sel
   const b1 = await body()
   expect(Math.max(Math.abs(b1[0] - b0[0]), Math.abs(b1[1] - b0[1]))).toBeGreaterThan(0.05)
   expect(await cam()).toEqual(c0)
+  expect(await keys()).toBe(k0)
 
   await page.keyboard.press('Control+z')
   await expect.poll(body).toEqual(b0)

@@ -489,23 +489,21 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       }
       return best
     }
-    // 3D 끌기 (main view): the robot's 무대 X·Y can be written at this frame (the gizmo's lock rules for root.x)
+    // 3D 끌기 (main view): moves the actor's placement (no keys, no 수정 층)
     const canDrag = (id: string) => {
-      const s = store.getState(), t = editTarget(s, id), it = t && targetItem(s, t.itemId)
-      if (!t || !it || s.playing || s.clipEdit || offStage(s, id) || trackLocked(s.project, id) || clipLocked(s.project, t.clipId) || editLock(s, id, 'root.x')) return false
-      if (!s.editing && s.itemPreview === t.itemId) return false // edited in the clip preview
-      return s.frame >= it.start && s.frame < it.start + it.trimOut - it.trimIn // off the piece / its lead-in or 끝 기본자세
+      const s = store.getState()
+      return !!actorOf(s, id) && !s.playing && !s.clipEdit && !offStage(s, id) && !trackLocked(s.project, id)
     }
     const floor = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), hitP = new THREE.Vector3()
     // grab candidate from pointerdown on a draggable robot; `on` once it moved past 4 px
-    let grab: { id: string; at: THREE.Vector3; pos: THREE.Vector3; quat: THREE.Quaternion; on: boolean } | null = null
+    let grab: { id: string; at: THREE.Vector3; x: number; y: number; on: boolean } | null = null
     const onDown = (ev: PointerEvent) => {
       down = [ev.clientX, ev.clientY]; onGizmo = tc.axis !== null; el.focus()
       if (!mainView || onGizmo || ev.button !== 0) return
       const b = pick(ev)
       if (!b || !canDrag(b.id) || !ray.ray.intersectPlane(floor, hitP)) return
-      const o = entries.get(b.id)!.rig.root
-      grab = { id: b.id, at: hitP.clone(), pos: o.position.clone(), quat: o.quaternion.clone(), on: false }
+      const pl = actorOf(store.getState(), b.id)!.placement
+      grab = { id: b.id, at: hitP.clone(), x: pl.x, y: pl.y, on: false }
       orbit.enabled = false // on a robot: no camera
     }
     let hoverEv: PointerEvent | null = null, hoverRaf = 0
@@ -521,8 +519,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       }
       pick(ev)
       if (!ray.ray.intersectPlane(floor, hitP)) return
-      const r = toClipRoot(grab.id, hitP.sub(grab.at).add(grab.pos).setZ(grab.pos.z), grab.quat)
-      store.getState().editPose(grab.id, { 'root.x': r.x, 'root.y': r.y })
+      store.getState().setPlacement(grab.id, { x: grab.x + hitP.x - grab.at.x, y: grab.y + hitP.y - grab.at.y })
     }
     const onCancel = () => {
       const g = grab

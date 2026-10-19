@@ -44,6 +44,8 @@ export interface EditorState {
   comparePanes: string[] // clip ids shown in preview-only compare panes (max 2): not undoable, not saved, pruned when clips go away
   /** 구간 프리뷰: sequence frames [from, to) looping in their own pane (right-drag on the sequence, user); null = closed. Not saved. */
   spanPreview: [number, number] | null; setSpanPreview(r: [number, number] | null): void
+  /** 배치 이동 toggle (editor state, not saved): on = the playhead sits at the selected GO2's track end - 1. */
+  walkMode: boolean; setWalkMode(on: boolean): void
   openComparePane(clipId: string): void; closeComparePane(clipId: string): void
   itemPreview: string | null // item id looping in the clip preview pane: not undoable, not saved, pruned when the item goes away
   /** The clip preview's own playhead (sequence frames, from the piece's lead-in start; independent of `frame`, user) and whether it
@@ -552,6 +554,14 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       comparePanes: [],
       openComparePane: id => set(s => s.comparePanes.includes(id) || !s.project.clips[id] ? s : { comparePanes: [...s.comparePanes, id].slice(-2) }),
       closeComparePane: id => set(s => ({ comparePanes: s.comparePanes.filter(x => x !== id) })),
+      walkMode: false,
+      setWalkMode: on => {
+        set({ walkMode: on })
+        if (!on) return
+        const s = get(), a = actorOf(s, s.sel.actorId), go2 = a?.robot === 'go2' ? a : s.project.actors.find(x => x.robot === 'go2')
+        const items = s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === go2?.id)?.items ?? []
+        if (items.length) set({ frame: Math.max(...items.map(i => i.start + itemLen(i))) - 1 })
+      },
       spanPreview: null, setSpanPreview: r => set({ spanPreview: r && r[1] > r[0] ? [Math.max(0, Math.round(r[0])), Math.round(r[1])] : null }),
       itemPreview: null, compareOverlay: false,
       setCompareOverlay: on => set({ compareOverlay: on }),

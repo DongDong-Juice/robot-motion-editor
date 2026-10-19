@@ -2,6 +2,7 @@ import { loadDef } from '../test/defs'
 import { beforeEach, expect, test } from 'vitest'
 
 import type { RobotDefs } from '../model/evaluate'
+import { exportItemCsv } from '../export/csv'
 import { createEditorStore, editLock, editTarget, gizmoLock } from './store'
 import { makeKey } from '../model/curve'
 import { withDefaults } from '../physics/settings'
@@ -988,4 +989,23 @@ test('stageShown defaults on and toggles', () => {
   expect(s().stageShown).toBe(true)
   s().setStageShown(false)
   expect(s().stageShown).toBe(false)
+})
+
+test('walkMode: default off; on moves the playhead to the GO2 track end - 1', () => {
+  const go2 = go2Setup([{ start: 10, trimIn: 0, trimOut: 50 }])
+  expect(s().walkMode).toBe(false)
+  s().setWalkMode(true)
+  expect(s().walkMode).toBe(true)
+  expect(s().frame).toBe(59)
+  s().setFrame(3); s().select(go2)
+  s().setWalkMode(true)
+  expect(s().frame).toBe(59)
+})
+
+test('moving placement leaves the local-root CSV unchanged', () => {
+  const t = s().project.sequence.tracks.find(t => t.actorId === actor)!, it = t.items[0]
+  const csv = () => exportItemCsv(s().project, defs, actor, it.id, 'local').text
+  const a = csv()
+  s().setPlacement(actor, { x: 1.5, y: -2 })
+  expect(csv()).toBe(a)
 })
