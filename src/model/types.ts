@@ -13,4 +13,4 @@ export interface Track { id: string; kind: 'video' | 'motion'; actorId?: string;
 export interface Media { id: string; name: string; durationF: number; bin?: string /* 폴더 (virtual, media tab) */ }
 export interface Sequence { tracks: Track[]; markers: { f: number; name: string }[]; inF: number | null; outF: number | null }
 export interface Project { version: 1 | 2; fps: 60; actors: Actor[]; clips: Record<string, Clip>; media: Media[]; bins?: Bin[]; sequence: Sequence; physics?: Partial<PhysicsSettings>; stage?: StageSize }
-export interface StageSize { width: number; depth: number } // 무대 size in m (x = width, z = depth)
+export interface StageSize { width: number; depth: number } // 무대 size in m (width = world Y length, depth = world X length; audience at +X)
