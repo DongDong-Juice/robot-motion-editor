@@ -557,8 +557,9 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       walkMode: false,
       setWalkMode: on => {
         set({ walkMode: on })
-        if (!on) return
-        const s = get(), a = actorOf(s, s.sel.actorId), go2 = a?.robot === 'go2' ? a : s.project.actors.find(x => x.robot === 'go2')
+        const s = get()
+        if (!on || s.editing || s.clipEdit) return // sequence frames only mean something in the sequence view
+        const a = actorOf(s, s.sel.actorId), go2 = a?.robot === 'go2' ? a : s.project.actors.find(x => x.robot === 'go2')
         const items = s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === go2?.id)?.items ?? []
         if (items.length) set({ frame: Math.max(...items.map(i => i.start + itemLen(i))) - 1 })
       },

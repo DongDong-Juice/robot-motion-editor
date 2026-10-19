@@ -1,8 +1,9 @@
 import { posesToClip } from '../export/importCsv'
 import { rebasePose, type Pose, type RobotDefs } from '../model/pose'
 import { quatMul, quatYaw, yawQuat } from '../model/rootMath'
-import { applyXf, blendPose } from '../model/sequence'
-import type { Clip } from '../model/types'
+import { evaluate } from '../model/evaluate'
+import { advanceXf, applyXf, blendPose, itemLen } from '../model/sequence'
+import type { Clip, Project } from '../model/types'
 import { GO2_BLOCKS, type Block } from './blocks'
 import { blockActual, blockPoses, SEAM } from './build'
 
@@ -79,4 +80,16 @@ export function walkToClip(rot: Template, move: Template, start: { x: number; y:
   }
   if (!poses) return { error: `이 거리는 너무 가깝습니다 (최소 약 ${MIN_WALK.toFixed(1)} m)` }
   return { clip: posesToClip(poses, move.fps, 'go2', defs, `Walk_${d.toFixed(1)}m_${Math.round(theta)}deg`), d, theta }
+}
+
+/** Frame after the actor's last motion item (0 = empty track). */
+export const trackEnd = (p: Project, id: string) => Math.max(0, ...(p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === id)?.items ?? []).map(i => i.start + itemLen(i)))
+
+/** World pose a clip appended at the track end starts from: the last frame advanced one frame at its velocity, as stitchTransforms does for a cut. */
+export function walkStart(p: Project, defs: RobotDefs, id: string): { x: number; y: number; yaw: number } {
+  const end = trackEnd(p, id)
+  if (!end) return p.actors.find(a => a.id === id)!.placement
+  const xf = (f: number) => { const q = evaluate(p, defs, id, f); return { x: q.rootPos[0], y: q.rootPos[1], yaw: quatYaw(q.rootQuat) } }
+  const last = xf(end - 1)
+  return end > 1 ? advanceXf(xf(end - 2), last) : last
 }

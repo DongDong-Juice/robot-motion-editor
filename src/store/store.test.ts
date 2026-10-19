@@ -1002,6 +1002,19 @@ test('walkMode: default off; on moves the playhead to the GO2 track end - 1', ()
   expect(s().frame).toBe(59)
 })
 
+test('walkMode on in the clip view or clip edit leaves the playhead alone', () => {
+  const go2 = go2Setup([{ start: 10, trimIn: 0, trimOut: 50 }])
+  s().select(go2); s().setFrame(3)
+  s().openItem(s().project.sequence.tracks.find(t => t.actorId === go2)!.items[0].id)
+  s().setFrame(3)
+  s().setWalkMode(true)
+  expect(s().frame).toBe(3)
+  s().closeItem(); s().setWalkMode(false)
+  s().openClipEdit(c); s().setFrame(3)
+  s().setWalkMode(true)
+  expect(s().frame).toBe(3)
+})
+
 test('moving placement leaves the local-root CSV unchanged', () => {
   const t = s().project.sequence.tracks.find(t => t.actorId === actor)!, it = t.items[0]
   const csv = () => exportItemCsv(s().project, defs, actor, it.id, 'local').text

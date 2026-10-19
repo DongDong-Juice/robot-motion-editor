@@ -103,3 +103,16 @@ test('배치 이동 on: dragging a G1 still moves its placement', async ({ page 
   const p1 = await pl()
   expect(Math.hypot(p1[0] - p0[0], p1[1] - p0[1])).toBeGreaterThan(0.05)
 })
+
+test('배치 이동 button is hidden in the clip view', async ({ page }) => {
+  await boot(page)
+  await addActor(page, 'g1')
+  await expect(toggle(page)).toBeVisible()
+  await page.evaluate(() => {
+    const s = (window as any).__editor.getState()
+    s.openItem(s.project.sequence.tracks.find((t: any) => t.items.length).items[0].id)
+  })
+  await expect(toggle(page)).toHaveCount(0)
+  await page.evaluate(() => (window as any).__editor.getState().closeItem())
+  await expect(toggle(page)).toBeVisible()
+})

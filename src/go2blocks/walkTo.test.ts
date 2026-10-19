@@ -1,13 +1,15 @@
 import { readFileSync } from 'node:fs'
 import { expect, test } from 'vitest'
 
-import { parseCsvPoses } from '../export/importCsv'
+import { parseCsvPoses, posesToClip } from '../export/importCsv'
 import { evaluateClip, type RobotDefs } from '../model/pose'
 import { quatYaw } from '../model/rootMath'
 import { loadDef } from '../test/defs'
 import { blockFile, GO2_BLOCKS } from './blocks'
 import { blockActual } from './build'
-import { MIN_WALK, walkToClip, type Template } from './walkTo'
+import { evaluate } from '../model/evaluate'
+import { createEditorStore } from '../store/store'
+import { MIN_WALK, trackEnd, walkStart, walkToClip, type Template } from './walkTo'
 
 const defs = { go2: loadDef('go2') } as RobotDefs, def = defs.go2
 const tpl = (id: string): Template => parseCsvPoses(readFileSync(new URL(`../../public/go2-blocks/${blockFile(id)}.csv`, import.meta.url), 'utf8'), defs, undefined)
@@ -36,4 +38,24 @@ test('too close → error with the minimum distance; MIN_WALK = 0.8 × shortest 
   expect(r).toEqual({ error: `이 거리는 너무 가깝습니다 (최소 약 ${MIN_WALK.toFixed(1)} m)` })
   const mv = GO2_BLOCKS.find(b => b.id === 'move')!
   expect(MIN_WALK).toBeCloseTo(0.8 * blockActual(mv, move.poses, 0)!.actual, 2)
+})
+
+test('a second walk appended after one that ends moving still lands on its target (start extrapolated like the cut stitch)', () => {
+  const st = createEditorStore(defs as any), s = () => st.getState()
+  s().addActor('go2')
+  const id = s().project.actors.at(-1)!.id
+  // previous piece: the Move log cut mid-stride, so it ends at speed
+  const mv = posesToClip(move.poses, move.fps, 'go2', defs, 'MoveCut')
+  s().appendClip(id, mv)
+  const p = structuredClone(s().project), it = p.sequence.tracks.find(t => t.actorId === id)!.items.at(-1)!
+  it.trimOut = Math.floor(mv.length / 2)
+  s().loadProject(p, null)
+  for (const [dx, dy] of [[2, 0.5], [1.5, 2]]) {
+    const from = walkStart(s().project, defs, id), target = { x: from.x + dx, y: from.y + dy }
+    const r = walkToClip(rot, move, from, target, defs)
+    if ('error' in r) throw new Error(r.error)
+    expect(s().appendClip(id, r.clip)).toBeTruthy()
+    const e = evaluate(s().project, defs, id, trackEnd(s().project, id) - 1)
+    expect(Math.hypot(e.rootPos[0] - target.x, e.rootPos[1] - target.y)).toBeLessThan(0.01)
+  }
 })

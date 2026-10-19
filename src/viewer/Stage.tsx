@@ -15,13 +15,12 @@ import { actorOf, CLIP_ACTOR, clipLocked, editingItem, editTarget, getEditor, gi
 import { sequenceEnd } from '../transport'
 import { cancelDrag, trackDrag } from '../timeline/drag'
 import { loadTemplate } from '../go2blocks/Go2BlockPanel'
-import { walkToClip } from '../go2blocks/walkTo'
+import { trackEnd, walkStart, walkToClip } from '../go2blocks/walkTo'
 import { buildRobot, pivotAngle, type RobotRig } from './buildRobot'
 import type { RobotDef } from '../robot/types'
 import { followStep } from './follow'
 import { disposeStage, makeStage } from './stageFloor'
 
-const trackEnd = (p: Project, id: string) => Math.max(0, ...(p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === id)?.items ?? []).map(i => i.start + itemLen(i)))
 const css = (n: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim()
 const EXTENT = 5
 const TARGET = new THREE.Vector3(0.75, 0, 0.6)
@@ -71,6 +70,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
   const stageStore = useEditor(s => s.stageShown)
   const stageOn = main ? stageStore : stageLocal
   const walk = useEditor(s => s.walkMode)
+  const seqView = useEditor(s => !s.editing && !s.clipEdit)
   // 배치 이동 notices (too close, locked, logs not loaded), 3 s
   const [walkMsg, setWalkMsgState] = useState('')
   const msgTimer = useRef(0)
@@ -513,8 +513,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
     // there (trackDrag, so Ctrl+Z mid-drag cancels it)
     let walking = false
     const walkDrag = (id: string, ev: MouseEvent) => {
-      const s = store.getState(), end = trackEnd(s.project, id), p = end ? evaluate(s.project, s.defs, id, end - 1) : null
-      const start = p ? { x: p.rootPos[0], y: p.rootPos[1], yaw: quatYaw(p.rootQuat) } : actorOf(s, id)!.placement
+      const s = store.getState(), start = walkStart(s.project, s.defs, id)
       const color = css('--accent') || '#F0A43A'
       const line = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({ color, dashSize: 0.1, gapSize: 0.06 }))
       const ring = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.16, 32), new THREE.MeshBasicMaterial({ color }))
@@ -557,7 +556,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       if (!grab.on) {
         if (Math.hypot(ev.clientX - down![0], ev.clientY - down![1]) <= 4) return
         const s = store.getState()
-        if (s.walkMode && actorOf(s, grab.id)!.robot === 'go2') { const id = grab.id; grab = null; return walkDrag(id, ev) }
+        if (s.walkMode && !s.editing && !s.clipEdit && actorOf(s, grab.id)!.robot === 'go2') { const id = grab.id; grab = null; return walkDrag(id, ev) }
         grab.on = true; s.beginGesture(); dom.style.cursor = 'grabbing'
       }
       pick(ev)
@@ -700,7 +699,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       <div className="pv-tools">
         <button className="pv-btn" aria-pressed={follow} onClick={() => setFollow(f => !f)}>로봇 따라가기</button>
         <button className="pv-btn" aria-pressed={stageOn} onClick={() => main ? getEditor().getState().setStageShown(!stageOn) : setStageLocal(v => !v)} title="무대와 객석 방향을 보여 줍니다">무대</button>
-        {main && <button className="pv-btn" aria-pressed={walk} onClick={() => { if (!walk) { loadTemplate('rotate').catch(() => {}); loadTemplate('move').catch(() => {}) } getEditor().getState().setWalkMode(!walk) }} title="GO2를 끌어 놓은 곳까지 걷는 클립을 트랙 끝에 붙입니다">배치 이동</button>}
+        {main && seqView && <button className="pv-btn" aria-pressed={walk} onClick={() => { if (!walk) { loadTemplate('rotate').catch(() => {}); loadTemplate('move').catch(() => {}) } getEditor().getState().setWalkMode(!walk) }} title="GO2를 끌어 놓은 곳까지 걷는 클립을 트랙 끝에 붙입니다">배치 이동</button>}
         {walkMsg && <span className="pv-msg" role="status">{walkMsg}</span>}
         {cid && <button className="pv-btn" aria-pressed={trail} onClick={() => setTrail(v => !v)} title="로봇 골반이 지나간 바닥 경로를 선으로 보여 줍니다">경로 표시</button>}
         {children}
