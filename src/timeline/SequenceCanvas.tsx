@@ -6,7 +6,7 @@ import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP, itemLead, itemTail, previewRange,
 import { SEAM_MAX } from '../model/seam'
 import type { Item, Track } from '../model/types'
 import { itemSeam, offsetKeyCount } from '../model/itemClip'
-import { seqFlash, tv } from './viewState'
+import { seqFlash, seqFocus, tv } from './viewState'
 import { edgeScroll, followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { sequenceEnd } from '../transport'
 import { drawRuler, hitMarker, LABEL_W, RULER_H } from './ruler'
@@ -408,6 +408,20 @@ export default function SequenceCanvas() {
       }, () => { lenDrag = null; schedule() })
     }
 
+    // a far-off piece (user: hard to find the block): scroll the lanes so it (with its lead-in / 끝 기본자세) is in view
+    const focusPiece = (it: Item) => {
+      const st = ed.getState(), [lo, hi] = previewRange(st.project, st.defs, it.id) ?? [it.start, it.start + itemLen(it)]
+      const vis = (W - SB_W - LABEL_W) / tv.ppf
+      if (lo < tv.scrollF || hi > tv.scrollF + vis) { markUserScroll(); tv.scrollF = Math.max(0, hi - lo < vis * 0.9 ? lo - (vis - (hi - lo)) / 2 : lo - vis * 0.05) }
+      // its lane (else its track row) fully inside the rows area, e.g. a piece at the bottom of a long list
+      const r = layout().find(r => r.it?.id === it.id) ?? layout().find(r => !r.it && r.t.items.some(i => i.id === it.id))
+      const bottom = H - hbH()
+      if (r && r.y < RULER_H) scrollY = scrollTo = Math.max(0, scrollY - (RULER_H - r.y))
+      else if (r && r.y + r.h > bottom) scrollY = scrollTo = Math.min(maxScroll(), scrollY + (r.y + r.h - bottom))
+      schedule()
+    }
+    seqFocus.fn = id => { const it = ed.getState().project.sequence.tracks.flatMap(t => t.items).find(i => i.id === id); if (it) focusPiece(it) }
+
     // right-drag: a 구간 프리뷰 of that span opens and loops (user); a right-click without a drag keeps its menu (onContext)
     let loopDragged = false
     const loopDrag = (e: MouseEvent) => {
@@ -452,12 +466,16 @@ export default function SequenceCanvas() {
       if (r?.it && x < LABEL_W && Math.abs(x - PLAY_X) <= ICON_HIT / 2) { // play / pause that piece's loop in the clip preview
         if (s.itemPreview === r.it.id) s.setPreviewPlaying(!s.previewPlaying)
         else s.openItemPreview(r.it.id, true)
+        s.selectItem(r.it.id)
+        if (r.t.actorId) s.select(r.t.actorId)
+        focusPiece(r.it)
         return
       }
       if (r?.it && x < LABEL_W) { // lane label: select the piece and preview it
         s.selectItem(r.it.id)
         if (r.t.actorId) s.select(r.t.actorId)
         s.openItemPreview(r.it.id, true)
+        focusPiece(r.it)
         return
       }
       if (x < LABEL_W) {
@@ -627,7 +645,7 @@ export default function SequenceCanvas() {
     canvas.addEventListener('dragleave', clearGhost)
     addEventListener('dragend', clearGhost)
     return () => {
-      seqFlash.fn = null
+      seqFlash.fn = null; seqFocus.fn = null
       ro.disconnect(); document.fonts?.removeEventListener('loadingdone', schedule); unsub(); unsubMedia(); unsubPhys(); hover.stop(); edge.stop(); cancelAnimationFrame(raf); clearTimeout(timer)
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)

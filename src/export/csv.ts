@@ -93,12 +93,13 @@ export function csvFileName(p: Project, actorId: string, itemId: string, taken: 
   return name
 }
 
-// One item's CSV: file name, text and validation warnings (the same rows for the multi export and the single export).
-export function exportItemCsv(p: Project, defs: RobotDefs, actorId: string, itemId: string, mode: RootMode, taken = new Set<string>(), project?: string):
+// One item's CSV: file name, text and validation warnings (the same rows for the multi export and the single export). Local root
+// (first frame at the origin facing +x): the 월드 option was removed (user: unused).
+export function exportItemCsv(p: Project, defs: RobotDefs, actorId: string, itemId: string, taken = new Set<string>(), project?: string):
   { name: string; text: string; warnings: Warning[] } {
   const robot = p.actors.find(a => a.id === actorId)?.robot
   if (!robot) throw new Error(`unknown actor ${actorId}`)
-  const poses = samplePoses(p, defs, actorId, itemId, mode)
+  const poses = samplePoses(p, defs, actorId, itemId, 'local')
   return { name: csvFileName(p, actorId, itemId, taken, project), text: posesToCsv(poses, defs[robot]), warnings: validatePoses(poses, defs[robot], itemFrameRange(findItem(p, itemId)).from - restLead(p, defs, findItem(p, itemId))) }
 }
 

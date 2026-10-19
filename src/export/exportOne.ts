@@ -6,11 +6,11 @@ import { runItems, whenSettled } from '../physics/runItem'
 import type { Project } from '../model/types'
 import type { RobotDefs } from '../model/evaluate'
 
-// Single-item export (root mode 로컬). Returns the message to show, or null when the user cancelled.
+// Single-item export (local root, like every export). Returns the message to show, or null when the user cancelled.
 export async function exportOne(project: Project, defs: RobotDefs, actorId: string, itemId: string,
   ask: (m: string) => boolean = m => window.confirm(m), title?: string): Promise<string | null> {
   try {
-    const { name, text, warnings } = exportItemCsv(project, defs, actorId, itemId, 'local', undefined, title)
+    const { name, text, warnings } = exportItemCsv(project, defs, actorId, itemId, undefined, title)
     if (needsRun(project, defs, actorId, itemId, usePhysics.getState().byItem[itemId])) await runItems([{ actorId, itemId }])
     await whenSettled(itemId) // already queued/running (e.g. track run): wait for it
     const st = usePhysics.getState().byItem[itemId]

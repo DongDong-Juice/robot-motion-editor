@@ -10,7 +10,7 @@ import type { Robot } from './sim'
 
 export function csvKey(p: Project, defs: RobotDefs, actorId: string, itemId: string) {
   const robot = p.actors.find(a => a.id === actorId)!.robot
-  const { text } = exportItemCsv(p, defs, actorId, itemId, 'local')
+  const { text } = exportItemCsv(p, defs, actorId, itemId)
   return { robot, text, key: cacheKey(robot, text, withDefaults(p.physics)) }
 }
 export function itemInput(p: Project, defs: RobotDefs, actorId: string, itemId: string): { robot: Robot; rows: Float64Array[]; key: string } {

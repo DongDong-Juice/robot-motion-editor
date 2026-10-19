@@ -39,7 +39,7 @@ test('lead-in settings: auto 관성 reason, hand-set lengths change the CSV, 자
     const st = (window as any).__editor.getState(), tr = st.project.sequence.tracks.find((t: any) => t.kind === 'motion')
     const it = [...tr.items].sort((a: any, b: any) => a.start - b.start)[1]
     // rows up to the piece's end: the cut also adds its 끝 기본자세 after it (restTailRows), not counted here
-    return { rows: exportItemCsv(st.project, st.defs, tr.actorId, it.id, 'local').text.split('\n').length - 1 - restTailRows(st.project, st.defs, it), len: it.trimOut - it.trimIn,
+    return { rows: exportItemCsv(st.project, st.defs, tr.actorId, it.id).text.split('\n').length - 1 - restTailRows(st.project, st.defs, it), len: it.trimOut - it.trimIn,
       lead: restLead(st.project, st.defs, it) as number, hold: it.restHold, blend: it.restBlend, inertia: it.inertia }
   })
   const auto = await state()

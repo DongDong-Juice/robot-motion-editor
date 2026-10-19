@@ -40,7 +40,7 @@ npm run serve      # 배포: dist + 프로젝트 허브 API (PORT 기본 8080, P
 - 관절 열 순서 = `RobotDef.joints` = URDF revolute 순서 (GO2: FL, FR, RL, RR — 사용자 확정).
 - 가져오기 경로: 메뉴 ▸ CSV 가져오기, 또는 목록 패널에 CSV 파일을 끌어다 놓기(`importDroppedFiles`, 같은 처리·CSV 아닌 파일은 건너뛰고 목록에 표시). 목록의 `폴더 가져오기`(`importCsvFolder`, 사용자): 고른 폴더(하위 폴더 포함)의 CSV를 같은 이름의 목록 폴더에만 넣음(타임라인에는 안 놓음).
 - 가져오기는 헤더 이름으로 열 매칭, DOF로 로봇 판별, fps 30이면 60으로 리샘플. 헤더 없는 36/19열 구형식도 지원.
-- 내보내기 루트: 로컬(첫 프레임 x·y·yaw = 0, 기본) / 월드.
+- 내보내기 루트: 항상 로컬(첫 프레임 x·y·yaw = 0). 월드 선택은 없앰(사용자: 안 씀). 내보내기 창은 G1·GO2 상자가 따로(목록 max-height 300px, 넘치면 세로 스크롤).
 - 파일 이름: GO2 조각은 모두 `<프로젝트>-GO2-<n>.csv`(n = 그 트랙 시작 순, 라이브러리 블럭 포함, 사용자). G1은 `<G1, 같은 로봇 액터가 여럿이면 액터 이름>_<클립>.csv`. 한 클립을 여러 조각이 쓰면(잘린 조각) `<프로젝트>-<G1|GO2>-<n>.csv`(n = 시작 순, 조각 이름과 같음). 겹치면 `_2`…
 - 테스트 예제: `assets/examples/`(합성 G1·GO2 CSV 형식별·경고·오류 파일 + 예제 프로젝트, README 참고). `node tools/make_examples.mjs`로 다시 생성.
 - 샘플: `assets/data/Track1_원본_합본.csv`(12,638행, G1). `assets/video/Track1.mov`(참조 영상, 395 MB)는 **git 미포함** — 원본 PC에서 따로 옮길 것.
