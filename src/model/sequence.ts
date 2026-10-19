@@ -15,7 +15,7 @@ export function pieceTag(t: Track, it: Item): string {
   return ps.length > 1 ? `#${ps.findIndex(i => i.id === it.id) + 1} · F${it.trimIn}–${it.trimOut}` : ''
 }
 /** Project name for piece names: the saved file name without its extension, 'Untitled' before the first save. */
-export const projectTitle = (fileName: string | null) => fileName?.replace(/(\.motion)?\.json$/i, '') || 'Untitled'
+export const projectTitle = (fileName: string | null) => fileName?.replace(/(\.mproj|(\.motion)?\.json)$/i, '') || 'Untitled'
 /** Display name of an item: "<project>-<G1|GO2>-<n>" for a cut piece (n = pieceTag's #n), the clip name for a lone item. */
 export const pieceName = (t: Track, it: Item, clip: Pick<Clip, 'name' | 'robot'> | undefined, project: string) =>
   pieceTag(t, it) ? `${project}-${clip?.robot.toUpperCase() ?? ''}-${pieceTag(t, it).split(' · ')[0].slice(1)}` : clip?.name ?? ''

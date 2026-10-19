@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 test.use({ storageState: { cookies: [], origins: [] } }) // show the start screen
 
 test('start screen: create on the hub, save, reopen from the list, conflict asks before overwriting', async ({ page }) => {
-  const name = `e2e-${Date.now()}`, file = `${name}.motion.json`
+  const name = `e2e-${Date.now()}`, file = `${name}.mproj`
   await page.goto('/')
   const start = page.getByRole('dialog', { name: '프로젝트' })
   await expect(start).toBeVisible({ timeout: 30000 })
@@ -58,4 +58,29 @@ test('start screen: create on the hub, save, reopen from the list, conflict asks
   await page.keyboard.press('Control+o')
   await start.getByRole('button', { name: '닫기' }).click()
   await expect(start).toHaveCount(0)
+})
+
+test('an old *.motion.json on the hub is listed and opens; Ctrl+S writes <name>.mproj beside it', async ({ page }) => {
+  const name = `e2e-old-${Date.now()}`, old = `${name}.motion.json`, neu = `${name}.mproj`
+  await page.goto('/')
+  const start = page.getByRole('dialog', { name: '프로젝트' })
+  await expect(start).toBeVisible({ timeout: 30000 })
+  const proj = await page.evaluate(async () => {
+    const { serializeProject } = await import(/* @vite-ignore */ '/src/model/projectFile.ts')
+    const { emptyProject } = await import(/* @vite-ignore */ '/src/model/defaults.ts')
+    return serializeProject(emptyProject())
+  })
+  expect((await page.request.put(`/api/projects/${encodeURIComponent(old)}?create=1`, { data: proj })).ok()).toBe(true)
+  await page.reload()
+  await expect(start).toBeVisible({ timeout: 30000 })
+  await start.getByLabel('검색').fill(name)
+  await start.getByRole('listitem').filter({ hasText: old }).click()
+  await expect(start).toHaveCount(0)
+  await expect(page.locator('.mb-title')).toHaveText(neu)
+  await page.evaluate(() => (window as any).__editor.getState().addActor('g1'))
+  await page.locator('#stage').click()
+  await page.keyboard.press('Control+s')
+  await expect(page.locator('.mb-msg')).toHaveText('서버에 저장했습니다')
+  expect((await (await page.request.get(`/api/projects/${encodeURIComponent(neu)}`)).json()).actors).toHaveLength(1)
+  expect((await (await page.request.get(`/api/projects/${encodeURIComponent(old)}`)).json()).actors).toHaveLength(0) // the old file stays as it was
 })

@@ -59,7 +59,7 @@ export default function StartScreen({ onDone, closable = false, adding: addFirst
                 <button onClick={() => setAdding(false)}>취소</button>
               </div>
               <div className={err ? 'hub-err' : 'hub-dim'} role={err ? 'alert' : undefined}>
-                {err || (list === null ? '서버에 연결할 수 없어 저장은 이 PC에 합니다' : '서버 폴더에 <이름>.motion.json으로 만듭니다')}
+                {err || (list === null ? '서버에 연결할 수 없어 저장은 이 PC에 합니다' : '서버 폴더에 <이름>.mproj로 만듭니다')}
               </div>
             </div>
           </div>

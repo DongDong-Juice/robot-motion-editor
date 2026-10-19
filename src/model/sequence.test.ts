@@ -160,5 +160,6 @@ test('pieceTag: cut pieces of one clip are numbered by start with their clip fra
   expect(pieceName(t, t.items[2], { name: 'Other', robot: 'g1' }, 'proj')).toBe('Other')
   const { projectTitle } = await import('./sequence')
   expect(projectTitle('dance.motion.json')).toBe('dance')
+  expect(projectTitle('dance.mproj')).toBe('dance')
   expect(projectTitle(null)).toBe('Untitled')
 })

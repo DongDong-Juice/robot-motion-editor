@@ -1,9 +1,9 @@
-// Project hub API over one server folder: list / read / write `*.motion.json`. Shared by the Vite dev server and server/index.mjs.
+// Project hub API over one server folder: list / read / write `*.mproj` (older `*.motion.json` still listed and read). Shared by the Vite dev server and server/index.mjs.
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
 const MAX = 200 * 1024 * 1024
-const NAME = /^[^/\\:*?"<>|]+\.motion\.json$/
+const NAME = /^[^/\\:*?"<>|]+\.(mproj|motion\.json)$/
 const ok = name => NAME.test(name) && !name.includes('..')
 
 function send(res, status, body, headers = {}) {
