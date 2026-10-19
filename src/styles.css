@@ -205,7 +205,11 @@ body {
 .exp fieldset { border: 1px solid var(--line); margin: 0 0 8px; }
 .exp-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
 .exp-dim { color: var(--dim); font-variant-numeric: tabular-nums; }
-.exp-group { margin: 8px 0 2px; color: var(--dim); }
+.exp-group { margin: 8px 0 2px; color: var(--dim); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.exp-items { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+.exp-items > legend { grid-column: 1 / -1; }
+.exp-item .exp-one { margin-left: auto; visibility: hidden; }
+.exp-item:hover .exp-one, .exp-item:focus-within .exp-one { visibility: visible; }
 /* 프로젝트 팝업 (허브) */
 .hub { width: min(960px, 92vw); height: min(640px, 86vh); padding: 0; border: 1px solid var(--line); border-radius: 6px; box-sizing: border-box; overflow: hidden;
   background: var(--bg); color: var(--text); font-size: 14px; display: flex; flex-direction: column; }
