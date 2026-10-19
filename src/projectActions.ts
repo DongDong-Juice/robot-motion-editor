@@ -1,6 +1,6 @@
 import { hubRead, hubWrite, openTextFiles, saveTextFile, type SaveHandle } from './fileio'
 import { clearMedia } from './media/registry'
-import { parseProject, serializeProject } from './model/projectFile'
+import { parseProject, projectFileName, serializeProject } from './model/projectFile'
 import { getEditor } from './store/store'
 import { emptyProject } from './model/defaults'
 
@@ -33,17 +33,18 @@ export async function openHubProject(name: string): Promise<boolean> {
   try {
     const { text, mtime } = await hubRead(name)
     const s = getEditor().getState()
-    s.loadProject(parseProject(text, s.defs), name)
-    handle = null; hub = { name, mtime }
+    const as = projectFileName(name) // an old .motion.json: Ctrl+S writes <title>.mproj beside it
+    s.loadProject(parseProject(text, s.defs), as)
+    handle = null; hub = { name: as, mtime }
     clearMedia()
     say('열었습니다')
     return true
   } catch (e) { say(`열기 실패: ${why(e)}`); return false }
 }
 
-/** New empty project saved on the hub as "<title>.motion.json"; 'exists' when that name is taken. */
+/** New empty project saved on the hub as "<title>.mproj"; 'exists' when that name is taken. */
 export async function newHubProject(title: string): Promise<boolean | 'exists'> {
-  const name = `${title.trim()}.motion.json`
+  const name = projectFileName(title.trim())
   try {
     const r = await hubWrite(name, serializeProject(emptyProject()), { create: true })
     if ('error' in r) return 'exists'
@@ -57,15 +58,15 @@ export async function newHubProject(title: string): Promise<boolean | 'exists'> 
 /** No hub server: new empty project that only has a name until the first 저장 (saved to this PC). */
 export function newLocalProject(title: string) {
   newProjectFile()
-  getEditor().getState().markSaved(`${title.trim()}.motion.json`)
+  getEditor().getState().markSaved(projectFileName(title.trim()))
 }
 
 export async function openProject(): Promise<boolean> {
   try {
-    const [f] = await openTextFiles('.json', false)
+    const [f] = await openTextFiles('.mproj,.json', false)
     if (!f) return false
     const s = getEditor().getState()
-    s.loadProject(parseProject(f.text, s.defs), f.name)
+    s.loadProject(parseProject(f.text, s.defs), projectFileName(f.name)) // an old .motion.json saves as .mproj (the old file stays)
     handle = null; hub = null
     clearMedia()
     say('열었습니다')
@@ -93,7 +94,7 @@ export async function saveProject(as = false) {
       say('서버에 저장했습니다')
       return
     }
-    const r = await saveTextFile(text, s.fileName ?? 'project.motion.json', as ? null : handle)
+    const r = await saveTextFile(text, s.fileName ?? projectFileName('project'), as ? null : handle)
     if (!r) return
     handle = r.handle; hub = null
     if (getEditor().getState().project === snap) getEditor().getState().markSaved(r.name)

@@ -94,7 +94,7 @@ export async function saveTextFile(text: string, suggested: string, handle: Save
   const pick = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker
   if (typeof pick === 'function') {
     try {
-      return await write(await pick.call(window, { suggestedName: suggested, types: [{ description: 'Motion project', accept: { 'application/json': ['.motion.json'] } }] }))
+      return await write(await pick.call(window, { suggestedName: suggested, types: [{ description: 'Motion project', accept: { 'application/json': ['.mproj'] } }] }))
     } catch (e) {
       if (aborted(e)) return null
       throw e
@@ -165,7 +165,7 @@ export const revokeUrl = (url: string) => URL.revokeObjectURL(url)
 
 export const openMediaFiles = (multiple: boolean) => openFiles('video/*', { 'video/*': [] }, multiple)
 
-// Project hub (server/hub.mjs): one server folder of *.motion.json. null = no hub server (static hosting, offline).
+// Project hub (server/hub.mjs): one server folder of *.mproj (older *.motion.json still listed). null = no hub server (static hosting, offline).
 export interface HubEntry { name: string; mtime: number; size: number }
 const hubUrl = (name: string) => `/api/projects/${encodeURIComponent(name)}`
 const isJson = (r: Response) => r.headers.get('Content-Type')?.includes('json')

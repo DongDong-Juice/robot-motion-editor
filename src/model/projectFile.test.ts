@@ -7,7 +7,7 @@ import { emptyProject, newProject } from './defaults'
 import { makeKey } from './curve'
 import { samplePoses } from '../export/csv'
 import { validatePoses } from '../export/validate'
-import { parseProject, serializeProject } from './projectFile'
+import { parseProject, projectFileName, serializeProject } from './projectFile'
 
 const load = loadDef
 const defs: RobotDefs = { g1: load('g1'), go2: load('go2') }
@@ -255,4 +255,11 @@ test('malformed bins are rejected', () => {
   bad(p => { p.bins = {} }, 'bins')
   bad(p => { p.bins = [{ id: 'b', name: 'x', tab: 'block' }] }, 'bins.0')
   bad(p => { p.bins = [{ id: 'b', name: 'x', tab: 'clip' }, { id: 'b', name: 'y', tab: 'clip' }] }, '중복된 ID')
+})
+
+test('projectFileName: saves as .mproj; old .motion.json / .json names map to it', () => {
+  expect(projectFileName('dance')).toBe('dance.mproj')
+  expect(projectFileName('dance.mproj')).toBe('dance.mproj')
+  expect(projectFileName('dance.motion.json')).toBe('dance.mproj')
+  expect(projectFileName('dance.json')).toBe('dance.mproj')
 })
