@@ -50,6 +50,7 @@ test('GO2: parts in FR FL RR RL order, body rows, 무대 X + undo, 기본 서기
   await num.fill('4'); await num.press('Enter') // too far for the legs: refused, 안내
   await expect(panel.getByRole('status')).toHaveText('네 발을 고정한 채 더 움직일 수 없습니다')
   await expect.poll(bodyX).toBeCloseTo(x0, 3)
+  await expect(num).toHaveValue(x0.toFixed(3)) // the box shows the unchanged value, not the refused 4
   // 바닥 밀착 → 높이 disabled
   await panel.getByRole('checkbox', { name: '바닥 밀착 (높이 자동)' }).check()
   await expect(panel.getByRole('slider', { name: '높이 슬라이더' })).toBeDisabled()

@@ -72,7 +72,7 @@ export default function JointPanel() {
   const all = [...BODY.map(b => b[0]), ...v.sections.flatMap(x => x.rows.map(r => r.ch))] // ↑/↓ order
   const sel = s.sel.channel === 'root' ? 'root.x' : s.sel.channel
   const deg = s.degrees, num = (x: number, d: boolean) => (d ? (x * 180) / Math.PI : x).toFixed(d ? 1 : 3)
-  const set = (c: string, x: number) => { if (!act.editPose(v.actor.id, { [c]: x })) setRefused(Date.now()) }
+  const set = (c: string, x: number) => { const ok = act.editPose(v.actor.id, { [c]: x }); if (!ok) setRefused(Date.now()); return ok }
   const clipView = !!(s.editing || s.clipEdit), r = clipView ? s.range : null
   const outside = !!r && (v.f < r.a || v.f > r.b)
   // clip view on the piece's lead-in / 끝 기본자세: those frames are not the piece's own
@@ -121,7 +121,7 @@ export default function JointPanel() {
           onChange={e => set(c, +e.target.value)} />
         <span className="jp-val">
           <input type="number" key={`${v.f}-${x}-${d}`} defaultValue={num(x, d)} step={d ? 1 : isAngle(c, joint) ? 0.001 : mStep} disabled={blocked(c)} aria-label={`${name} 숫자`}
-            onBlur={e => { const n = e.target.valueAsNumber; if (!Number.isFinite(n) || e.target.value === num(x, d)) return; const a = d ? n * Math.PI / 180 : n; set(c, joint ? Math.min(Math.max(a, lo), hi) : a) }}
+            onBlur={e => { const n = e.target.valueAsNumber; if (!Number.isFinite(n) || e.target.value === num(x, d)) return; const a = d ? n * Math.PI / 180 : n; if (!set(c, joint ? Math.min(Math.max(a, lo), hi) : a)) e.target.value = num(x, d) }}
             onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} />
           <i>{d ? '°' : isAngle(c, joint) ? 'rad' : 'm'}</i>
         </span>
