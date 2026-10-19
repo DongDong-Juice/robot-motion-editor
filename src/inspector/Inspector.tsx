@@ -35,12 +35,12 @@ export default function Inspector() {
   const [simpMsg, setSimpMsg] = useState<{ n: number; at: number } | null>(null)
   useEffect(() => { if (!simpMsg) return; const t = setTimeout(() => setSimpMsg(null), 3000); return () => clearTimeout(t) }, [simpMsg])
   const actor = actorOf({ project, clipEdit }, sel.actorId)
-  if (!actor) return <><div className="insp-empty">무대에서 링크를 클릭하거나 타임라인에서 채널을 고르세요.</div><StageSection /></>
+  if (!actor) return <div className="insp"><p className="insp-hint">무대에서 링크를 클릭하거나 타임라인에서 채널을 고르세요.</p><StageSection /></div>
   const clipMode = !!clipEdit // 클립 편집 모드: the open clip on its virtual actor
 
   const def = defs[actor.robot]
   const target = editTarget({ project, frame, editing, clipEdit }, actor.id)
-  if (!target) return <><div className="insp-empty">이 액터에 클립이 없습니다.</div><StageSection /></>
+  if (!target) return <div className="insp"><p className="insp-hint">이 액터에 클립이 없습니다.</p><StageSection /></div>
   const { clipId } = target
   const clip = project.clips[clipId]
   const item = targetItem({ project, editing, clipEdit }, target.itemId)!

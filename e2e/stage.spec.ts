@@ -9,6 +9,7 @@ test('무대: on by default, size from the inspector, off hides stage and sectio
   const btn = pane.getByRole('button', { name: '무대', exact: true })
   await expect(btn).toHaveAttribute('aria-pressed', 'true')
   const w = page.getByRole('spinbutton', { name: '무대 가로' }), d = page.getByRole('spinbutton', { name: '무대 깊이' })
+  await expect(page.locator('.insp').getByRole('spinbutton', { name: '무대 가로' })).toBeVisible()
   await expect(w).toHaveValue('10'); await expect(d).toHaveValue('6')
   await d.fill('4'); await d.blur()
   const size = () => page.evaluate(() => {
