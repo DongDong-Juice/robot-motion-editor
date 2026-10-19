@@ -12,7 +12,7 @@ import { sequenceEnd } from '../transport'
 import { drawRuler, hitMarker, LABEL_W, RULER_H } from './ruler'
 import { dropPlacement } from '../model/dropPlacement'
 import { COLOR } from '../model/defaults'
-import { draggedAsset, dropAsset, isAssetDrag } from './assetDrop'
+import { draggedAsset, draggedClips, dropAsset, dropClips, isAssetDrag } from './assetDrop'
 import { mediaUrl, subscribeMedia } from '../media/registry'
 import { exportOne } from '../export/exportOne'
 import { formatTimecode, frameToX, hoverFrame, hoverScrub, xToFrame, type TimeScale } from './timeScale'
@@ -609,7 +609,8 @@ export default function SequenceCanvas() {
       const asset = draggedAsset(e.dataTransfer ?? null)
       if (!asset) return
       e.preventDefault()
-      const { row, frame } = dropAt(e), reason = dropAsset(asset, row?.t.id ?? null, frame)
+      const { row, frame } = dropAt(e), many = draggedClips()
+      const reason = many.length > 1 ? dropClips(many, row?.t.id ?? null, frame) : dropAsset(asset, row?.t.id ?? null, frame) // ponytail: the ghost shows the first clip only
       if (reason) flash(reason, Math.max(0, layout().findIndex(r => r === row)))
     }
     const clearGhost = () => { if (ghost) setGhost(null) }

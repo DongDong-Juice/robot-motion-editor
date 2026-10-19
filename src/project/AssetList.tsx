@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
-import { relinkMedia } from '../importActions'
+import { importCsvFolder, relinkMedia } from '../importActions'
 import { mediaUrl, subscribeMedia } from '../media/registry'
 import { getEditor, useEditor } from '../store/store'
 import { curveKeyCount } from '../model/itemClip'
@@ -216,6 +216,15 @@ export default function AssetList({ tab, query, setQuery }: { tab: 'clip' | 'med
           }
           if (r.kind === 'bin') return (
             <div key={id} {...common} className={over === id ? 'pp-row pp-bin over' : 'pp-row pp-bin'} data-kind="bin" aria-expanded={r.open}
+              draggable={tab === 'clip' && renaming !== id}
+              onDragStart={e => { // a folder dragged to the timeline places all its clips
+                const kids = items.filter(it => it.bin === id).map(it => it.id)
+                if (!kids.length) { e.preventDefault(); return }
+                e.dataTransfer.setData('application/x-motion-clip', kids[0])
+                e.dataTransfer.effectAllowed = 'copy'
+                setDragged({ kind: 'clip', id: kids[0] }, kids)
+              }}
+              onDragEnd={() => setDragged(null)}
               onDoubleClick={() => { if (renaming !== id) setOpenBin(id, !r.open) }}>
               <span className="pp-twisty" aria-hidden="true" onClick={e => { e.stopPropagation(); setOpenBin(id, !r.open) }}>{r.open ? '▾' : '▸'}</span>
               {renaming === id
@@ -230,7 +239,7 @@ export default function AssetList({ tab, query, setQuery }: { tab: 'clip' | 'med
                 e.dataTransfer.setData(`application/x-motion-${tab}`, id)
                 e.dataTransfer.setData(BIN_MOVE, JSON.stringify(moving(id)))
                 e.dataTransfer.effectAllowed = 'copyMove'
-                setDragged({ kind: tab, id })
+                setDragged({ kind: tab, id }, tab === 'clip' ? moving(id) : [])
               }}
               onDragEnd={() => { setDragged(null); setOver(null) }}
               onDoubleClick={() => { if (tab === 'clip' && renaming !== id) ed.getState().openClipEdit(id) }}>
@@ -241,6 +250,7 @@ export default function AssetList({ tab, query, setQuery }: { tab: 'clip' | 'med
       </div>
       <div className="pp-tools">
         <button onClick={newBin}>새 폴더</button>
+        {tab === 'clip' && <button onClick={() => void importCsvFolder()} title="고른 폴더의 CSV를 모두 같은 이름의 목록 폴더로 가져옵니다(타임라인에는 놓지 않음). 폴더를 타임라인으로 끌면 클립마다 조각으로 이어 붙습니다">폴더 가져오기</button>}
         {tab === 'clip' && <button disabled={selItems.length !== 1} title="고른 모션을 비교 프리뷰에 나란히 재생 (타임라인에는 추가하지 않음)"
           onClick={() => ed.getState().openComparePane(selItems[0])}>⇄ 비교</button>}
       </div>

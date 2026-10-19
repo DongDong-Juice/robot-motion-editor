@@ -1,7 +1,7 @@
 import { beforeEach, expect, test } from 'vitest'
 import { initEditor } from '../store/store'
 import { loadDef } from '../test/defs'
-import { dropAsset } from './assetDrop'
+import { dropAsset, dropClips } from './assetDrop'
 
 let ed: ReturnType<typeof initEditor>
 const s = () => ed.getState()
@@ -24,4 +24,16 @@ test('a new block clip dropped on a locked GO2 track is rejected and adds nothin
   const clip = { id: 'blk', name: 'Stretch', robot: 'go2' as const, length: 30, channels: {} }
   expect(dropAsset({ kind: 'clip', id: clip.id, clip }, t.id, 0)).toBe('잠긴 트랙입니다')
   expect(s().project.clips.blk).toBeUndefined()
+})
+
+test('several clips (a folder / multi-selection): one piece each, end to end per robot; one undo removes them all', () => {
+  const add = (id: string, robot: 'g1' | 'go2', length: number) => s().addClipAsset({ id, name: id, robot, length, channels: {} })
+  add('a', 'g1', 30); add('k', 'go2', 50); add('b', 'g1', 40)
+  expect(dropClips(['a', 'k', 'b'], null, 0)).toBeNull()
+  const pieces = (robot: string) => s().project.sequence.tracks.filter(t => s().project.actors.find(a => a.id === t.actorId)?.robot === robot)
+    .flatMap(t => t.items.map(i => [i.refId, i.start]))
+  expect(pieces('g1')).toEqual([['a', 0], ['b', 30]])
+  expect(pieces('go2')).toEqual([['k', 0]])
+  s().undo()
+  expect(s().project.actors).toHaveLength(0)
 })

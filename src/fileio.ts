@@ -127,6 +127,39 @@ export async function saveCsvFile(name: string, text: string): Promise<boolean> 
   return true
 }
 
+type DirPicker = (o: { mode: 'read' }) => Promise<FileSystemDirectoryHandle>
+type DirEntries = { values(): AsyncIterable<FileSystemHandle> }
+
+/** Every file under a folder the user picks (subfolders too), sorted by path. null = cancelled. */
+export async function openFolder(): Promise<{ name: string; files: File[] } | null> {
+  const pick = (window as unknown as { showDirectoryPicker?: DirPicker }).showDirectoryPicker
+  if (typeof pick === 'function') {
+    let dir: FileSystemDirectoryHandle
+    try { dir = await pick.call(window, { mode: 'read' }) } catch (e) { if (aborted(e)) return null; throw e }
+    const files: [string, File][] = []
+    const walk = async (d: FileSystemDirectoryHandle, at: string): Promise<void> => {
+      for await (const h of (d as unknown as DirEntries).values()) {
+        if (h.kind === 'file') files.push([at + h.name, await (h as FileSystemFileHandle).getFile()])
+        else await walk(h as FileSystemDirectoryHandle, `${at}${h.name}/`)
+      }
+    }
+    await walk(dir, '')
+    return { name: dir.name, files: files.sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(f => f[1]) }
+  }
+  return new Promise(resolve => { // no picker API: a folder <input>
+    const input = document.createElement('input')
+    input.type = 'file'; input.webkitdirectory = true; input.hidden = true
+    input.addEventListener('change', () => {
+      const files = [...(input.files ?? [])].sort((a, b) => a.webkitRelativePath.localeCompare(b.webkitRelativePath, undefined, { numeric: true }))
+      input.remove()
+      resolve(files.length ? { name: files[0].webkitRelativePath.split('/')[0], files } : null)
+    })
+    input.addEventListener('cancel', () => { input.remove(); resolve(null) })
+    document.body.appendChild(input)
+    input.click()
+  })
+}
+
 export const objectUrl = (file: File) => URL.createObjectURL(file)
 export const revokeUrl = (url: string) => URL.revokeObjectURL(url)
 
