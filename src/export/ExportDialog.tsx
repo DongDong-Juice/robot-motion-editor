@@ -40,7 +40,8 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
     if (todo.length) void runItems(todo.map(({ actor, item }) => ({ actorId: actor.id, itemId: item.id })))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, defs, off, open, skip, phys])
-  const running = open && !skip && checked.some(({ item }) => ['queued', 'running'].includes(phys[item.id]?.status))
+  const busy = (rs: typeof rows) => open && !skip && rs.some(({ item }) => ['queued', 'running'].includes(phys[item.id]?.status))
+  const running = busy(checked)
 
   const warnings = useMemo(() => open ? checked.flatMap(({ actor, item }) =>
     [...exportItemCsv(project, defs, actor.id, item.id, 'world').warnings, ...(skip ? [] : physicsWarnings(project, defs, item, phys[item.id]))]
@@ -51,20 +52,21 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
   async function choose() {
     try { const d = await pickDirectory(); if (d) setDir(d) } catch (e) { setMsg(`폴더 선택 실패: ${e instanceof Error ? e.message : e}`) }
   }
-  async function doExport() {
+  // all checked items, or (G1 / GO2 내보내기) one robot's: label prefixes the message, zipName names the zip
+  async function doExport(rs = checked, zipName = 'motion_export.zip', label = '') {
     try {
       const taken = new Set<string>()
-      const files = checked.map(({ actor, item }) => {
+      const files = rs.map(({ actor, item }) => {
         const { name, text } = exportItemCsv(project, defs, actor.id, item.id, mode, taken, title)
         return { name, text }
       })
       // No folder picked and several files: one zip download instead of a download per file.
       if (!dir && files.length > 1) {
-        downloadBlob('motion_export.zip', new Blob([zip(files)], { type: 'application/zip' }))
-        setMsg(`CSV ${files.length}개를 zip으로 내보냈습니다.`)
+        downloadBlob(zipName, new Blob([zip(files)], { type: 'application/zip' }))
+        setMsg(`${label}CSV ${files.length}개를 zip으로 내보냈습니다.`)
       } else {
         await writeTextFiles(dir, files)
-        setMsg(`CSV ${files.length}개를 내보냈습니다.`)
+        setMsg(`${label}CSV ${files.length}개를 내보냈습니다.`)
       }
     } catch (e) { setMsg(`내보내기 실패: ${e instanceof Error ? e.message : e}`) }
   }
@@ -74,8 +76,13 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
       <h2>내보내기</h2>
       <fieldset>
         <legend>항목</legend>
-        {groups.map(g => <div key={g.robot} role="group" aria-label={g.robot.toUpperCase()}>
-          <div className="exp-group">{g.robot.toUpperCase()}</div>
+        {groups.map(g => {
+          const R = g.robot.toUpperCase(), mine = g.rows.filter(r => !off.has(r.item.id))
+          return <div key={g.robot} role="group" aria-label={R}>
+          <div className="exp-group">{R}
+            <button disabled={!mine.length || busy(mine)} onClick={() => doExport(mine, `${g.robot}_export.zip`, `${R} `)}
+              title={`${R} 항목 중 체크한 것만 내보냅니다`}>{R} 내보내기</button>
+          </div>
           {g.rows.map(({ actor, item, t }) => {
           const { from, to } = itemFrameRange(item)
           return (
@@ -88,7 +95,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
             </label>
           )
         })}
-        </div>)}
+        </div>})}
       </fieldset>
       <fieldset>
         <legend>루트</legend>
@@ -113,7 +120,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
         </ul>
       )}
       <div className="exp-row">
-        <button onClick={doExport} disabled={!checked.length || running}>
+        <button onClick={() => doExport()} disabled={!checked.length || running}>
           {running ? '물리 검증 중…' : warnings.length ? `경고 ${warnings.length}개 무시하고 내보내기` : 'CSV 내보내기'}
         </button>
         {running && <span className="exp-dim">{loading ? '물리 엔진 불러오는 중…' : prog && `물리 검증 ${prog.done + 1}/${prog.total} · ${Math.round(prog.cur * 100)}%`}</span>}
