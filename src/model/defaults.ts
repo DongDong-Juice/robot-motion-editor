@@ -1,7 +1,9 @@
 import type { RobotKind } from '../robot/types'
-import type { Actor, Clip, Project, Track } from './types'
+import type { Actor, Clip, Project, StageSize, Track } from './types'
 
 export const COLOR: Record<RobotKind, string> = { g1: '#58B4D1', go2: '#C9D65A' }
+export const STAGE_DEFAULT: StageSize = { width: 10, depth: 6 }
+export const stageOf = (p: Project): StageSize => p.stage ?? STAGE_DEFAULT
 const LABEL: Record<RobotKind, string> = { g1: 'G1', go2: 'GO2' }
 const LENGTH = 120
 

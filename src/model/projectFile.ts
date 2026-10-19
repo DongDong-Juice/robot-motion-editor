@@ -159,5 +159,6 @@ export function parseProject(text: string, defs: RobotDefs): Project {
   }
   p.version = 2
   if (!isObj(p.physics)) delete p.physics
+  if (!(isObj(p.stage) && [p.stage.width, p.stage.depth].every(v => typeof v === 'number' && v >= 1 && v <= 30))) delete p.stage
   return p as Project
 }

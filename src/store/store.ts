@@ -1,10 +1,10 @@
 import { createStore, useStore, type StoreApi } from 'zustand'
 import { evalCurve, makeKey } from '../model/curve'
 import { simplifyCurve, simplifyTolerance } from '../model/simplify'
-import { addActor as addActorTo, emptyProject, newProject, nextClipName } from '../model/defaults'
+import { addActor as addActorTo, emptyProject, newProject, nextClipName, stageOf } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
 import { inCrossfade, itemLen, resolve, sortedItems, validTrack } from '../model/sequence'
-import type { Actor, Bin, Item, Clip, Curve, Interp, Project, Tan, Track } from '../model/types'
+import type { Actor, Bin, Item, Clip, Curve, Interp, Project, StageSize, Tan, Track } from '../model/types'
 import { validVideoTrack, videoTrack } from '../model/video'
 import { baseClip, offsetKeyCount } from '../model/itemClip'
 import { addOverRange, type Range } from '../model/rangeEdit'
@@ -65,6 +65,8 @@ export interface EditorState {
   /** 구간 (clip frames, clip view / 클립 편집 only): value edits add the same difference over [a, b], easing out over `fade`
    *  frames each side. Not saved; cleared when the open clip changes. */
   range: Range | null; setRange(r: Range | null): void
+  stageShown: boolean; setStageShown(on: boolean): void // 무대 floor on/off in the 3D previews (UI only, not saved)
+  setStage(patch: Partial<StageSize>): void // 무대 size in m (0.1 steps, 1..30): one undo step
   degrees: boolean; setDegrees(on: boolean): void // angle unit of the value fields (inspector and joint panel)
   clearOffset(itemId: string): boolean // drop the piece's whole 수정 층 (one undo step); false = none / locked
   clearClipOffset(clipId: string): boolean // drop the clip's whole 수정 층 (one undo step); false = none
@@ -458,6 +460,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         const top = e.clip.length - 1, a = Math.min(Math.max(Math.round(Math.min(r.a, r.b)), 0), top), b = Math.min(Math.max(Math.round(Math.max(r.a, r.b)), 0), top)
         return { range: { a, b, fade: Math.min(Math.max(Math.round(r.fade), 0), 600) } }
       }),
+      stageShown: true, setStageShown: stageShown => set({ stageShown }),
       degrees: true, setDegrees: degrees => set({ degrees }),
       setClipPeek: on => set({ clipPeek: on }),
       openClipEdit: clipId => {
@@ -609,6 +612,11 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
             putKey(clip, n, f, v)
           }
         }, [{ clipId, channels: names }])
+      },
+      setStage: patch => {
+        const clean: Partial<StageSize> = {}
+        for (const k of ['width', 'depth'] as const) { const v = patch[k]; if (v !== undefined && Number.isFinite(v)) clean[k] = Math.min(30, Math.max(1, Math.round(v * 10) / 10)) }
+        if (Object.keys(clean).length) edit(p => { p.stage = { ...stageOf(p), ...clean } }, [])
       },
       setPhysics: next => edit(p => { p.physics = next }, []),
       setTrackFlag: (trackId, flag, on) => edit(p => {
