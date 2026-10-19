@@ -1,9 +1,11 @@
-import { openTextFiles, saveTextFile, type SaveHandle } from './fileio'
+import { hubRead, hubWrite, openTextFiles, saveTextFile, type SaveHandle } from './fileio'
 import { clearMedia } from './media/registry'
 import { parseProject, serializeProject } from './model/projectFile'
 import { getEditor } from './store/store'
+import { emptyProject } from './model/defaults'
 
 let handle: SaveHandle | null = null // not in zustand: opaque, never rendered
+let hub: { name: string; mtime: number } | null = null // opened from / created on the project hub: Ctrl+S writes there
 const listeners = new Set<(m: string) => void>()
 export const onMessage = (fn: (m: string) => void) => { listeners.add(fn); return () => { listeners.delete(fn) } }
 const say = (m: string) => listeners.forEach(f => f(m))
@@ -13,22 +15,57 @@ const proceed = () => !getEditor().getState().dirty || confirm('저장하지 않
 
 export function newProjectFile() {
   if (!proceed()) return
-  handle = null
+  handle = null; hub = null
   clearMedia()
   getEditor().getState().newProjectFile()
 }
 
-export async function openProject() {
-  if (!proceed()) return
+/** '' when the project name can be a file name, else why not. */
+export const badTitle = (t: string) => !t.trim() ? '이름을 입력하세요' : /[/\\:*?"<>|]|\.\./.test(t) ? '이름에 / \\ : * ? " < > | 는 쓸 수 없습니다' : ''
+
+export async function openHubProject(name: string): Promise<boolean> {
   try {
-    const [f] = await openTextFiles('.json', false)
-    if (!f) return
+    const { text, mtime } = await hubRead(name)
     const s = getEditor().getState()
-    s.loadProject(parseProject(f.text, s.defs), f.name)
-    handle = null
+    s.loadProject(parseProject(text, s.defs), name)
+    handle = null; hub = { name, mtime }
     clearMedia()
     say('열었습니다')
-  } catch (e) { say(`열기 실패: ${why(e)}`) }
+    return true
+  } catch (e) { say(`열기 실패: ${why(e)}`); return false }
+}
+
+/** New empty project saved on the hub as "<title>.motion.json"; 'exists' when that name is taken. */
+export async function newHubProject(title: string): Promise<boolean | 'exists'> {
+  const name = `${title.trim()}.motion.json`
+  try {
+    const r = await hubWrite(name, serializeProject(emptyProject()), { create: true })
+    if ('error' in r) return 'exists'
+    newProjectFile()
+    getEditor().getState().markSaved(name)
+    hub = { name, mtime: r.mtime }
+    return true
+  } catch (e) { say(`만들기 실패: ${why(e)}`); return false }
+}
+
+/** No hub server: new empty project that only has a name until the first 저장 (saved to this PC). */
+export function newLocalProject(title: string) {
+  newProjectFile()
+  getEditor().getState().markSaved(`${title.trim()}.motion.json`)
+}
+
+export async function openProject(): Promise<boolean> {
+  if (!proceed()) return false
+  try {
+    const [f] = await openTextFiles('.json', false)
+    if (!f) return false
+    const s = getEditor().getState()
+    s.loadProject(parseProject(f.text, s.defs), f.name)
+    handle = null; hub = null
+    clearMedia()
+    say('열었습니다')
+    return true
+  } catch (e) { say(`열기 실패: ${why(e)}`); return false }
 }
 
 let saving = false
@@ -39,9 +76,21 @@ export async function saveProject(as = false) {
   try {
     const text = serializeProject(snap)
     parseProject(text, s.defs) // never write a file that would not reopen
+    if (hub && !as) {
+      let w = await hubWrite(hub.name, text, { base: hub.mtime })
+      if ('error' in w) {
+        if (!confirm('다른 사람이 이 프로젝트를 서버에 저장했습니다. 덮어쓸까요?')) return
+        w = await hubWrite(hub.name, text)
+      }
+      if ('error' in w) throw new Error(w.error)
+      hub.mtime = w.mtime
+      if (getEditor().getState().project === snap) getEditor().getState().markSaved(hub.name)
+      say('서버에 저장했습니다')
+      return
+    }
     const r = await saveTextFile(text, s.fileName ?? 'project.motion.json', as ? null : handle)
     if (!r) return
-    handle = r.handle
+    handle = r.handle; hub = null
     if (getEditor().getState().project === snap) getEditor().getState().markSaved(r.name)
     else getEditor().setState({ fileName: r.name })
     say('저장했습니다')

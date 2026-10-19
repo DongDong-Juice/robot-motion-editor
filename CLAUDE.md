@@ -19,6 +19,7 @@ npm run test       # vitest (단위)
 npx tsc -b         # 타입 검사
 npm run build
 npm run e2e        # Playwright (dev 서버 자동 기동, 포트 5173)
+npm run serve      # 배포: dist + 프로젝트 허브 API (PORT 기본 8080, PROJECT_DIR 기본 ./projects)
 ```
 
 - 브라우저 수동 확인용 Playwright 스크립트는 **저장소 밖**에 두고 `npx vite --port 5199`로 띄운 뒤 반드시 종료.
@@ -58,6 +59,7 @@ src/project/   ProjectPanel(탭·필터·⇄비교), AssetList(트리·폴더·�
 src/media/     영상 URL 레지스트리(프로젝트에 저장 안 함 → 열면 오프라인, 재연결)
 src/layout/    패널 크기 조절
 tools/urdf_to_json.py   URDF+DAE → RobotDef JSON (GO2 생성에 사용)
+server/        hub.mjs(프로젝트 허브 API, dev·배포 공통), index.mjs(배포 서버, node:http 의존성 없음)
 ```
 
 핵심 불변식:
@@ -69,6 +71,7 @@ tools/urdf_to_json.py   URDF+DAE → RobotDef JSON (GO2 생성에 사용)
 - 트랙의 마지막 클립을 지우면 그 액터·트랙도 삭제(클립은 에셋에 남음). 잘린 조각을 지우면 이웃 조각에 합쳐짐(사용자: 원본 CSV가 끊기지 않게, `deleteItem`): 바로 앞 조각이 같은 클립·원본 프레임이 이어지고(앞 trimOut = 지운 trimIn) 타임라인에서도 붙어 있으면 앞 조각이 그 구간까지 늘어남(끝 기본자세는 지운 조각 값), 맨 앞 조각이면 같은 조건의 뒤 조각이 앞으로 늘어남(앞쪽 기본자세·리드인 설정은 지운 조각 값). 지운 조각의 수정은 사라짐. 합칠 수 없으면 그냥 지우고 빈칸(뒤 조각을 당기지 않음). 레인 막대를 위아래로 끌어 같은 트랙의 다른 조각 레인에 놓으면 두 조각이 순서를 맞바꿈(사용자, `swapItems`): 조각들이 끝에 붙어 다시 흐르고 자리마다 앞 조각과의 간격·겹침은 그대로, 끄는 동안 놓을 레인에 점선 테두리.
 - GO2 이음매 보정(사용자, 스펙 `docs/superpowers/specs/2026-10-19-go2-seam-blend-design.md`, `model/seam.ts`): 같은 트랙에서 앞 조각 끝 = 뒤 조각 시작인 GO2 조각은 뒤 조각 앞 N프레임(`Item.seam`, 기본 20, 항상 켜짐)에 앞 끝 자세·속도와의 차이를 더해 0으로 줄임(관절·z·roll·pitch, x·y·yaw는 루트 이어붙이기). `itemClip`에 들어가 재생·프리뷰·CSV·물리 공통, 편집기는 `editedClip`(보정 전). 블럭 CSV·길이는 그대로. 레인에 뒤 조각 앞쪽 `--blend` 띠, 오른쪽 경계를 끌어 길이(0 = 끔), 차이가 크면(관절 45°·높이 5 cm 초과) 빨간 띠 + 레인 라벨 ⚠. G1은 없음.
 - 조각 숨기기(`Item.hidden`, 레인의 눈 아이콘): 트랙 숨기기처럼 화면 전용. 재생헤드가 그 조각 안이면(크로스페이드는 둘 다 숨김일 때) 메인 3D에서 로봇을 그리지 않음(`sequence.hiddenAt`). 평가·CSV·물리는 그대로, 프로젝트에 저장.
+- 프로젝트 허브·시작 화면(사용자, 스펙 `docs/superpowers/specs/2026-10-19-project-hub-design.md`): 앱을 열면 닫을 수 없는 `StartScreen` — 서버 폴더(`PROJECT_DIR`)의 `*.motion.json` 목록(누르면 열기) / `이 PC에서 열기` / 이름 + `만들기`(서버에 새 파일). 허브에서 연·만든 프로젝트의 저장(Ctrl+S)은 서버에 덮어씀, 그 사이 서버 파일이 바뀌었으면 확인 후(`base` mtime, 409). 다른 이름으로 저장·이 PC 열기·메뉴 새 프로젝트는 허브 연결 해제. 서버가 없으면 "서버에 연결할 수 없습니다", 만들기는 이름만. 서버 호출은 `fileio.ts`(`hubList`·`hubRead`·`hubWrite`). e2e는 localStorage `me.noStart`(Playwright `storageState`)로 건너뜀, 시작 화면은 `e2e/hub.spec.ts`. 인증 없음(사내망 전제).
 - 잘린 조각 이름(`pieceName`, model/sequence, 사용자): 같은 클립을 쓰는 조각이 트랙에 2개 이상이면 `<프로젝트>-<G1|GO2>-<n>` (프로젝트 = 저장 파일 이름에서 `.motion.json` 뺀 것, 저장 전 `Untitled`(`projectTitle`), n = 시작 순이라 옮기면 다시 매겨짐, CSV 파일 이름과 같음). 막대·클립 프리뷰 제목·내보내기 목록에 표시, 레인 라벨은 `#n`(`pieceTag`), 클립 이름 자체는 그대로. 내보내기 창 항목은 G1·GO2로 묶음.
 - 클립 프리뷰가 어느 조각인지(사용자: 오른쪽 패널과 매칭이 안 됨): 제목 = 액터 색 견본 + 액터 이름 / 조각 이름, 제목을 누르면 그 조각·로봇을 선택(오른쪽 패널이 따라감). 프리뷰 로봇은 그 액터 색. 타임라인에서 프리뷰 중인 조각은 막대 안쪽 점선 테두리 + 레인의 재생 버튼이 주황. 레인 눈 아이콘 왼쪽 재생 버튼: 그 조각을 클립 프리뷰에서 반복 재생, 재생 중인 조각에서 누르면 멈춤/다시 재생(`previewPlaying`).
 - 경로 표시(`Track.trail`, 모션 트랙 이름 줄의 경로 아이콘, 기본 꺼짐): 로봇마다 따로 켬(사용자 확정: 전체 한꺼번에 X). 메인 3D에 그 액터의 골반 바닥 경로, 트랙을 숨기면 같이 숨김, 화면 전용·프로젝트에 저장. 클립·비교 프리뷰 창의 `경로 표시` 버튼은 그 창 로봇 하나용.

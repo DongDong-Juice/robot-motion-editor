@@ -131,3 +131,27 @@ export const objectUrl = (file: File) => URL.createObjectURL(file)
 export const revokeUrl = (url: string) => URL.revokeObjectURL(url)
 
 export const openMediaFiles = (multiple: boolean) => openFiles('video/*', { 'video/*': [] }, multiple)
+
+// Project hub (server/hub.mjs): one server folder of *.motion.json. null = no hub server (static hosting, offline).
+export interface HubEntry { name: string; mtime: number; size: number }
+const hubUrl = (name: string) => `/api/projects/${encodeURIComponent(name)}`
+const isJson = (r: Response) => r.headers.get('Content-Type')?.includes('json')
+
+export async function hubList(): Promise<HubEntry[] | null> {
+  try { const r = await fetch('/api/projects'); return r.ok && isJson(r) ? await r.json() : null } catch { return null }
+}
+export async function hubRead(name: string): Promise<{ text: string; mtime: number }> {
+  const r = await fetch(hubUrl(name))
+  if (!r.ok) throw new Error(r.status === 404 ? '서버에 파일이 없습니다' : `서버 오류 ${r.status}`)
+  return { text: await r.text(), mtime: Number(r.headers.get('X-Mtime')) }
+}
+/** create: fail when the name exists. base: fail when the server file changed since that mtime. */
+export async function hubWrite(name: string, text: string, o: { create?: boolean; base?: number } = {}):
+  Promise<{ mtime: number } | { error: 'exists' | 'conflict' }> {
+  const q = o.create ? '?create=1' : o.base !== undefined ? `?base=${o.base}` : ''
+  const r = await fetch(hubUrl(name) + q, { method: 'PUT', body: text, headers: { 'Content-Type': 'application/json' } })
+  const b = await r.json().catch(() => ({}))
+  if (r.status === 409) return { error: b.error === 'exists' ? 'exists' : 'conflict' }
+  if (!r.ok) throw new Error(b.error ?? `서버 오류 ${r.status}`)
+  return b
+}
