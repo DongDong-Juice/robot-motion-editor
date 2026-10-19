@@ -976,6 +976,14 @@ test('setStage: rounds to 0.1, clamps to 1..30, ignores NaN, one undo step', () 
   s().undo()
   expect(s().project.stage).toEqual({ width: 12.3, depth: 6 })
 })
+test('setStage: unchanged value is not an edit', () => {
+  s().setStage({ width: 30, depth: 6 })
+  const before = s().project
+  s().setStage({ width: 30 })
+  s().setStage({ depth: 6.04 })
+  s().setStage({ width: 100 })
+  expect(s().project).toBe(before)
+})
 test('stageShown defaults on and toggles', () => {
   expect(s().stageShown).toBe(true)
   s().setStageShown(false)

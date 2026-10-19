@@ -34,7 +34,8 @@ export function makeStage(width: number, depth: number, c: Colors): THREE.Group 
     const ctx = cv.getContext('2d')!
     ctx.font = '600 30px "IBM Plex Sans KR"'; ctx.fillStyle = c.front; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
     ctx.fillText('객석', 128, 32)
-    const label = add(new THREE.Mesh(new THREE.PlaneGeometry(2, 0.5), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthWrite: false })), 'label')
+    const labelTex = new THREE.CanvasTexture(cv); labelTex.colorSpace = THREE.SRGBColorSpace
+    const label = add(new THREE.Mesh(new THREE.PlaneGeometry(2, 0.5), new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, depthWrite: false })), 'label')
     label.position.set(hx + 0.18 + 0.05 + 0.25, 0, 0.002)
     label.rotation.z = Math.PI / 2 // text bottom faces +X: viewed from the audience side it reads upright
   }

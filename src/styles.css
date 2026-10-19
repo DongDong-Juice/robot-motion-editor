@@ -123,8 +123,8 @@ body {
 #inspector { grid-area: inspector; }
 #timeline { grid-area: timeline; }
 #inspector { overflow-y: auto; font-size: 13px; }
-.insp, .insp-empty { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
-.insp-empty, .insp-hint, .insp-lim { color: var(--dim); margin: 0; }
+.insp { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.insp-hint, .insp-lim { color: var(--dim); margin: 0; }
 .insp-row { display: flex; align-items: center; gap: 6px; }
 .insp-row label { display: flex; flex-direction: column; flex: 1; gap: 2px; min-width: 0; }
 .insp input:not([type=range]):not([type=color]), .insp select, .insp button {

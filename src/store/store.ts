@@ -616,7 +616,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       setStage: patch => {
         const clean: Partial<StageSize> = {}
         for (const k of ['width', 'depth'] as const) { const v = patch[k]; if (v !== undefined && Number.isFinite(v)) clean[k] = Math.min(30, Math.max(1, Math.round(v * 10) / 10)) }
-        if (Object.keys(clean).length) edit(p => { p.stage = { ...stageOf(p), ...clean } }, [])
+        const cur = stageOf(get().project)
+        if (Object.entries(clean).some(([k, v]) => cur[k as keyof StageSize] !== v)) edit(p => { p.stage = { ...stageOf(p), ...clean } }, [])
       },
       setPhysics: next => edit(p => { p.physics = next }, []),
       setTrackFlag: (trackId, flag, on) => edit(p => {
