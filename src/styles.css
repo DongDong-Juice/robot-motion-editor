@@ -338,6 +338,7 @@ body {
 .pp-row.over { outline: 1px dashed var(--accent); outline-offset: -1px; }
 .pp-row.pp-bin { display: flex; gap: 4px; }
 .pp-twisty { color: var(--dim); cursor: pointer; }
+.pp-bin .pp-count { margin-left: auto; }
 .pp-row input { min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--accent); border-radius: 3px; font: inherit; padding: 0 4px; }
 .pp-col-robot, .pp-col-len, .pp-col-uses { color: var(--dim); font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
 .pp-col-state { display: flex; align-items: center; gap: 4px; font-size: 11px; }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import Go2BlockPanel, { cachedTemplate, loadTemplate } from '../go2blocks/Go2BlockPanel'
-import { GO2_BLOCKS } from '../go2blocks/blocks'
+import { GO2_BLOCKS, GO2_FOLDERS, type Block } from '../go2blocks/blocks'
 import { buildBlockClip, emptyClipFor } from '../go2blocks/build'
 import { getEditor, useEditor } from '../store/store'
 import { setDragged } from '../timeline/assetDrop'
@@ -8,7 +8,10 @@ import { setDragged } from '../timeline/assetDrop'
 const KIND = { fixed: '고정', meters: '거리', degrees: '각도', empty: '길이' } as const
 export const filterBlocks = (query: string) => { const q = query.trim().toLowerCase(); return GO2_BLOCKS.filter(b => b.label.toLowerCase().includes(q)) }
 
-/** 라이브러리 tab: the GO2 blocks (flat, filtered by name); the picked block's input below. Fixed blocks drag to the timeline once loaded. */
+type Entry = { kind: 'dir'; key: string; name: string; n: number; open: boolean } | { kind: 'block'; key: string; b: Block; inDir: boolean }
+
+/** 라이브러리 tab: the GO2 blocks by folder (public/go2-blocks/<folder>, folded until opened; a name filter opens the folders it hits),
+ * Empty on top; the picked block's input below. Fixed blocks drag to the timeline once loaded. */
 export default function LibraryList({ query }: { query: string }) {
   const [sel, setSel] = useState<string | null>(null)
   const [focus, setFocus] = useState<string | null>(null)
@@ -21,28 +24,54 @@ export default function LibraryList({ query }: { query: string }) {
   const fallback = (go2s.find(a => a.id === selGo2) ?? go2s[0])?.id ?? 'new'
   const t = choice === 'new' || choice === 'asset' || go2s.some(a => a.id === choice) ? choice! : fallback // a vanished actor falls back
   const target = t === 'new' ? null : t
-  useEffect(() => { for (const b of GO2_BLOCKS) if (b.kind === 'fixed') loadTemplate(b.id).catch(() => {}) }, []) // a drag fires no click, so load up front
-  const rows = filterBlocks(query)
-  const ids = rows.map(b => b.id)
+  const [open, setOpen] = useState<Set<string>>(new Set())
+  const hits = filterBlocks(query), filtered = !!query.trim()
+  const entries: Entry[] = hits.filter(b => !b.folder).map(b => ({ kind: 'block', key: b.id, b, inDir: false }))
+  for (const name of GO2_FOLDERS) {
+    const bs = hits.filter(b => b.folder === name), o = filtered || open.has(name)
+    if (!bs.length) continue
+    entries.push({ kind: 'dir', key: `dir:${name}`, name, n: bs.length, open: o })
+    if (o) for (const b of bs) entries.push({ kind: 'block', key: b.id, b, inDir: true })
+  }
+  const shown = entries.flatMap(e => e.kind === 'block' && e.b.kind === 'fixed' ? [e.b.id] : []).join('|')
+  useEffect(() => { for (const id of shown.split('|')) if (id) loadTemplate(id).catch(() => {}) }, [shown]) // a drag fires no click, so load what is shown
+  const ids = entries.map(e => e.key)
   const tabStop = focus && ids.includes(focus) ? focus : ids[0]
   const pick = (id: string) => { setSel(id); setFocus(id); setMsg('') }
+  const toggle = (name: string, to?: boolean) => setOpen(s => { const n = new Set(s); if (to ?? !n.has(name)) n.add(name); else n.delete(name); return n })
+  const goTo = (key: string) => { setFocus(key); treeRef.current?.querySelector<HTMLElement>(`[data-id="${CSS.escape(key)}"]`)?.focus() }
 
-  const onKey = (e: React.KeyboardEvent, id: string) => {
+  // ↑↓ the shown rows; on a folder → opens / ← closes; ← on a block in a folder goes to its folder
+  const onKey = (e: React.KeyboardEvent, en: Entry) => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault(); e.stopPropagation()
+      if (en.kind === 'dir') toggle(en.name, e.key === 'ArrowRight')
+      else if (e.key === 'ArrowLeft' && en.b.folder) goTo(`dir:${en.b.folder}`)
+      return
+    }
+    if (en.kind === 'dir' && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggle(en.name); return }
     const d = ({ ArrowDown: 1, ArrowUp: -1 } as Record<string, number>)[e.key]
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') e.stopPropagation()
-    const n = d && ids[ids.indexOf(id) + d]
+    const n = d && entries[ids.indexOf(en.key) + d]
     if (!n) return
     e.preventDefault(); e.stopPropagation()
-    pick(n); treeRef.current?.querySelector<HTMLElement>(`[data-id="${n}"]`)?.focus()
+    if (n.kind === 'block') pick(n.key)
+    goTo(n.key)
   }
 
   return (
     <>
       <div className="pp-cols" aria-hidden="true"><span>이름</span><span className="pp-col-kind">종류</span></div>
       <div ref={treeRef} role="tree" aria-label="라이브러리" className="pp-tree">
-        {rows.map(b => (
-          <div key={b.id} role="treeitem" className="pp-row" data-kind="block" data-id={b.id} aria-selected={sel === b.id}
-            tabIndex={b.id === tabStop ? 0 : -1} onClick={() => pick(b.id)} onKeyDown={e => onKey(e, b.id)}
+        {entries.map(en => en.kind === 'dir' ? (
+          <div key={en.key} role="treeitem" className="pp-row pp-bin" data-kind="blockdir" data-id={en.key} aria-expanded={en.open}
+            tabIndex={en.key === tabStop ? 0 : -1} onClick={() => { setFocus(en.key); toggle(en.name) }} onKeyDown={e => onKey(e, en)}>
+            <span className="pp-twisty" aria-hidden="true">{en.open ? '▾' : '▸'}</span>
+            <span className="pp-name" title={en.name}>{en.name}</span>
+            <span className="pp-count">{en.n}</span>
+          </div>
+        ) : (({ b }) => (
+          <div key={b.id} role="treeitem" className={en.inDir ? 'pp-row in' : 'pp-row'} data-kind="block" data-id={b.id} aria-selected={sel === b.id}
+            tabIndex={b.id === tabStop ? 0 : -1} onClick={() => pick(b.id)} onKeyDown={e => onKey(e, en)}
             draggable={b.kind === 'fixed' || b.kind === 'empty'}
             onDragStart={e => {
               if (b.kind === 'empty') { // the one Empty clip of 목록 (or a new 30-frame one)
@@ -63,7 +92,7 @@ export default function LibraryList({ query }: { query: string }) {
             <span className="pp-name" title={b.label}>{b.label}</span>
             <span className="pp-col-kind">{KIND[b.kind === 'loop' ? b.param : b.kind]}</span>
           </div>
-        ))}
+        ))(en))}
       </div>
       {sel && <div className="pp-blk">
         {sel !== 'empty' && <label className="pp-blk-field"><span>붙일 로봇</span>
