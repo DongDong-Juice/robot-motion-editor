@@ -16,9 +16,11 @@ export function pieceTag(t: Track, it: Item): string {
 }
 /** Project name for piece names: the saved file name without its extension, 'Untitled' before the first save. */
 export const projectTitle = (fileName: string | null) => fileName?.replace(/(\.mproj|(\.motion)?\.json)$/i, '') || 'Untitled'
-/** Display name of an item: "<project>-<G1|GO2>-<n>" for a cut piece (n = pieceTag's #n), the clip name for a lone item. */
+/** Display name of an item: GO2 = "<project>-GO2-<n>" for every piece (n = start order on its track, user: library blocks too);
+ * G1 = "<project>-G1-<n>" for a cut piece (n = pieceTag's #n), the clip name for a lone item. */
 export const pieceName = (t: Track, it: Item, clip: Pick<Clip, 'name' | 'robot'> | undefined, project: string) =>
-  pieceTag(t, it) ? `${project}-${clip?.robot.toUpperCase() ?? ''}-${pieceTag(t, it).split(' · ')[0].slice(1)}` : clip?.name ?? ''
+  clip?.robot === 'go2' ? `${project}-GO2-${sortedItems(t).findIndex(i => i.id === it.id) + 1}`
+    : pieceTag(t, it) ? `${project}-${clip?.robot.toUpperCase() ?? ''}-${pieceTag(t, it).split(' · ')[0].slice(1)}` : clip?.name ?? ''
 
 // `items` must be sorted by start. Item + clip frame for a stage frame: before first item -> its trimIn; gap/after -> previous item's last frame.
 export function resolve(items: Item[], frame: number): { item: Item; cf: number } | null {

@@ -107,7 +107,7 @@ test('file names: sanitize and dedupe', () => {
   const id = itemOf(p, g1.id).id
   expect(csvFileName(p, g1.id, id, taken)).toBe('G1_walk_01.csv')
   expect(csvFileName(p, g1.id, id, taken)).toBe('G1_walk_01_2.csv')
-  expect(csvFileName(p, go2.id, itemOf(p, go2.id).id, new Set())).toBe('GO2_clip_01.csv')
+  expect(csvFileName(p, go2.id, itemOf(p, go2.id).id, new Set())).toBe('Untitled-GO2-1.csv') // GO2: every piece by start
 })
 
 test('file names: cut pieces of one clip are numbered by start', () => {
@@ -118,7 +118,17 @@ test('file names: cut pieces of one clip are numbered by start', () => {
   track.items.unshift(b) // array order must not matter
   expect(csvFileName(p, g1.id, b.id, new Set(), 'proj')).toBe('proj-G1-2.csv')
   expect(csvFileName(p, g1.id, a.id, new Set(), 'proj')).toBe('proj-G1-1.csv')
-  expect(csvFileName(p, go2.id, itemOf(p, go2.id).id, new Set())).toBe('GO2_clip_01.csv')
+  expect(csvFileName(p, go2.id, itemOf(p, go2.id).id, new Set(), 'proj')).toBe('proj-GO2-1.csv')
+})
+
+test('file names: every GO2 piece is <project>-GO2-<n> by start, different blocks too', () => {
+  const p = structuredClone(proj)
+  const a = itemOf(p, go2.id), track = p.sequence.tracks.find(t => t.items.includes(a))!
+  p.clips.hello = { ...p.clips[a.refId], id: 'hello', name: 'Hello' }
+  const b = { ...a, id: 'go2-b', refId: 'hello', start: a.start + 500 }
+  track.items.unshift(b)
+  expect(csvFileName(p, go2.id, b.id, new Set(), 'proj')).toBe('proj-GO2-2.csv')
+  expect(csvFileName(p, go2.id, a.id, new Set(), 'proj')).toBe('proj-GO2-1.csv')
 })
 
 test('file name uses actor name when robot shared', () => {
