@@ -205,6 +205,7 @@ body {
 .exp fieldset { border: 1px solid var(--line); margin: 0 0 8px; }
 .exp-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
 .exp-dim { color: var(--dim); font-variant-numeric: tabular-nums; }
+.exp-group { margin: 8px 0 2px; color: var(--dim); }
 .exp button { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 3px; font: inherit; padding: 2px 10px; cursor: pointer; }
 .exp button:disabled { opacity: .45; cursor: default; }
 .exp :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

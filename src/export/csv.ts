@@ -74,7 +74,7 @@ export const posesToCsv = (poses: Pose[], def: RobotDef): string =>
     ...poses.map((p, i) => [CSV_FPS, ROBOT_TYPE[def.kind], def.joints.length, Math.round(i * 1000 / CSV_FPS),
       ...[...p.rootPos, ...p.rootQuat, ...p.q].map(fmt)].join(',') + ',')].join('\n') // no newline after the last line, like the reference files
 
-export function csvFileName(p: Project, actorId: string, itemId: string, taken: Set<string>): string {
+export function csvFileName(p: Project, actorId: string, itemId: string, taken: Set<string>, project = 'Untitled'): string {
   const actor = p.actors.find(a => a.id === actorId)
   if (!actor) throw new Error(`unknown actor ${actorId}`)
   const item = findItem(p, itemId)
@@ -84,8 +84,8 @@ export function csvFileName(p: Project, actorId: string, itemId: string, taken: 
   // Cut pieces share one clip: number them by start (1-based) on this actor's tracks so each piece keeps its own name.
   const pieces = p.sequence.tracks.filter(t => t.actorId === actorId).flatMap(t => t.items)
     .filter(it => it.refId === item.refId).sort((a, b) => a.start - b.start)
-  const piece = pieces.length > 1 ? `_${pieces.indexOf(item) + 1}` : ''
-  const base = `${clean(shared ? actor.name : LABEL[actor.robot])}_${clean(clip?.name ?? 'clip')}${piece}`
+  const base = pieces.length > 1 ? `${clean(project)}-${LABEL[actor.robot]}-${pieces.indexOf(item) + 1}` // same as the piece's display name
+    : `${clean(shared ? actor.name : LABEL[actor.robot])}_${clean(clip?.name ?? 'clip')}`
   let name = `${base}.csv`
   for (let n = 2; taken.has(name); n++) name = `${base}_${n}.csv`
   taken.add(name)
@@ -93,12 +93,12 @@ export function csvFileName(p: Project, actorId: string, itemId: string, taken: 
 }
 
 // One item's CSV: file name, text and validation warnings (the same rows for the multi export and the single export).
-export function exportItemCsv(p: Project, defs: RobotDefs, actorId: string, itemId: string, mode: RootMode, taken = new Set<string>()):
+export function exportItemCsv(p: Project, defs: RobotDefs, actorId: string, itemId: string, mode: RootMode, taken = new Set<string>(), project?: string):
   { name: string; text: string; warnings: Warning[] } {
   const robot = p.actors.find(a => a.id === actorId)?.robot
   if (!robot) throw new Error(`unknown actor ${actorId}`)
   const poses = samplePoses(p, defs, actorId, itemId, mode)
-  return { name: csvFileName(p, actorId, itemId, taken), text: posesToCsv(poses, defs[robot]), warnings: validatePoses(poses, defs[robot], itemFrameRange(findItem(p, itemId)).from - restLead(p, defs, findItem(p, itemId))) }
+  return { name: csvFileName(p, actorId, itemId, taken, project), text: posesToCsv(poses, defs[robot]), warnings: validatePoses(poses, defs[robot], itemFrameRange(findItem(p, itemId)).from - restLead(p, defs, findItem(p, itemId))) }
 }
 
 /** 클립 편집 모드 `CSV 저장`: the clip as an asset (baseClip = original + 클립 수정 층), every frame, local root (first frame at the

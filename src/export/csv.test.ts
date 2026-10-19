@@ -116,8 +116,8 @@ test('file names: cut pieces of one clip are numbered by start', () => {
   const track = p.sequence.tracks.find(t => t.items.includes(a))!
   const b = { ...a, id: 'piece-b', start: a.start + 500 }
   track.items.unshift(b) // array order must not matter
-  expect(csvFileName(p, g1.id, b.id, new Set())).toBe(`G1_${p.clips[a.refId].name}_2.csv`)
-  expect(csvFileName(p, g1.id, a.id, new Set())).toBe(`G1_${p.clips[a.refId].name}_1.csv`)
+  expect(csvFileName(p, g1.id, b.id, new Set(), 'proj')).toBe('proj-G1-2.csv')
+  expect(csvFileName(p, g1.id, a.id, new Set(), 'proj')).toBe('proj-G1-1.csv')
   expect(csvFileName(p, go2.id, itemOf(p, go2.id).id, new Set())).toBe('GO2_clip_01.csv')
 })
 

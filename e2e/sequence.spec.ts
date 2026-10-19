@@ -39,14 +39,16 @@ test('import CSV, place two items with crossfade, export all', async ({ page }) 
   expect(placed).toEqual({ ok: true, len: 60 })
 
   await menu(page, '내보내기')
+  await expect(page.getByRole('group', { name: 'G1' })).toContainText('Untitled-G1-2') // rows grouped by robot, cut pieces by piece name
+  await expect(page.getByRole('group', { name: 'GO2' })).toContainText('clip_01')
   await page.getByLabel('물리 검증 건너뛰기').check() // keep CSV checks independent of physics load
   await page.getByRole('button', { name: /CSV 내보내기|무시하고 내보내기/ }).click()
   await expect.poll(() => downloads.length).toBe(1) // several files → one zip
   const files = unzip(fs.readFileSync((await downloads[0].path())!))
   expect(files).toHaveLength(3)
   const lines = (t: string) => t.trim().split('\n')
-  expect(files.map(f => f.name)).toEqual(expect.arrayContaining(['G1_walk_g1_1.csv', 'G1_walk_g1_2.csv'])) // two placements of one clip
-  const imp = files.find(f => f.name === 'G1_walk_g1_1.csv')!
+  expect(files.map(f => f.name)).toEqual(expect.arrayContaining(['Untitled-G1-1.csv', 'Untitled-G1-2.csv'])) // two placements of one clip
+  const imp = files.find(f => f.name === 'Untitled-G1-1.csv')!
   expect(imp).toBeTruthy()
   expect(lines(imp.text)).toHaveLength(61)
   expect(lines(imp.text)[0].split(',')).toHaveLength(41)

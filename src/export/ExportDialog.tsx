@@ -7,10 +7,11 @@ import { exportItemCsv, itemFrameRange, type RootMode } from './csv'
 import { needsRun, physicsWarnings } from './physicsWarn'
 import { usePhysics } from '../physics/physicsStore'
 import { runItems } from '../physics/runItem'
+import { pieceName, projectTitle } from '../model/sequence'
 
 export default function ExportDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null)
-  const project = useEditor(s => s.project), defs = useEditor(s => s.defs)
+  const project = useEditor(s => s.project), defs = useEditor(s => s.defs), title = useEditor(s => projectTitle(s.fileName))
   const setFrame = useEditor(s => s.setFrame), select = useEditor(s => s.select)
   const [off, setOff] = useState<Set<string>>(new Set()) // unchecked item ids (default: all checked)
   const [mode, setMode] = useState<RootMode>('local')
@@ -28,8 +29,9 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
 
   const rows = useMemo(() => project.sequence.tracks.flatMap(t => {
     const actor = project.actors.find(a => a.id === t.actorId)
-    return actor && t.kind === 'motion' ? t.items.map(item => ({ actor, item })) : []
+    return actor && t.kind === 'motion' ? t.items.map(item => ({ actor, item, t })) : []
   }), [project])
+  const groups = (['g1', 'go2'] as const).map(robot => ({ robot, rows: rows.filter(r => r.actor.robot === robot) })).filter(g => g.rows.length)
   const checked = rows.filter(r => !off.has(r.item.id))
 
   useEffect(() => {
@@ -53,7 +55,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
     try {
       const taken = new Set<string>()
       const files = checked.map(({ actor, item }) => {
-        const { name, text } = exportItemCsv(project, defs, actor.id, item.id, mode, taken)
+        const { name, text } = exportItemCsv(project, defs, actor.id, item.id, mode, taken, title)
         return { name, text }
       })
       // No folder picked and several files: one zip download instead of a download per file.
@@ -72,18 +74,21 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
       <h2>내보내기</h2>
       <fieldset>
         <legend>항목</legend>
-        {rows.map(({ actor, item }) => {
+        {groups.map(g => <div key={g.robot} role="group" aria-label={g.robot.toUpperCase()}>
+          <div className="exp-group">{g.robot.toUpperCase()}</div>
+          {g.rows.map(({ actor, item, t }) => {
           const { from, to } = itemFrameRange(item)
           return (
             <label key={item.id} className="exp-row">
               <input type="checkbox" checked={!off.has(item.id)} onChange={e => setOff(o => {
                 const n = new Set(o); if (e.target.checked) n.delete(item.id); else n.add(item.id); return n
               })} />
-              <span>{actor.name} · {project.clips[item.refId]?.name}</span>
+              <span>{actor.name} · {pieceName(t, item, project.clips[item.refId], title)}</span>
               <span className="exp-dim">{formatTimecode(from)}–{formatTimecode(to)} · {to - from}프레임</span>
             </label>
           )
         })}
+        </div>)}
       </fieldset>
       <fieldset>
         <legend>루트</legend>

@@ -1,6 +1,6 @@
 import { evaluateClip, type Pose, type RobotDefs } from './pose'
 import { quatMul, quatYaw, yawQuat, type Quat } from './rootMath'
-import type { Item, Project, Track } from './types'
+import type { Clip, Item, Project, Track } from './types'
 import { itemClip } from './itemClip'
 
 export interface Xf { x: number; y: number; yaw: number } // clip root -> track coords
@@ -14,7 +14,11 @@ export function pieceTag(t: Track, it: Item): string {
   const ps = sortedItems(t).filter(i => i.refId === it.refId)
   return ps.length > 1 ? `#${ps.findIndex(i => i.id === it.id) + 1} · F${it.trimIn}–${it.trimOut}` : ''
 }
-export const pieceName = (t: Track, it: Item, clipName: string) => { const g = pieceTag(t, it); return g ? `${g} · ${clipName}` : clipName }
+/** Project name for piece names: the saved file name without its extension, 'Untitled' before the first save. */
+export const projectTitle = (fileName: string | null) => fileName?.replace(/(\.motion)?\.json$/i, '') || 'Untitled'
+/** Display name of an item: "<project>-<G1|GO2>-<n>" for a cut piece (n = pieceTag's #n), the clip name for a lone item. */
+export const pieceName = (t: Track, it: Item, clip: Pick<Clip, 'name' | 'robot'> | undefined, project: string) =>
+  pieceTag(t, it) ? `${project}-${clip?.robot.toUpperCase() ?? ''}-${pieceTag(t, it).split(' · ')[0].slice(1)}` : clip?.name ?? ''
 
 // `items` must be sorted by start. Item + clip frame for a stage frame: before first item -> its trimIn; gap/after -> previous item's last frame.
 export function resolve(items: Item[], frame: number): { item: Item; cf: number } | null {
