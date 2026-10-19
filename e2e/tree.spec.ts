@@ -37,7 +37,7 @@ test('tree: a cut opens the piece rows, click a child row → clip preview; 덧�
   await expect(page.getByRole('button', { name: /클립 프리뷰$/ })).toHaveCount(2)
   await page.mouse.click(box.x + 60, box.y + 24 + 28 + 22 + 11) // second child row
   const pane = page.getByRole('region', { name: '클립 프리뷰' })
-  await expect(pane).toContainText('클립 프리뷰 · G1 #1 / #2 · F40–120 · a') // cut pieces: order and clip frames
+  await expect(pane).toContainText('클립 프리뷰 · G1 #1 / Untitled-G1-2') // cut pieces: <project>-<robot>-<order>
   await expect.poll(() => pane.locator('canvas').evaluate(c => c.getBoundingClientRect().width), { timeout: 15000 }).toBeGreaterThan(0)
 
   const snap = () => page.evaluate(async () => {

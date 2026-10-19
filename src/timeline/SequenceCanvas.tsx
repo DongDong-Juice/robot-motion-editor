@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { trackDrag } from './drag'
 import { getEditor, useEditor } from '../store/store'
-import { itemLen, sortedItems, pieceName, pieceTag } from '../model/sequence'
+import { itemLen, sortedItems, pieceName, pieceTag, projectTitle } from '../model/sequence'
 import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP, itemLead, itemTail, previewRange, REST_BLEND, REST_HOLD } from '../model/restPose'
 import { SEAM_MAX } from '../model/seam'
 import type { Item, Track } from '../model/types'
@@ -12,7 +12,7 @@ import { sequenceEnd } from '../transport'
 import { drawRuler, hitMarker, LABEL_W, RULER_H } from './ruler'
 import { dropPlacement } from '../model/dropPlacement'
 import { COLOR } from '../model/defaults'
-import { draggedAsset, dropAsset, isAssetDrag } from './assetDrop'
+import { draggedAsset, draggedClips, dropAsset, dropClips, isAssetDrag } from './assetDrop'
 import { mediaUrl, subscribeMedia } from '../media/registry'
 import { exportOne } from '../export/exportOne'
 import { formatTimecode, frameToX, hoverFrame, hoverScrub, xToFrame, type TimeScale } from './timeScale'
@@ -273,7 +273,7 @@ export default function SequenceCanvas() {
             ctx.fillText(b, br - bw + 8, ty); ctx.fillStyle = C.text
           }
           const nr = bw ? br - bw : right
-          if (nr > x) ctx.fillText((video ? refName(it) : pieceName(t, it, refName(it)) + (hasEdit(it) ? ' · 수정됨' : '')) + (video && !mediaUrl(it.refId) ? ' (오프라인)' : ''), x, ty, nr - x)
+          if (nr > x) ctx.fillText((video ? refName(it) : pieceName(t, it, ed.getState().project.clips[it.refId], projectTitle(ed.getState().fileName)) + (hasEdit(it) ? ' · 수정됨' : '')) + (video && !mediaUrl(it.refId) ? ' (오프라인)' : ''), x, ty, nr - x)
         }
         ctx.restore()
       }
@@ -609,7 +609,8 @@ export default function SequenceCanvas() {
       const asset = draggedAsset(e.dataTransfer ?? null)
       if (!asset) return
       e.preventDefault()
-      const { row, frame } = dropAt(e), reason = dropAsset(asset, row?.t.id ?? null, frame)
+      const { row, frame } = dropAt(e), many = draggedClips()
+      const reason = many.length > 1 ? dropClips(many, row?.t.id ?? null, frame) : dropAsset(asset, row?.t.id ?? null, frame) // ponytail: the ghost shows the first clip only
       if (reason) flash(reason, Math.max(0, layout().findIndex(r => r === row)))
     }
     const clearGhost = () => { if (ghost) setGhost(null) }
@@ -657,7 +658,7 @@ export default function SequenceCanvas() {
     return () => { document.removeEventListener('pointerdown', away); document.removeEventListener('wheel', away, true); document.removeEventListener('scroll', away, true) }
   }, [ctx])
   const runExport = async (c: Ctx) => {
-    const st = getEditor().getState(), m = await exportOne(st.project, st.defs, c.actorId, c.itemId!)
+    const st = getEditor().getState(), m = await exportOne(st.project, st.defs, c.actorId, c.itemId!, undefined, projectTitle(st.fileName))
     if (m) seqFlash.fn?.(m, c.itemId!)
   }
   const project = useEditor(s => s.project), byItem = usePhysics(s => s.byItem)

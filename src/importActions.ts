@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { csvToClip, isHeadedCsv } from './export/importCsv'
-import { objectUrl, openMediaFiles, openTextFiles, revokeUrl } from './fileio'
+import { objectUrl, openFolder, openMediaFiles, openTextFiles, revokeUrl } from './fileio'
 import { probeDuration, setMediaUrl } from './media/registry'
 import { videoEnd } from './model/video'
 import { getEditor, projectGeneration } from './store/store'
@@ -32,7 +32,22 @@ export async function importDroppedFiles(list: File[]) {
   await importCsvTexts(files, skipped)
 }
 
-async function importCsvTexts(files: { name: string; text: string }[], skipped: string[] = []) {
+/** 폴더 가져오기: every CSV in a picked folder becomes a clip in a 목록 folder of the same name (not placed on the timeline). */
+export async function importCsvFolder() {
+  setImportResult(null)
+  const dir = await openFolder()
+  if (!dir) return
+  const csv = dir.files.filter(f => /\.csv$/i.test(f.name))
+  if (!csv.length) { setImportResult({ lines: [`${dir.name}: CSV 파일이 없습니다`] }); return }
+  const files: { name: string; text: string }[] = [], skipped: string[] = []
+  for (const f of csv) {
+    try { files.push({ name: f.name, text: await f.text() }) } catch (e) { skipped.push(`${f.name}: ${why(e)}`) }
+  }
+  await importCsvTexts(files, skipped, dir.name)
+}
+
+/** bin: put the clips in a new 목록 folder of that name instead of on the robot tracks. */
+async function importCsvTexts(files: { name: string; text: string }[], skipped: string[] = [], bin?: string) {
   if (!files.length) { if (skipped.length) setImportResult({ lines: skipped }); return }
   let fps: Fps = 60 // unused when every file is headed
   if (files.some(f => !isHeadedCsv(f.text))) {
@@ -42,15 +57,17 @@ async function importCsvTexts(files: { name: string; text: string }[], skipped: 
   }
   const ed = getEditor()
   let n = 0
-  const fails: string[] = [...skipped]
+  const fails: string[] = [...skipped], ids: string[] = []
   ed.getState().beginGesture() // one undo entry for the whole batch
   for (const f of files) {
     try {
       const clip = csvToClip(f.text, ed.getState().defs, fps, f.name.replace(/\.csv$/i, ''))
-      ed.getState().importClipToActor(clip)
+      if (bin === undefined) ed.getState().importClipToActor(clip)
+      else { ed.getState().addClipAsset(clip); ids.push(clip.id) }
       n++
     } catch (e) { fails.push(`${f.name}: ${why(e)}`) }
   }
+  if (bin !== undefined && ids.length) ed.getState().renameBin(ed.getState().addBin('clip', ids), bin)
   ed.getState().endGesture()
   setImportResult({ head: `클립 ${n}개를 가져왔습니다`, lines: fails })
 }

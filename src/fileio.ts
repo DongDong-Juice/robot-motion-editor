@@ -127,7 +127,64 @@ export async function saveCsvFile(name: string, text: string): Promise<boolean> 
   return true
 }
 
+type DirPicker = (o: { mode: 'read' }) => Promise<FileSystemDirectoryHandle>
+type DirEntries = { values(): AsyncIterable<FileSystemHandle> }
+
+/** Every file under a folder the user picks (subfolders too), sorted by path. null = cancelled. */
+export async function openFolder(): Promise<{ name: string; files: File[] } | null> {
+  const pick = (window as unknown as { showDirectoryPicker?: DirPicker }).showDirectoryPicker
+  if (typeof pick === 'function') {
+    let dir: FileSystemDirectoryHandle
+    try { dir = await pick.call(window, { mode: 'read' }) } catch (e) { if (aborted(e)) return null; throw e }
+    const files: [string, File][] = []
+    const walk = async (d: FileSystemDirectoryHandle, at: string): Promise<void> => {
+      for await (const h of (d as unknown as DirEntries).values()) {
+        if (h.kind === 'file') files.push([at + h.name, await (h as FileSystemFileHandle).getFile()])
+        else await walk(h as FileSystemDirectoryHandle, `${at}${h.name}/`)
+      }
+    }
+    await walk(dir, '')
+    return { name: dir.name, files: files.sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(f => f[1]) }
+  }
+  return new Promise(resolve => { // no picker API: a folder <input>
+    const input = document.createElement('input')
+    input.type = 'file'; input.webkitdirectory = true; input.hidden = true
+    input.addEventListener('change', () => {
+      const files = [...(input.files ?? [])].sort((a, b) => a.webkitRelativePath.localeCompare(b.webkitRelativePath, undefined, { numeric: true }))
+      input.remove()
+      resolve(files.length ? { name: files[0].webkitRelativePath.split('/')[0], files } : null)
+    })
+    input.addEventListener('cancel', () => { input.remove(); resolve(null) })
+    document.body.appendChild(input)
+    input.click()
+  })
+}
+
 export const objectUrl = (file: File) => URL.createObjectURL(file)
 export const revokeUrl = (url: string) => URL.revokeObjectURL(url)
 
 export const openMediaFiles = (multiple: boolean) => openFiles('video/*', { 'video/*': [] }, multiple)
+
+// Project hub (server/hub.mjs): one server folder of *.motion.json. null = no hub server (static hosting, offline).
+export interface HubEntry { name: string; mtime: number; size: number }
+const hubUrl = (name: string) => `/api/projects/${encodeURIComponent(name)}`
+const isJson = (r: Response) => r.headers.get('Content-Type')?.includes('json')
+
+export async function hubList(): Promise<HubEntry[] | null> {
+  try { const r = await fetch('/api/projects'); return r.ok && isJson(r) ? await r.json() : null } catch { return null }
+}
+export async function hubRead(name: string): Promise<{ text: string; mtime: number }> {
+  const r = await fetch(hubUrl(name))
+  if (!r.ok) throw new Error(r.status === 404 ? '서버에 파일이 없습니다' : `서버 오류 ${r.status}`)
+  return { text: await r.text(), mtime: Number(r.headers.get('X-Mtime')) }
+}
+/** create: fail when the name exists. base: fail when the server file changed since that mtime. */
+export async function hubWrite(name: string, text: string, o: { create?: boolean; base?: number } = {}):
+  Promise<{ mtime: number } | { error: 'exists' | 'conflict' }> {
+  const q = o.create ? '?create=1' : o.base !== undefined ? `?base=${o.base}` : ''
+  const r = await fetch(hubUrl(name) + q, { method: 'PUT', body: text, headers: { 'Content-Type': 'application/json' } })
+  const b = await r.json().catch(() => ({}))
+  if (r.status === 409) return { error: b.error === 'exists' ? 'exists' : 'conflict' }
+  if (!r.ok) throw new Error(b.error ?? `서버 오류 ${r.status}`)
+  return b
+}
