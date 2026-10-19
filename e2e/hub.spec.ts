@@ -10,6 +10,7 @@ test('start screen: create on the hub, save, reopen from the list, conflict asks
   await page.keyboard.press('Escape')
   await expect(start).toBeVisible() // must pick one
 
+  await start.getByRole('button', { name: '+ 새 프로젝트' }).click()
   await start.getByLabel('프로젝트 이름').fill('a/b')
   await start.getByRole('button', { name: '만들기' }).click()
   await expect(start.getByRole('alert')).toContainText('쓸 수 없습니다')
@@ -38,10 +39,12 @@ test('start screen: create on the hub, save, reopen from the list, conflict asks
   // reload: the hub list opens it; the same name cannot be created twice
   await page.reload()
   await expect(start).toBeVisible({ timeout: 30000 })
+  await start.getByRole('button', { name: '+ 새 프로젝트' }).click()
   await start.getByLabel('프로젝트 이름').fill(name)
   await start.getByRole('button', { name: '만들기' }).click()
   await expect(start.getByRole('alert')).toHaveText('이미 있는 이름입니다')
-  await start.getByRole('button', { name: new RegExp(`^${name}`) }).click()
+  await start.getByLabel('검색').fill(name)
+  await start.getByRole('listitem').filter({ hasText: file }).click()
   await expect(start).toHaveCount(0)
   await expect(page.locator('.mb-title')).toHaveText(file)
   expect(await page.evaluate(() => (window as any).__editor.getState().project.actors.length)).toBe(2)
