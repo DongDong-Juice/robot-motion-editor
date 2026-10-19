@@ -2,10 +2,12 @@ import { expect, test } from 'vitest'
 import { DEFAULT_PHYSICS, cacheKey, groupOf, withDefaults } from './settings'
 import { loadDef } from '../test/defs'
 
+const g1 = loadDef('g1') // parsed once per file, outside any test's timeout (a full parallel run can take >20 s per parse)
+
 test('every G1 joint maps to a known group', () => {
   const known = Object.keys(DEFAULT_PHYSICS.g1.groups)
   expect(known).toHaveLength(5)
-  for (const j of loadDef('g1').joints) expect(known).toContain(groupOf('g1', j.name))
+  for (const j of g1.joints) expect(known).toContain(groupOf('g1', j.name))
   expect(groupOf('g1', 'left_hip_yaw_joint')).toBe('고관절')
   expect(groupOf('g1', 'right_knee_joint')).toBe('무릎')
   expect(groupOf('g1', 'left_wrist_roll_joint')).toBe('팔')

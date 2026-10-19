@@ -839,12 +839,22 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         const ok = tryEdit(p => {
           const f = findItem(p, itemId)
           if (!f || f.t.locked) return false
-          f.t.items = f.t.items.filter(i => i.id !== itemId)
-          if (f.t.kind === 'motion') { // no hole left (user): the pieces after it move back so the next starts where the one before ends
-            const before = f.t.items.filter(i => i.start < f.it.start), after = f.t.items.filter(i => i.start >= f.it.start)
-            const d = after.length ? Math.min(...after.map(i => i.start)) - Math.max(0, ...before.map(i => i.start + itemLen(i))) : 0
-            if (d > 0) for (const i of after) i.start -= d
+          // a cut piece goes back into its neighbour (user: the original CSV runs on): the piece just before takes over its range, or
+          // (the first piece) the one just after. Only a continuous neighbour: same clip, adjoining clip frames and sequence frames.
+          // Otherwise the slot is left empty, nothing moves. The deleted piece's 수정 goes with it.
+          const items = sortedItems(f.t), k = items.indexOf(f.it), b = f.it
+          const prev = items[k - 1], next = items[k + 1]
+          const joins = (x: Item | undefined, y: Item | undefined) => !!x && !!y && x.refId === y.refId && x.trimOut === y.trimIn && x.start + itemLen(x) === y.start
+          if (f.t.kind === 'motion' && joins(prev, b)) {
+            prev.trimOut = b.trimOut
+            if (b.restTail === undefined) delete prev.restTail; else prev.restTail = b.restTail // its end is the deleted piece's end now
+          } else if (f.t.kind === 'motion' && !prev && joins(b, next)) {
+            next.start = b.start; next.trimIn = b.trimIn
+            const front = ['restPose', 'restHold', 'restBlend', 'inertia'] as const // its front is the deleted piece's front now
+            for (const key of front) delete next[key]
+            Object.assign(next, Object.fromEntries(front.filter(key => b[key] !== undefined).map(key => [key, b[key]])))
           }
+          f.t.items = f.t.items.filter(i => i.id !== itemId)
           // last clip of a motion track gone -> the robot goes with it (the clip stays in the assets)
           if (f.t.kind === 'motion' && !f.t.items.length) {
             p.actors = p.actors.filter(a => a.id !== f.t.actorId)

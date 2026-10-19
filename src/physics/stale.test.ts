@@ -11,8 +11,9 @@ vi.mock('../export/csv', async orig => {
   return { ...m, exportItemCsv: (...a: Parameters<typeof m.exportItemCsv>) => { calls.n++; return m.exportItemCsv(...a) } }
 })
 
+const defs = { g1: loadDef('g1'), go2: loadDef('go2') } // parsed once per file, outside any test's timeout (a full parallel run can take >20 s per parse)
+
 test('stale re-exports only when the item\'s own inputs change', () => {
-  const defs = { g1: loadDef('g1'), go2: loadDef('go2') }
   const ed = initEditor(defs)
   ed.getState().loadProject(newProject(), null)
   const p0 = ed.getState().project, [g1, go2] = p0.actors

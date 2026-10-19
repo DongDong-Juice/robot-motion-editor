@@ -2,9 +2,11 @@ import { expect, test } from 'vitest'
 import { loadDef } from '../test/defs'
 import { footMat, legsOf, rootMat, solveLeg } from './legIk'
 
+const defs = { g1: loadDef('g1'), go2: loadDef('go2') } // parsed once per file, outside any test's timeout (a full parallel run can take >20 s per parse)
+
 // Each leg reaches a foot pose taken from a nearby reachable configuration, within joint limits (G1: position + tilt, GO2: point).
 for (const [k, n] of [['g1', 2], ['go2', 4]] as const) test(`solveLeg reaches a reachable foot target (${k})`, () => {
-  const def = loadDef(k), legs = legsOf(def), root = rootMat(0.1, -0.2, def.rest.z, 0.05, -0.03, 0.4)
+  const def = defs[k], legs = legsOf(def), root = rootMat(0.1, -0.2, def.rest.z, 0.05, -0.03, 0.4)
   expect(legs).toHaveLength(n)
   for (const leg of legs) {
     const moved = [...def.rest.q]
