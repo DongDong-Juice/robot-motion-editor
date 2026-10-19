@@ -61,3 +61,30 @@ test('drag a lead-in 전이 edge and a 끝 기본자세 edge in the lanes', asyn
   expect((await geo()).tail!.tail).toBe(g.tail!.tail + 10)
   expect(errors).toEqual([])
 })
+
+test('GO2 이음 block: two pieces end to start, its right edge drags the seam length (one undo)', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
+  await page.evaluate(async () => {
+    const { emptyBlockClip } = await import(/* @vite-ignore */ '/src/go2blocks/build.ts')
+    const s = (window as any).__editor.getState, a = emptyBlockClip(120, s().defs), b = { ...emptyBlockClip(120, s().defs), id: 'b2', name: 'B', hold: undefined }
+    b.channels = { ...b.channels, RL_thigh_joint: { keys: [{ f: 0, v: 0.72, interp: 'linear', inTan: { df: 0, dv: 0 }, outTan: { df: 0, dv: 0 } }] } }
+    s().appendClip(null, a); s().appendClip(s().project.actors.at(-1).id, b)
+    const tv = (window as any).__tv; tv.ppf = 3; tv.scrollF = 0; s().setFrame(0)
+  })
+  const second = async () => page.evaluate(() => { const s = (window as any).__editor.getState(); return [...s.project.sequence.tracks.find((t: any) => t.kind === 'motion').items].sort((a: any, b: any) => b.start - a.start)[0] })
+  const b = await second()
+  expect(b.start).toBe(120)
+  const canvas = page.locator('.seq-canvas'), box = (await canvas.boundingBox())!
+  const x = box.x + 160 + (120 + 20) * 3 // the 이음 block's right edge: piece start + 20 frames
+  let y = 0
+  for (let yy = box.y + 30; yy < box.y + box.height - 4 && !y; yy += 4) {
+    await page.mouse.move(x, yy)
+    if (/^끌어서 이음 길이 조절 \(20프레임\)/.test(await canvas.getAttribute('title') ?? '')) y = yy
+  }
+  expect(y).toBeGreaterThan(0)
+  await page.mouse.down(); await page.mouse.move(x + 15, y, { steps: 3 }); await page.mouse.move(x + 30, y, { steps: 3 }); await page.mouse.up()
+  await expect.poll(async () => (await second()).seam).toBe(30)
+  await page.evaluate(() => (window as any).__editor.getState().undo())
+  await expect.poll(async () => (await second()).seam).toBeUndefined()
+})

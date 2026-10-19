@@ -5,7 +5,7 @@ import type { RobotDefs } from '../model/evaluate'
 import { createEditorStore, editLock, editTarget, gizmoLock } from './store'
 import { makeKey } from '../model/curve'
 import { withDefaults } from '../physics/settings'
-import { emptyProject } from '../model/defaults'
+import { emptyProject, stageOf } from '../model/defaults'
 import type { Clip } from '../model/types'
 import { parseProject, serializeProject } from '../model/projectFile'
 
@@ -962,4 +962,30 @@ test('appendClip dedupes name', () => {
   const a = s().appendClip(go2, blockClip(10))!, b = s().appendClip(go2, blockClip(10))!
   const name = (id: string) => s().project.clips[itemById(id)!.refId].name
   expect([name(a), name(b)]).toEqual(['Stretch', 'Stretch_2'])
+})
+
+test('setStage: rounds to 0.1, clamps to 1..30, ignores NaN, one undo step', () => {
+  expect(stageOf(s().project)).toEqual({ width: 10, depth: 6 })
+  s().setStage({ width: 12.345 })
+  expect(s().project.stage).toEqual({ width: 12.3, depth: 6 })
+  s().setStage({ width: 0, depth: 100 })
+  expect(s().project.stage).toEqual({ width: 1, depth: 30 })
+  const before = s().project
+  s().setStage({ width: NaN })
+  expect(s().project).toBe(before)
+  s().undo()
+  expect(s().project.stage).toEqual({ width: 12.3, depth: 6 })
+})
+test('setStage: unchanged value is not an edit', () => {
+  s().setStage({ width: 30, depth: 6 })
+  const before = s().project
+  s().setStage({ width: 30 })
+  s().setStage({ depth: 6.04 })
+  s().setStage({ width: 100 })
+  expect(s().project).toBe(before)
+})
+test('stageShown defaults on and toggles', () => {
+  expect(s().stageShown).toBe(true)
+  s().setStageShown(false)
+  expect(s().stageShown).toBe(false)
 })

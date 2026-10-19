@@ -1,14 +1,15 @@
 import { createStore, useStore, type StoreApi } from 'zustand'
 import { evalCurve, makeKey } from '../model/curve'
 import { simplifyCurve, simplifyTolerance } from '../model/simplify'
-import { addActor as addActorTo, emptyProject, newProject, nextClipName } from '../model/defaults'
+import { addActor as addActorTo, emptyProject, newProject, nextClipName, stageOf } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
 import { inCrossfade, itemLen, resolve, sortedItems, validTrack } from '../model/sequence'
-import type { Actor, Bin, Item, Clip, Curve, Interp, Project, Tan, Track } from '../model/types'
+import type { Actor, Bin, Item, Clip, Curve, Interp, Project, StageSize, Tan, Track } from '../model/types'
 import { validVideoTrack, videoTrack } from '../model/video'
 import { baseClip, offsetKeyCount } from '../model/itemClip'
 import { addOverRange, type Range } from '../model/rangeEdit'
 import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP, previewRange } from '../model/restPose'
+import { SEAM_MAX } from '../model/seam'
 import type { RobotKind } from '../robot/types'
 import type { PhysicsSettings } from '../physics/settings'
 
@@ -65,6 +66,8 @@ export interface EditorState {
   /** 구간 (clip frames, clip view / 클립 편집 only): value edits add the same difference over [a, b], easing out over `fade`
    *  frames each side. Not saved; cleared when the open clip changes. */
   range: Range | null; setRange(r: Range | null): void
+  stageShown: boolean; setStageShown(on: boolean): void // 무대 floor on/off in the 3D previews (UI only, not saved)
+  setStage(patch: Partial<StageSize>): void // 무대 size in m (0.1 steps, 1..30): one undo step
   degrees: boolean; setDegrees(on: boolean): void // angle unit of the value fields (inspector and joint panel)
   clearOffset(itemId: string): boolean // drop the piece's whole 수정 층 (one undo step); false = none / locked
   clearClipOffset(clipId: string): boolean // drop the clip's whole 수정 층 (one undo step); false = none
@@ -119,8 +122,8 @@ export interface EditorState {
   // mode 'prepend' = 덧붙이기, null = off (덮어쓰기 was removed).
   setRestPose(itemId: string, mode: Item['restPose'] | null): boolean
   setRestTail(itemId: string, on: boolean): boolean
-  /** 덧붙이기 lead-in and 끝 기본자세 lengths of a piece, in frames (rounded, clamped); null = back to the default / auto. One undo step. */
-  setRestLead(itemId: string, patch: { restHold?: number | null; restBlend?: number | 'auto' | null; inertia?: number | null; tailHold?: number | null; tailBlend?: number | null }): boolean
+  /** 덧붙이기 lead-in, 끝 기본자세 and GO2 이음매 보정 lengths of a piece, in frames (rounded, clamped); null = back to the default / auto. One undo step. */
+  setRestLead(itemId: string, patch: { restHold?: number | null; restBlend?: number | 'auto' | null; inertia?: number | null; tailHold?: number | null; tailBlend?: number | null; seam?: number | null }): boolean
   setPhysics(next: PhysicsSettings): void // project-wide physics-assist settings: one undo step
   beginGesture(): void; endGesture(): void
   inGesture: boolean // a slider/gizmo drag is under way (views may skip heavy recomputation until it ends)
@@ -458,6 +461,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         const top = e.clip.length - 1, a = Math.min(Math.max(Math.round(Math.min(r.a, r.b)), 0), top), b = Math.min(Math.max(Math.round(Math.max(r.a, r.b)), 0), top)
         return { range: { a, b, fade: Math.min(Math.max(Math.round(r.fade), 0), 600) } }
       }),
+      stageShown: true, setStageShown: stageShown => set({ stageShown }),
       degrees: true, setDegrees: degrees => set({ degrees }),
       setClipPeek: on => set({ clipPeek: on }),
       openClipEdit: clipId => {
@@ -609,6 +613,12 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
             putKey(clip, n, f, v)
           }
         }, [{ clipId, channels: names }])
+      },
+      setStage: patch => {
+        const clean: Partial<StageSize> = {}
+        for (const k of ['width', 'depth'] as const) { const v = patch[k]; if (v !== undefined && Number.isFinite(v)) clean[k] = Math.min(30, Math.max(1, Math.round(v * 10) / 10)) }
+        const cur = stageOf(get().project)
+        if (Object.entries(clean).some(([k, v]) => cur[k as keyof StageSize] !== v)) edit(p => { p.stage = { ...stageOf(p), ...clean } }, [])
       },
       setPhysics: next => edit(p => { p.physics = next }, []),
       setTrackFlag: (trackId, flag, on) => edit(p => {
@@ -809,6 +819,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         if (!f || f.t.locked) return false
         const d = Math.round(df), it = f.it
         if (side === 'in') { it.start += d; it.trimIn += d } else it.trimOut += d
+        const c = f.t.kind === 'motion' ? p.clips[it.refId] : undefined
+        if (c?.hold && it.trimOut > c.length) p.clips[c.id] = { ...c, length: it.trimOut } // Empty: its end drags the clip longer (never shorter: other pieces)
         return it.trimIn >= 0 && it.trimIn < it.trimOut && it.trimOut <= refLen(p, f.t, it) && validItems(p, f.t)
       }),
       splitItem: (itemId, frame) => tryEdit(p => {
@@ -883,8 +895,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       setRestLead: (itemId, patch) => tryEdit(p => {
         const f = findItem(p, itemId)
         if (!f || f.t.locked || f.t.kind !== 'motion') return false
-        const lim = { restHold: HOLD_RANGE, restBlend: BLEND_RANGE, inertia: [0, Math.min(INERTIA_CAP, f.it.trimIn)], tailHold: HOLD_RANGE, tailBlend: BLEND_RANGE } as const
-        for (const k of ['restHold', 'restBlend', 'inertia', 'tailHold', 'tailBlend'] as const) {
+        const lim = { restHold: HOLD_RANGE, restBlend: BLEND_RANGE, inertia: [0, Math.min(INERTIA_CAP, f.it.trimIn)], tailHold: HOLD_RANGE, tailBlend: BLEND_RANGE, seam: [0, SEAM_MAX] } as const
+        for (const k of ['restHold', 'restBlend', 'inertia', 'tailHold', 'tailBlend', 'seam'] as const) {
           const v = patch[k]
           if (v === undefined) continue
           if (v === null) delete f.it[k]

@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { evalCurve } from '../model/curve'
-import { COLOR } from '../model/defaults'
+import { COLOR, stageOf } from '../model/defaults'
 import { evaluate, evaluateClip, evaluateItem, evaluateRoot, placeItemPose } from '../model/evaluate'
 import { rebasePose } from '../model/pose'
 import { itemLead, leadInPose, restClipFor, tailedClip } from '../model/restPose'
@@ -11,11 +11,12 @@ import { baseClip, editedClip, offsetKeyCount, withUse } from '../model/itemClip
 import { nearestAngle } from '../model/rootMath'
 import { hiddenAt, resolve, sortedItems, stitchTransforms, worldToClipRoot } from '../model/sequence'
 import type { Actor, Clip, Project } from '../model/types'
-import { actorOf, CLIP_ACTOR, clipLocked, editingItem, editTarget, getEditor, gizmoLock, trackLocked } from '../store/store'
+import { actorOf, CLIP_ACTOR, clipLocked, editingItem, editTarget, getEditor, gizmoLock, trackLocked, useEditor } from '../store/store'
 import { sequenceEnd } from '../transport'
 import { buildRobot, pivotAngle, type RobotRig } from './buildRobot'
 import type { RobotDef } from '../robot/types'
 import { followStep } from './follow'
+import { disposeStage, makeStage } from './stageFloor'
 
 const css = (n: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim()
 const EXTENT = 5
@@ -60,6 +61,13 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
   const [trail, setTrail] = useState(false)
   const trailRef = useRef(false)
   trailRef.current = trail
+  // 무대: the main pane shares the store flag, the clip/compare/span panes toggle their own
+  const main = !cid && !span
+  const [stageLocal, setStageLocal] = useState(true)
+  const stageStore = useEditor(s => s.stageShown)
+  const stageOn = main ? stageStore : stageLocal
+  const stageRef = useRef(true)
+  stageRef.current = stageOn
 
   useEffect(() => {
     const el = host.current!
@@ -70,6 +78,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
     scene.background = new THREE.Color(css('--bg') || '#22262D')
     const grid = makeGrid()
     scene.add(grid)
+    let stageG: THREE.Group | null = null, stageKey = ''
     const hemi = new THREE.HemisphereLight(0xffffff, 0x4a505c, 1.4)
     hemi.position.set(0, 0, 1)
     const sun = new THREE.DirectionalLight(0xffffff, 1.6)
@@ -100,7 +109,16 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
     if (mainView || editPane) scene.add(tc.getHelper())
     // dev/e2e hook
     // dev/e2e hook: __stage = main pane, __stages = every pane by key ('main' or the compare clip id)
-    const hook = { camera, tc, entries: () => entries, renderer, camTarget: () => orbit.target.toArray(), overlay: () => overlays.values().next().value?.rig ?? null, overlays: () => overlays }
+    const hook = { stage: () => (stageG?.visible ? stageG : null), camera, tc, entries: () => entries, renderer, camTarget: () => orbit.target.toArray(), overlay: () => overlays.values().next().value?.rig ?? null, overlays: () => overlays }
+    const syncStage = () => {
+      const { width, depth } = stageOf(store.getState().project), key = `${width}x${depth}`
+      if (key === stageKey) return
+      stageKey = key
+      if (stageG) { scene.remove(stageG); disposeStage(stageG) }
+      stageG = makeStage(width, depth, { floor: css('--panel') || '#2B3038', line: css('--line') || '#3B424D', edge: css('--dim') || '#8d96a3', front: css('--accent') || '#F0A43A' })
+      stageG.visible = stageRef.current; grid.visible = !stageRef.current
+      scene.add(stageG); dirty = true
+    }
     const hookKey = span ? 'span' : ranged ? 'preview' : cid ?? 'main'
     if (import.meta.env.DEV) {
       const w = window as any
@@ -494,7 +512,9 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
 
     let wasLocked = false
     if (cid) { syncClip(); applyClip(); if (editPane) syncSelection() } else { syncActors(); applyAll(); if (mainView) syncSelection() }
+    syncStage()
     const unsub = store.subscribe((s, prev) => {
+      if (s.project !== prev.project) syncStage()
       if (cid) {
         if (s.project !== prev.project) { syncClip(); shownF = -1 }
         applyClip()
@@ -529,9 +549,15 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       orbit.target.fromArray(r.target); camera.position.fromArray(r.camera)
       if (moved) { orbit.update(); dirty = true }
     }
-    let shownTrail = trailRef.current
+    let shownTrail = trailRef.current, shownStage = stageRef.current
     const loop = () => {
       raf = requestAnimationFrame(loop)
+      if (stageRef.current !== shownStage) { // 무대 toggled
+        shownStage = stageRef.current
+        if (stageG) stageG.visible = shownStage
+        grid.visible = !shownStage
+        dirty = true
+      }
       if (trailRef.current !== shownTrail) { // 경로 표시 toggled
         shownTrail = trailRef.current
         if (cid) for (const e of entries.values()) e.trail.visible = shownTrail
@@ -556,7 +582,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       el.removeEventListener('keydown', onKey)
       for (const e of entries.values()) disposeEntry(e)
       for (const o of overlays.values()) disposeObj(o.rig.root)
-      disposeObj(grid); disposeObj(axisRings); disposeObj(viewRing)
+      disposeObj(grid); if (stageG) { scene.remove(stageG); disposeStage(stageG) }; disposeObj(axisRings); disposeObj(viewRing)
       tc.dispose(); orbit.dispose()
       // dispose() alone keeps the WebGL context alive until GC; release it now so opening/closing
       // preview panes never hits the browser's context limit (which kills the oldest pane's context)
@@ -575,6 +601,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       <div ref={host} tabIndex={0} style={{ width: '100%', height: '100%', outline: 'none', position: 'relative' }} />
       <div className="pv-tools">
         <button className="pv-btn" aria-pressed={follow} onClick={() => setFollow(f => !f)}>로봇 따라가기</button>
+        <button className="pv-btn" aria-pressed={stageOn} onClick={() => main ? getEditor().getState().setStageShown(!stageOn) : setStageLocal(v => !v)} title="무대와 객석 방향을 보여 줍니다">무대</button>
         {cid && <button className="pv-btn" aria-pressed={trail} onClick={() => setTrail(v => !v)} title="로봇 골반이 지나간 바닥 경로를 선으로 보여 줍니다">경로 표시</button>}
         {children}
       </div>

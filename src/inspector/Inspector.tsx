@@ -1,9 +1,31 @@
 import { useEffect, useState } from 'react'
+import { stageOf } from '../model/defaults'
 import { curveKeyCount, offsetKeyCount } from '../model/itemClip'
 import { actorOf, clipLocked, editLock, editTarget, getEditor, targetItem, trackLocked, useEditor } from '../store/store'
 import JointPanel from '../viewer/JointPanel'
 
 const ROOT = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw']
+
+function StageSection() {
+  const { project, stageShown } = useEditor(s => s)
+  if (!stageShown) return null
+  const st = stageOf(project), set = getEditor().getState().setStage
+  return (
+    <section className="insp-sec">
+      <h3 className="insp-sec-t">무대</h3>
+      <div className="insp-grid3">
+        {([['width', '가로'], ['depth', '깊이']] as const).map(([k, lab]) => (
+          <label key={k} className="insp-field"><span className="insp-lab">{lab}</span>
+            <span className="insp-unit"><input type="number" aria-label={`무대 ${lab}`} min={1} max={30} step={0.1} key={st[k]} defaultValue={st[k]}
+              onBlur={e => { set({ [k]: e.target.valueAsNumber }); e.target.value = String(stageOf(getEditor().getState().project)[k]) }}
+              onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} /><i>m</i></span>
+          </label>
+        ))}
+      </div>
+      <p className="insp-hint">객석은 +X 쪽입니다</p>
+    </section>
+  )
+}
 
 export default function Inspector() {
   const ed = getEditor()
@@ -13,12 +35,12 @@ export default function Inspector() {
   const [simpMsg, setSimpMsg] = useState<{ n: number; at: number } | null>(null)
   useEffect(() => { if (!simpMsg) return; const t = setTimeout(() => setSimpMsg(null), 3000); return () => clearTimeout(t) }, [simpMsg])
   const actor = actorOf({ project, clipEdit }, sel.actorId)
-  if (!actor) return <div className="insp-empty">무대에서 링크를 클릭하거나 타임라인에서 채널을 고르세요.</div>
+  if (!actor) return <div className="insp"><p className="insp-hint">무대에서 링크를 클릭하거나 타임라인에서 채널을 고르세요.</p><StageSection /></div>
   const clipMode = !!clipEdit // 클립 편집 모드: the open clip on its virtual actor
 
   const def = defs[actor.robot]
   const target = editTarget({ project, frame, editing, clipEdit }, actor.id)
-  if (!target) return <div className="insp-empty">이 액터에 클립이 없습니다.</div>
+  if (!target) return <div className="insp"><p className="insp-hint">이 액터에 클립이 없습니다.</p><StageSection /></div>
   const { clipId } = target
   const clip = project.clips[clipId]
   const item = targetItem({ project, editing, clipEdit }, target.itemId)!
@@ -100,6 +122,7 @@ export default function Inspector() {
       {lockedTrack && <p className="insp-hint" role="status">잠긴 트랙입니다</p>}
       {simpMsg && <p className="insp-hint" role="status">{simpMsg.n > 0 ? `키 ${simpMsg.n}개를 줄였습니다` : '줄일 키가 없습니다'}</p>}
       {lenMsg && <p className="insp-hint" role="status">다른 클립과 겹쳐서 길이를 바꿀 수 없습니다</p>}
+      <StageSection />
     </div>
   )
 }

@@ -219,6 +219,17 @@ test('physics round-trips as-is; absent stays absent; non-object is dropped', ()
   }
 })
 
+test('stage round-trips; absent stays absent; malformed is dropped', () => {
+  const p = mk()
+  expect('stage' in parseProject(serializeProject(p), defs)).toBe(false)
+  p.stage = { width: 8, depth: 5 }
+  expect(parseProject(serializeProject(p), defs).stage).toEqual({ width: 8, depth: 5 })
+  for (const v of ['abc', null, { width: -1, depth: 5 }, { width: 8 }]) {
+    const o = JSON.parse(serializeProject(p)); o.stage = v
+    expect('stage' in parseProject(JSON.stringify(o), defs)).toBe(false)
+  }
+})
+
 test('bins round-trip; clip/media bin kept', () => {
   const p = mk(), c = Object.values(p.clips)[0]
   p.bins = [{ id: 'b1', name: 'Walk', tab: 'clip' }, { id: 'b2', name: 'Ref', tab: 'media' }]

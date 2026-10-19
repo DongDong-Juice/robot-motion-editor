@@ -69,6 +69,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
       curves(c.channels, `${at}.channels`, c.robot, true)
       if (c.offset !== undefined) { if (!isObj(c.offset)) fail(`${at}.offset`); curves(c.offset, `${at}.offset`, c.robot, false) }
       if (c.bin !== undefined && binTab.get(c.bin) !== 'clip') delete c.bin
+      if (c.hold !== undefined && c.hold !== true) delete c.hold
     }
 
     // Expands v2 { k } into { keys } in place and checks the keys. clampJoints: r6 rounding must not push a clip key past its
@@ -138,7 +139,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
         if (it.restHold !== undefined && !(int(it.restHold) && it.restHold >= 0)) fail(`${it_}.restHold`)
         if (it.restBlend !== undefined && it.restBlend !== 'auto' && !(int(it.restBlend) && it.restBlend >= 0)) fail(`${it_}.restBlend`)
         if (it.inertia !== undefined && !(int(it.inertia) && it.inertia >= 0)) fail(`${it_}.inertia`)
-        for (const k of ['tailHold', 'tailBlend']) if (it[k] !== undefined && !(int(it[k]) && it[k] >= 0)) fail(`${it_}.${k}`)
+        for (const k of ['tailHold', 'tailBlend', 'seam']) if (it[k] !== undefined && !(int(it[k]) && it[k] >= 0)) fail(`${it_}.${k}`)
         if (itemIds.has(it.id)) fail(`${it_}.id`, '중복된 ID입니다')
         itemIds.add(it.id)
         if (t.kind === 'video') {
@@ -159,5 +160,6 @@ export function parseProject(text: string, defs: RobotDefs): Project {
   }
   p.version = 2
   if (!isObj(p.physics)) delete p.physics
+  if (!(isObj(p.stage) && [p.stage.width, p.stage.depth].every(v => typeof v === 'number' && v >= 1 && v <= 30))) delete p.stage
   return p as Project
 }
