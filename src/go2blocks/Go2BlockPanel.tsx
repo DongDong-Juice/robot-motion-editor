@@ -3,7 +3,7 @@ import { parseCsvPoses } from '../export/importCsv'
 import type { Pose } from '../model/pose'
 import { getEditor, trackLocked, useEditor } from '../store/store'
 import { blockUrl, GO2_BLOCKS, type Block } from './blocks'
-import { blockActual, buildBlockClip, emptyBlockClip } from './build'
+import { blockActual, buildBlockClip, emptyClipFor } from './build'
 
 type Template = { fps: number; poses: Pose[] }
 // One fetch per block; a failed load is dropped so picking the block again retries.
@@ -88,7 +88,6 @@ export default function Go2BlockPanel({ target, blockId, onAdded }: { target: st
   const locked = useEditor(s => !!target && target !== 'asset' && trackLocked(s.project, target))
   const block = GO2_BLOCKS.find(b => b.id === blockId)!
   const [value, setValue] = useState('') // a loop block's chosen step value (the first reachable one once its template loads)
-  const [frames, setFrames] = useState('30') // the Empty block's length (60fps frames)
   const [tpl, setTpl] = useState<{ id: string; t?: Template; err?: string } | null>(null)
 
   useEffect(() => {
@@ -103,17 +102,17 @@ export default function Go2BlockPanel({ target, blockId, onAdded }: { target: st
   const options = useMemo(() => t ? stepOptions(block, t.poses) : [], [t, block])
   useEffect(() => { if (options.length && !options.some(o => o.v === value)) setValue(options[0].v) }, [options, value]) // the smallest by default
   const v = block.kind === 'loop' ? (value.trim() === '' ? NaN : Number(value)) : 0
-  const n = Number(frames), empty = block.kind === 'empty'
-  const valid = empty ? Number.isInteger(n) && n >= 1 : Number.isFinite(v) && (block.kind !== 'loop' || options.some(o => o.v === value))
+  const empty = block.kind === 'empty'
+  const valid = empty || Number.isFinite(v) && (block.kind !== 'loop' || options.some(o => o.v === value))
   const ready = empty || !!t
   const actual = t && valid ? blockActual(block, t.poses, v) : null
   const unit = block.kind === 'loop' && block.param === 'meters' ? 'm' : '°'
 
   const add = () => {
     if (!ready || !valid) return
-    const st = getEditor().getState(), built = empty ? emptyBlockClip(n, st.defs) : buildBlockClip(block, t!.poses, t!.fps, v, st.defs)
-    // the same block (same name: Rotate_168deg, Hello…) already in 목록: no new clip (user) — a robot gets that one appended
-    const have = Object.values(st.project.clips).find(c => c.robot === 'go2' && c.name === built.name), clip = have ?? built
+    const st = getEditor().getState(), built = empty ? emptyClipFor(st.project.clips, st.defs) : buildBlockClip(block, t!.poses, t!.fps, v, st.defs)
+    // the same block (same name: Rotate_168deg, Hello…; Empty: the one Empty clip) already in 목록: no new clip (user) — a robot gets that one appended
+    const have = st.project.clips[built.id] ?? Object.values(st.project.clips).find(c => c.robot === 'go2' && c.name === built.name), clip = have ?? built
     if (target === 'asset') { // 목록에만 추가
       if (have) { onAdded?.(null, have.name, true); return }
       const name = st.addClipAsset(clip); if (name) onAdded?.(null, name, false); return
@@ -131,11 +130,7 @@ export default function Go2BlockPanel({ target, blockId, onAdded }: { target: st
           <StepPicker options={options} value={value} onChange={setValue} />
         </div>
       )}
-      {empty && (
-        <label className="pp-blk-field"><span>길이<span className="pp-dim"> · 프레임 (기본자세로 서 있음)</span></span>
-          <input type="number" aria-label="길이" min={1} step={1} value={frames} onChange={e => setFrames(e.target.value)} />
-        </label>
-      )}
+      {empty && <p className="pp-dim">기본자세로 서 있는 30프레임. 타임라인에서 막대 끝을 끌어 길이를 바꿉니다.</p>}
       {actual && <p className="pp-dim" role="status">→ 실제 {+actual.actual.toFixed(unit === 'm' ? 2 : 0)}{unit} ({actual.n}회)</p>}
       {actual && <p className="pp-dim pp-why">{stepWhy(actual, unit)}</p>}
       {tpl?.id === blockId && tpl.err && <p className="pp-msg" role="alert" style={{ color: 'var(--warn)' }}>템플릿을 불러오지 못했습니다: {tpl.err}</p>}

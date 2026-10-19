@@ -2,6 +2,7 @@ import { evalCurve, makeKey } from './curve'
 import type { RobotDefs } from './pose'
 import type { Clip, Curve, Item, Key, Project } from './types'
 import type { RobotDef } from '../robot/types'
+import { seamOf, seamOffset, type Seam } from './seam'
 
 // 조각 수정 층: Item.offset holds per-channel delta curves in clip frames (joints rad, root m/rad). The piece plays
 // clip + offset; the shared clip is never touched. Spec docs/superpowers/specs/2026-10-13-piece-offset-design.md.
@@ -32,7 +33,23 @@ const cache = new WeakMap<Record<string, Curve>, WeakMap<Clip, Clip>>()
 /** The clip a motion item plays: its clip, plus the item's 수정 층 when it has one (unless set to 원본 사용). undefined for an
  * unknown clip. Playback, CSV, physics and the lead-in all use this, so what plays is what exports. */
 export function itemClip(p: Project, defs: RobotDefs, it: Item): Clip | undefined {
-  return it.use === 'original' ? baseClip(p, defs, it.refId) : editedClip(p, defs, it)
+  const base = it.use === 'original' ? baseClip(p, defs, it.refId) : editedClip(p, defs, it)
+  if (!base || base.robot !== 'go2') return base
+  let m = seamCache.get(p)
+  if (!m) seamCache.set(p, m = new WeakMap())
+  if (m.has(it)) return m.get(it)
+  const s = seamOf(p, defs, it, base, prev => itemClip(p, defs, prev)) // GO2 이음매 보정 with the piece ending where this one starts
+  const r = s ? bakeOffset(base, defs.go2, seamOffset(it, s)) : base
+  m.set(it, r)
+  return r
+}
+// Per project (immutable per edit) and item object: a seam depends on the piece before, so it is redone after every edit.
+const seamCache = new WeakMap<Project, WeakMap<Item, Clip>>()
+
+/** The 이음매 보정 of a piece as it plays, for the lanes: its length and whether the gap it closes is too big to look natural. */
+export function itemSeam(p: Project, defs: RobotDefs, it: Item): Seam | null {
+  const base = it.use === 'original' ? baseClip(p, defs, it.refId) : editedClip(p, defs, it)
+  return base ? seamOf(p, defs, it, base, prev => itemClip(p, defs, prev)) : null
 }
 
 export const curveKeyCount = (o: Record<string, Curve> | undefined) => Object.values(o ?? {}).reduce((n, c) => n + c.keys.length, 0)
