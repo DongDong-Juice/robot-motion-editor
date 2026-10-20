@@ -1,0 +1,13 @@
+node_modules
+dist
+test-results
+playwright-report
+graphify-out
+projects
+assets
+e2e
+docs
+.git
+.idea
+*.tsbuildinfo
+*.stackdump
