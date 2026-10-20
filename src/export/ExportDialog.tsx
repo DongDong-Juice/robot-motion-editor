@@ -10,6 +10,11 @@ import { runItems } from '../physics/runItem'
 import { pieceName, projectTitle } from '../model/sequence'
 import { seqFocus } from '../timeline/viewState'
 
+const Spin = () => <span className="spin" aria-hidden="true" />
+const tick = () => new Promise<void>(r => setTimeout(r, 0)) // let the dialog repaint between items (a long export froze the page)
+type Row = { actor: { id: string; name: string; robot: string }; item: import('../model/types').Item; t: import('../model/types').Track }
+type CsvWarn = ReturnType<typeof exportItemCsv>['warnings'][number] & { actorId: string; actorName: string; itemId: string }
+
 export default function ExportDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null)
   const project = useEditor(s => s.project), defs = useEditor(s => s.defs), title = useEditor(s => projectTitle(s.fileName))
@@ -18,6 +23,8 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
   const [msg, setMsg] = useState('')
   const [dir, setDir] = useState<FileSystemDirectoryHandle | null>(null) // 다운로드 폴더: kept while the app runs, null = the browser's
   const [skip, setSkip] = useState(false) // 물리 검증 건너뛰기 (dialog state only)
+  const [exporting, setExporting] = useState<{ key: string; done: number; total: number } | null>(null) // the export in progress: its button shows it
+  const [csvWarns, setCsvWarns] = useState<CsvWarn[] | null>(null) // CSV checks: worked out after the dialog shows (null = 검사 중)
   const phys = usePhysics(s => s.byItem), prog = usePhysics(s => s.progress), loading = usePhysics(s => s.loading)
 
   useEffect(() => {
@@ -33,32 +40,74 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
   }), [project])
   const groups = (['g1', 'go2'] as const).map(robot => ({ robot, rows: rows.filter(r => r.actor.robot === robot) })).filter(g => g.rows.length)
 
+  // which items need a physics run: each check builds that item's CSV, so one item per tick after the dialog shows (all at once
+  // froze the page on 내보내기, user); the boxes show 확인 중 until it is done
+  const [scanning, setScanning] = useState(true) // true from the first render the dialog shows (a stale result never flashes)
   useEffect(() => {
-    if (!open || skip) return
-    const todo = rows.filter(({ actor, item }) => needsRun(project, defs, actor.id, item.id, phys[item.id]))
-    if (todo.length) void runItems(todo.map(({ actor, item }) => ({ actorId: actor.id, itemId: item.id })))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project, defs, open, skip, phys])
-  const busy = (rs: typeof rows) => open && !skip && rs.some(({ item }) => ['queued', 'running'].includes(phys[item.id]?.status))
+    if (!open) { setScanning(true); return } // ready for the next open
+    if (skip) { setScanning(false); return }
+    let live = true
+    setScanning(true)
+    void (async () => {
+      const todo: { actorId: string; itemId: string }[] = []
+      for (const { actor, item } of rows) {
+        await tick()
+        if (!live) return
+        if (needsRun(project, defs, actor.id, item.id, usePhysics.getState().byItem[item.id])) todo.push({ actorId: actor.id, itemId: item.id })
+      }
+      if (!live) return
+      for (const t of todo) { await tick(); if (!live) return; void runItems([t]) } // queued first (each builds its CSV: one per tick), so a stale result never shows its warnings
+      setScanning(false)
+    })()
+    return () => { live = false }
+  }, [project, defs, open, skip, rows]) // not phys: a finished run does not need a new scan (and would flash 확인 중)
+  const busy = (rs: typeof rows) => open && !skip && (scanning || rs.some(({ item }) => ['queued', 'running'].includes(phys[item.id]?.status)))
   const running = busy(rows)
 
-  const warnings = useMemo(() => open ? rows.flatMap(({ actor, item }) =>
-    [...exportItemCsv(project, defs, actor.id, item.id).warnings, ...(skip ? [] : physicsWarnings(project, defs, item, phys[item.id]))]
-      .map(w => ({ ...w, actorId: actor.id, actorName: actor.name, itemId: item.id }))) : [],
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  [project, defs, open, skip, phys])
+  // the CSV checks build every item's CSV: one item per tick after the dialog shows, so opening it does not freeze
+  useEffect(() => {
+    if (!open) return
+    let live = true
+    setCsvWarns(null)
+    void (async () => {
+      const out: CsvWarn[] = []
+      for (const { actor, item } of rows) {
+        await tick()
+        if (!live) return
+        out.push(...exportItemCsv(project, defs, actor.id, item.id).warnings.map(w => ({ ...w, actorId: actor.id, actorName: actor.name, itemId: item.id })))
+      }
+      if (live) setCsvWarns(out)
+    })()
+    return () => { live = false }
+  }, [project, defs, open, rows])
+  // physics warnings only once the scan has queued what is stale: before that a stale result's warnings would show
+  const warnings = useMemo(() => [...(csvWarns ?? []), ...(open && !skip && !scanning ? rows.flatMap(({ actor, item }) =>
+    physicsWarnings(project, defs, item, phys[item.id]).map(w => ({ ...w, actorId: actor.id, actorName: actor.name, itemId: item.id }))) : [])],
+  [csvWarns, project, defs, open, skip, phys, rows, scanning])
+  // rs: one box's items (its own count, user: GO2 with one item showed the whole queue's 20/21); none = every item
+  const physLabel = (rs = rows) => {
+    if (scanning && !prog) return '물리 검증 확인 중'
+    if (loading) return '물리 엔진 불러오는 중'
+    const left = rs.filter(({ item }) => ['queued', 'running'].includes(phys[item.id]?.status)).length
+    return `물리 검증 중 ${Math.min(rs.length - left + 1, rs.length)}/${rs.length}`
+  }
 
   async function choose() {
     try { const d = await pickDirectory(); if (d) setDir(d) } catch (e) { setMsg(`폴더 선택 실패: ${e instanceof Error ? e.message : e}`) }
   }
   // one robot's items (G1 / GO2 내보내기) or one item (row 내보내기) into the 다운로드 폴더: label prefixes the message, zipName names the zip
-  async function doExport(rs: typeof rows, zipName = 'motion_export.zip', label = '') {
+  async function doExport(rs: Row[], key: string, zipName = 'motion_export.zip', label = '') {
+    if (exporting) return
+    setExporting({ key, done: 0, total: rs.length })
     try {
-      const taken = new Set<string>()
-      const files = rs.map(({ actor, item }) => {
+      const taken = new Set<string>(), files: { name: string; text: string }[] = []
+      for (const { actor, item } of rs) {
+        await tick()
         const { name, text } = exportItemCsv(project, defs, actor.id, item.id, taken, title)
-        return { name, text }
-      })
+        files.push({ name, text })
+        setExporting({ key, done: files.length, total: rs.length })
+      }
+      await tick()
       // No folder picked and several files: one zip download instead of a download per file.
       if (!dir && files.length > 1) {
         downloadBlob(zipName, new Blob([zip(files)], { type: 'application/zip' }))
@@ -68,15 +117,18 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
         setMsg(`${label}CSV ${files.length}개를 ${dir ? `${dir.name} 폴더에 ` : ''}내보냈습니다.`)
       }
     } catch (e) { setMsg(`내보내기 실패: ${e instanceof Error ? e.message : e}`) }
+    finally { setExporting(null) }
   }
+  const exportLabel = (key: string, idle: string) => exporting?.key === key ? <><Spin /> 내보내는 중… {exporting.done}/{exporting.total}</> : idle
 
   return (
-    <dialog ref={ref} className="exp" onClose={onClose} aria-label="내보내기">
+    <dialog ref={ref} className="exp" onClose={onClose} aria-label="내보내기" aria-busy={!!exporting}
+      onCancel={e => { if (exporting) e.preventDefault() }}>{/* Esc waits for the export to finish */}
       <h2>내보내기</h2>
       <div className="exp-row exp-opts">
         {/* a browser gives the folder's name only, never its full path */}
         <span className="exp-dim exp-dir" title={dir ? dir.name : '브라우저의 기본 다운로드 폴더'}>다운로드 폴더: {dir ? dir.name : '브라우저 기본 다운로드 폴더'}</span>
-        <button onClick={choose}>다운로드 폴더 선택</button>
+        <button onClick={choose} disabled={!!exporting}>다운로드 폴더 선택</button>
         {dir && <button onClick={() => setDir(null)} title="브라우저 기본 다운로드 폴더로 되돌립니다">기본으로</button>}
       </div>
       <div className="exp-items">
@@ -85,8 +137,8 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
           return <fieldset key={g.robot} role="group" aria-label={R} className="exp-box">
           <legend className="exp-group">{R}</legend>
           {/* on the box's top line at its far end, like the legend at its start */}
-          <button className="exp-all" disabled={busy(g.rows)} onClick={() => doExport(g.rows, `${g.robot}_export.zip`, `${R} `)}
-            title={`${R} 항목을 모두 내보냅니다`}>{R} 내보내기</button>
+          <button className="exp-all" disabled={busy(g.rows) || !!exporting} onClick={() => doExport(g.rows, g.robot, `${g.robot}_export.zip`, `${R} `)}
+            title={`${R} 항목을 모두 내보냅니다`} aria-label={`${R} 내보내기`}>{busy(g.rows) ? <><Spin /> {physLabel(g.rows)}</> : exportLabel(g.robot, `${R} 내보내기`)}</button>
           <div className="exp-list">
           {g.rows.map(r => {
           const { actor, item, t } = r, { from, to } = itemFrameRange(item)
@@ -94,7 +146,8 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
             <div key={item.id} className="exp-row exp-item">
               <span>{actor.name} · {pieceName(t, item, project.clips[item.refId], title)}</span>
               <span className="exp-dim">{formatTimecode(from)}–{formatTimecode(to)} · {to - from}프레임</span>
-              <button className="exp-one" disabled={busy([r])} onClick={() => doExport([r])} title="이 항목만 내보냅니다">내보내기</button>
+              {busy([r]) ? <span className="exp-one-spin" title="물리 검증 중"><Spin /></span>
+                : <button className={'exp-one' + (exporting?.key === item.id ? ' on' : '')} disabled={!!exporting} onClick={() => doExport([r], item.id)} title="이 항목만 내보냅니다" aria-label="내보내기">{exportLabel(item.id, '내보내기')}</button>}
             </div>
           )
         })}
@@ -102,7 +155,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
         </fieldset>})}
       </div>
       <div className="exp-row exp-sub-row">
-        <h3 className="exp-sub">물리 검증 목록</h3>
+        <h3 className="exp-sub">물리 검증 목록{(csvWarns === null || running) && <span className="exp-dim exp-checking"><Spin /> {csvWarns === null ? '검사 중…' : physLabel()}</span>}</h3>
         <label className="exp-check"><input type="checkbox" checked={skip} onChange={e => setSkip(e.target.checked)} /> 물리 검증 건너뛰기</label>
       </div>
       {!skip && rows.map(({ actor, item }) => ({ actor, item, st: phys[item.id] })).filter(r => r.st?.status === 'error').map(({ actor, item, st }) => (
@@ -119,9 +172,8 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
         </ul>
       )}
       <div className="exp-row exp-foot">
-        {running && <span className="exp-dim">{loading ? '물리 엔진 불러오는 중…' : prog && `물리 검증 ${prog.done + 1}/${prog.total} · ${Math.round(prog.cur * 100)}%`}</span>}
         <p role="status" className="exp-dim exp-msg">{msg}</p>
-        <button className="exp-close" onClick={onClose}>닫기</button>
+        <button className="exp-close" onClick={onClose} disabled={!!exporting} title={exporting ? '내보내기가 끝나면 닫을 수 있습니다' : undefined}>닫기</button>
       </div>
     </dialog>
   )
