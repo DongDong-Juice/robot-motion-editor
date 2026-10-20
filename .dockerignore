@@ -5,7 +5,6 @@ playwright-report
 graphify-out
 projects
 assets
-e2e
 docs
 .git
 .idea
