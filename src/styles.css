@@ -208,7 +208,12 @@ body {
 .exp-dim { color: var(--dim); font-variant-numeric: tabular-nums; }
 #menubar .exp .exp-close { margin-left: auto; padding: 8px 24px; }
 .exp-foot { margin: 20px 0 0; }
-.exp-msg { margin: 0; } /* the status sits left of 닫기: no empty line under it */ /* #menubar: the dialog lives in the menu bar, whose button rule wins otherwise */
+.exp-msg { margin: 0; }
+.spin { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.exp-checking { margin-left: 8px; font-weight: 400; font-size: 12px; }
+.exp-one-spin { margin-left: auto; padding: 0 10px; }
+.exp-item .exp-one.on { visibility: visible; } /* the status sits left of 닫기: no empty line under it */ /* #menubar: the dialog lives in the menu bar, whose button rule wins otherwise */
 .exp-opts .exp-dir { margin-left: auto; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .exp-sub { font-size: 13px; font-weight: 500; margin: 0; }
 .exp-sub-row { justify-content: space-between; margin: 8px 0 4px; }
