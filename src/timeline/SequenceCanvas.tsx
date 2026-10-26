@@ -10,7 +10,7 @@ import { seqFlash, seqFocus, tv } from './viewState'
 import { edgeScroll, followStep, markHover, markUserScroll, resetFollow } from './follow'
 import { sequenceEnd } from '../transport'
 import { drawRuler, hitMarker, LABEL_W, RULER_H } from './ruler'
-import { dropPlacement } from '../model/dropPlacement'
+import { dropPlacement, insertLabel, laneDropFrame } from '../model/dropPlacement'
 import { COLOR } from '../model/defaults'
 import { draggedAsset, draggedClips, dropAsset, dropClips, isAssetDrag } from './assetDrop'
 import { mediaUrl, subscribeMedia } from '../media/registry'
@@ -116,7 +116,7 @@ export default function SequenceCanvas() {
     const css = getComputedStyle(document.documentElement)
     const col = (n: string) => css.getPropertyValue(n).trim()
     const C = { bg: col('--bg'), panel: col('--panel'), line: col('--line'), text: col('--text'), accent: col('--accent'), rest: col('--rest'), piece: col('--piece'), inertia: col('--inertia'), blend: col('--blend') }
-    let W = 0, H = 0, raf = 0, drag: Drag | null = null, ghost: { y: number; start: number; len: number; color: string } | null = null, timer = 0, scrollY = 0, scrollTo = 0 // rows: shown offset, and where the wheel is easing it to
+    let W = 0, H = 0, raf = 0, drag: Drag | null = null, ghost: { y: number; start: number; len: number; color: string; line?: number /* 레인 사이 삽입선 y */; label?: string /* 끼울 자리 "GO2-1 ↔ GO2-2 사이" */ } | null = null, timer = 0, scrollY = 0, scrollTo = 0 // rows: shown offset, and where the wheel is easing it to
     let sbHover = false, sbDrag = false, mmHover: MmHit | null = null, mmDragging = false
 
     const scale = (): TimeScale => ({ x0: LABEL_W - tv.scrollF * tv.ppf, pxPerFrame: tv.ppf })
@@ -319,6 +319,15 @@ export default function SequenceCanvas() {
         const gx = frameToX(sc, ghost.start), gw = ghost.len * tv.ppf
         ctx.globalAlpha = 0.3; ctx.fillStyle = ghost.color; ctx.fillRect(gx, ghost.y + 2, gw, ROW_H - 5)
         ctx.globalAlpha = 1; ctx.strokeStyle = ghost.color; ctx.strokeRect(gx + 0.5, ghost.y + 2.5, gw - 1, ROW_H - 6)
+        if (ghost.line !== undefined) { ctx.fillStyle = C.accent; ctx.fillRect(LABEL_W, ghost.line - 1, W - LABEL_W, 2) } // 레인 기준 드롭: 들어갈 순서
+        if (ghost.label) { // 끼울 자리 번호: 고스트 오른쪽(넘치면 왼쪽)에 작은 글자
+          ctx.font = '10px "IBM Plex Sans KR", sans-serif'
+          const tw = ctx.measureText(ghost.label).width + 8, cy = ghost.y + ROW_H / 2
+          const lx = Math.min(W - tw, Math.max(LABEL_W, gx + gw + 4 + tw <= W ? gx + gw + 4 : gx - 4 - tw)) // ghost off-screen: the label stays at the edge
+          ctx.fillStyle = C.bg; ctx.fillRect(lx, cy - 8, tw, 15)
+          ctx.fillStyle = DIM; ctx.fillText(ghost.label, lx + 4, cy)
+          ctx.font = '11px "IBM Plex Sans KR", sans-serif'
+        }
         ctx.restore()
       }
       drawRuler(ctx, sc, W, RULER_H, s.project.sequence, s.frame, C, true)
@@ -606,20 +615,30 @@ export default function SequenceCanvas() {
 
     // ---- asset drag from the project panel: the ghost bar and the drop use the same dropPlacement ----
     const setGhost = (g: typeof ghost) => { ghost = g; schedule() }
-    const dropAt = (e: DragEvent) => { const { x, y } = pos(e); return { row: layout()[rowAt(y)], frame: frameAt(x) } } // a child row drops onto its track
+    // a child row drops onto its track; a piece lane decides by its piece (front half = before it, else right after it), not by the frame
+    const dropAt = (e: DragEvent) => {
+      const { x, y } = pos(e), row = layout()[rowAt(y)], frame = row?.it ? laneDropFrame(row.it, frameAt(x)) : frameAt(x)
+      return { row, frame, front: !!row?.it && frame === row.it.start }
+    }
     const onDragOver = (e: DragEvent) => {
       if (!isAssetDrag(e.dataTransfer ?? null)) return
       e.preventDefault()
       const asset = draggedAsset(null)
       if (!asset) return
-      const { row, frame } = dropAt(e), p = ed.getState().project, pl = dropPlacement(p, asset, row?.t.id ?? null, frame)
+      const { row, frame, front } = dropAt(e), p = ed.getState().project, pl = dropPlacement(p, asset, row?.t.id ?? null, frame)
       if (pl.kind === 'reject') return setGhost(null)
       const rows = layout(), last = rows.at(-1), bottom = last ? last.y + last.h : RULER_H - scrollY
       if (pl.kind === 'newActor') setGhost({ y: bottom, start: pl.start, len: (asset.clip ?? p.clips[asset.id]).length, color: COLOR[pl.robot] })
       else {
-        const t = pl.kind === 'video' ? rows.find(r => !r.it && isVideo(r.t)) : rows.find(r => !r.it && r.t.id === pl.trackId)
+        const lane = pl.kind === 'existing' && row?.it && row.t.id === pl.trackId ? row : undefined // over a piece lane: the ghost sits on it
+        const t = lane ?? (pl.kind === 'video' ? rows.find(r => !r.it && isVideo(r.t)) : rows.find(r => !r.it && r.t.id === pl.trackId))
         const actor = p.actors.find(a => a.id === t?.t.actorId)
-        setGhost(t ? { y: t.y, start: pl.start, len: asset.kind === 'clip' ? (asset.clip ?? p.clips[asset.id]).length : p.media.find(m => m.id === asset.id)!.durationF, color: actor?.color ?? C.accent } : null)
+        setGhost(t ? { y: t.y, start: pl.start, len: asset.kind === 'clip' ? (asset.clip ?? p.clips[asset.id]).length : p.media.find(m => m.id === asset.id)!.durationF, color: actor?.color ?? C.accent,
+          line: lane ? (front ? lane.y : lane.y + ROW_H) : undefined,
+          label: pl.kind === 'existing' ? insertLabel(t.t.items, pl.start, pl.shift, it => { // the bar's name without the project prefix
+            const pt = projectTitle(ed.getState().fileName), n = pieceName(t.t, it, p.clips[it.refId], pt)
+            return n.startsWith(pt + '-') ? n.slice(pt.length + 1) : n
+          }) : undefined } : null)
       }
     }
     const onDrop = (e: DragEvent) => {
