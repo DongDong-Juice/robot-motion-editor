@@ -509,12 +509,15 @@ body {
 .rv-dim { color: var(--dim); font-variant-numeric: tabular-nums; }
 .rv-head, .rv-bar, .rv-actions, .rv-title, .rv-chart-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
 #menubar .rv-close { margin-left: auto; }
-.rv-bar select { margin-left: 6px; max-width: 420px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 3px 6px; font: inherit; }
+.rv-bar { flex-wrap: wrap; row-gap: 6px; }
+#menubar .rv-bar button, .rv-check, .rv-count { white-space: nowrap; }
+.rv-bar .rv-dim:first-child { min-width: 0; }
+.rv-bar select { margin-left: 6px; max-width: 260px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 3px 6px; font: inherit; }
 .rv-filters { display: flex; gap: 4px; }
 #menubar .rv-filters button { border-radius: 12px; padding: 2px 10px; color: var(--dim); }
 #menubar .rv-filters button[aria-pressed=true] { color: var(--accent); }
 .rv-check { display: inline-flex; align-items: center; gap: 5px; color: var(--dim); cursor: pointer; }
-#menubar .rv-again { margin-left: auto; }
+.rv-tools { margin-left: auto; display: flex; gap: 6px; }
 .rv-body { flex: 1; min-height: 0; display: flex; gap: 14px; }
 .rv-list { width: 420px; flex: none; margin: 0; padding: 6px; list-style: none; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); }
 .rv-list li { margin: 0 0 6px; }
@@ -544,3 +547,11 @@ body {
 #menubar .rv-actions .bad { border-color: var(--warn); color: var(--warn); } #menubar .rv-actions .ok { border-color: #3fb950; color: #56d364; }
 #menubar .rv-actions .bad[aria-pressed=true] { background: var(--warn); color: var(--bg); } #menubar .rv-actions .ok[aria-pressed=true] { background: #3fb950; color: var(--bg); }
 #menubar .rv button:disabled { opacity: .45; cursor: default; }
+.rv-msg { color: var(--accent); font-size: 12px; }
+.rv-group { margin: 10px 2px 6px; font-size: 12px; color: var(--dim); }
+.rv-group.bad { color: var(--warn); } .rv-group.ok { color: var(--dim); } .rv-group.res { color: #56d364; }
+.rv-res { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border: 1px dashed var(--line); border-radius: 4px; font-size: 12px; color: var(--dim); }
+#menubar .rv-res button { margin-left: auto; padding: 1px 8px; font-size: 11.5px; }
+.rv-chip.res { color: #56d364; }
+.rv-list li:has(.rv-v.ok) .rv-item { opacity: .75; }
+.exp-ok { margin: 6px 0 0; } .exp-ok summary { cursor: pointer; } .exp-warn li.ok span { color: var(--dim); }

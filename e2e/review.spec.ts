@@ -1,11 +1,11 @@
 import { test, expect } from '@playwright/test'
 
-// 검수 목록 (§12): a CSV whose right wrist flips 2.5 rad at frame 150 (and stays) shows one 로봇 한계 초과 item; a verdict hides it;
-// 타임라인에서 보기 moves the playhead there. Nothing in the project changes.
+// 검수 목록 (§12 · §13): a CSV whose right wrist flips 2.5 rad at frame 150 (and stays) shows one 로봇 한계 초과 item. Verdicts are saved
+// in the project (motion untouched, undoable), 문제 있음 warns on export, 안무여서 놔둠 is listed last and apart in the export.
 test('검수 목록 finds a held joint flip, takes a verdict and jumps to it', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', e => errors.push(String(e)))
-  await page.addInitScript(() => { delete (window as any).showOpenFilePicker }) // the <input type=file> path, so Playwright gets the chooser
+  await page.addInitScript(() => { delete (window as any).showOpenFilePicker; delete (window as any).showSaveFilePicker }) // file input / plain download: Playwright sees them
   await page.goto('/')
   await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
   const joints = await page.evaluate(() => (window as any).__editor.getState().defs.g1.joints.map((j: { name: string }) => j.name) as string[])
@@ -39,22 +39,68 @@ test('검수 목록 finds a held joint flip, takes a verdict and jumps to it', a
   await dlg.getByRole('button', { name: '최악 프레임' }).click()
   await expect(dlg.locator('.rv-title')).toContainText('f150')
 
-  await dlg.getByRole('button', { name: '문제 있음' }).click()
-  await expect(dlg.locator('.rv-empty')).toHaveText('남은 항목이 없습니다')
-  await expect(dlg).toContainText('미처리 0 / 전체 1')
-  await dlg.getByText('처리한 것도 보기').click()
+  // 문제 있음: saved in the project (motion untouched), the item moves to its group, the same button again clears it
+  await dlg.getByRole('button', { name: '문제 있음', exact: true }).click()
+  await expect(dlg.locator('.rv-count')).toHaveText('미처리 0 · 문제 1 · 안무 0 / 전체 1')
+  await expect(dlg.locator('.rv-group.bad')).toHaveText('문제 있음 (미해결) 1')
   await expect(items.first()).toContainText('문제 있음')
+  const proj = () => page.evaluate(() => (window as any).__editor.getState().project)
+  const clipId = (await proj()).sequence.tracks.find((t: any) => t.items.length).items[0].refId
+  expect((await proj()).review).toMatchObject([{ clipId, from: 150, to: 150, kind: 'limit', verdict: 'bad' }])
+  const { review: _r, ...rest } = await proj()
+  expect(JSON.stringify({ ...rest })).toBe(JSON.stringify(JSON.parse(before))) // only the verdict was added
+  await dlg.getByRole('button', { name: '문제 있음', exact: true }).click()
+  await expect(dlg.locator('.rv-count')).toHaveText('미처리 1 · 문제 0 · 안무 0 / 전체 1')
+  expect((await proj()).review).toBeUndefined()
+  await dlg.getByRole('button', { name: '문제 있음', exact: true }).click()
 
+  // 판정 기록 내보내기: one row per found item with the verdict
+  const [dl] = await Promise.all([page.waitForEvent('download'), dlg.getByRole('button', { name: '판정 기록 내보내기' }).click()])
+  // (name `flip_검수기록.csv`: headless Chromium reports a non-ASCII download name as "download", so it is not checked here)
+  const rec = (await (await import('node:fs/promises')).readFile(await dl.path())).toString('utf8').replace(/^\uFEFF/, '').trim().split('\n')
+  expect(rec).toHaveLength(2)
+  expect(rec[1]).toContain('로봇 한계 초과,150,150,150,151')
+  expect(rec[1]).toContain(',아니오,문제 있음,') // the wrist (±1.55 at most) never reaches its limit ±1.97
   await dlg.getByRole('button', { name: '타임라인에서 보기' }).click()
   await expect(dlg).toBeHidden()
   expect(await page.evaluate(() => (window as any).__editor.getState().frame)).toBe(150)
-  expect(await page.evaluate(() => JSON.stringify((window as any).__editor.getState().project))).toBe(before) // read-only
 
+  // 내보내기: an open 문제 있음 shows as 검수 미해결
+  await page.getByRole('button', { name: '메뉴', exact: true }).click()
+  await page.getByRole('menuitem', { name: '내보내기', exact: true }).click()
+  const exp = page.getByRole('dialog', { name: '내보내기' })
+  await expect(exp.getByRole('list', { name: '경고' })).toContainText('검수 미해결')
+  await exp.getByRole('button', { name: '닫기' }).click()
+
+  // 안무여서 놔둠: not a problem any more, listed last as 안무로 둔 지점; the export lists its speed warning apart
   await page.getByRole('button', { name: '⚠ 검수 목록' }).click() // reopen: the verdict is kept, the 3D view comes back
   await expect(dlg.locator('.rv-view canvas')).toHaveCount(1)
-  await expect(dlg).toContainText('미처리 0 / 전체 1')
+  await expect(dlg.locator('.rv-count')).toHaveText('미처리 0 · 문제 1 · 안무 0 / 전체 1')
+  await dlg.getByRole('button', { name: '안무여서 놔둠', exact: true }).click()
+  await expect(dlg.locator('.rv-count')).toHaveText('미처리 0 · 문제 0 · 안무 1 / 전체 1')
+  await expect(dlg.locator('.rv-group.ok')).toHaveText('안무로 둔 지점 1')
+  await expect(items.first()).toContainText('안무여서 놔둠')
+  await dlg.getByRole('button', { name: '다시 검사' }).click() // found again, still 안무
+  await expect(dlg.locator('.rv-count')).toHaveText('미처리 0 · 문제 0 · 안무 1 / 전체 1')
   await page.keyboard.press('Escape')
   await expect(dlg).toBeHidden()
   expect(await dlg.locator('.rv-view canvas').count()).toBe(0) // the window's own 3D view is freed on close
+  await page.getByRole('button', { name: '메뉴', exact: true }).click()
+  await page.getByRole('menuitem', { name: '내보내기', exact: true }).click()
+  await expect(exp.locator('.exp-ok summary')).toContainText('안무로 둔 지점')
+  await expect(exp.getByText('검수 미해결')).toHaveCount(0)
+  await expect(exp.locator('ul[aria-label="경고"] li', { hasText: 'jointVelocity · 150 · right_wrist_roll' })).toHaveCount(0)
+  await expect(exp.locator('ul[aria-label="안무로 둔 지점"] li', { hasText: 'jointVelocity · 150 · right_wrist_roll' })).toHaveCount(1)
+  await exp.getByRole('button', { name: '닫기' }).click()
+
+  // saved: a reopened project keeps the verdict; Ctrl+Z takes it back
+  const reopened = await page.evaluate(async () => {
+    const { parseProject, serializeProject } = await import('/src/model/projectFile.ts')
+    const s = (window as any).__editor.getState()
+    return parseProject(serializeProject(s.project), s.defs).review
+  })
+  expect(reopened).toMatchObject([{ clipId, from: 150, to: 150, verdict: 'ok' }])
+  await page.keyboard.press('Control+z')
+  expect((await proj()).review).toMatchObject([{ verdict: 'bad' }])
   expect(errors).toEqual([])
 })

@@ -10,11 +10,14 @@ import { usePhysics } from '../physics/physicsStore'
 import { runItems } from '../physics/runItem'
 import { pieceName, projectTitle } from '../model/sequence'
 import { seqFocus } from '../timeline/viewState'
+import { openProblems, splitWarnings } from '../review/verdicts'
 
 const Spin = () => <span className="spin" aria-hidden="true" />
 const tick = () => new Promise<void>(r => setTimeout(r, 0)) // let the dialog repaint between items (a long export froze the page)
 type Row = { actor: { id: string; name: string; robot: string }; item: import('../model/types').Item; t: import('../model/types').Track }
-type CsvWarn = ReturnType<typeof exportItemCsv>['warnings'][number] & { actorId: string; actorName: string; itemId: string }
+type W = ReturnType<typeof exportItemCsv>['warnings'][number]
+// '검수 미해결': a 문제 있음 verdict (검수 목록, §13) that a fresh check still finds on the piece
+type CsvWarn = Omit<W, 'kind'> & { kind: W['kind'] | '검수 미해결'; actorId: string; actorName: string; itemId: string }
 
 export default function ExportDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null)
@@ -27,6 +30,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
   const [rl, setRl] = useState(false) // RL 학습용: 원본 좌표 · 기본자세 제외 · edits.json (dialog state only, the usual export unchanged)
   const [exporting, setExporting] = useState<{ key: string; done: number; total: number } | null>(null) // the export in progress: its button shows it
   const [csvWarns, setCsvWarns] = useState<CsvWarn[] | null>(null) // CSV checks: worked out after the dialog shows (null = 검사 중)
+  const [okWarns, setOkWarns] = useState<CsvWarn[]>([]) // speed / jump warnings inside 안무여서 놔둠 ranges (§13): listed apart, not counted
   const phys = usePhysics(s => s.byItem), prog = usePhysics(s => s.progress), loading = usePhysics(s => s.loading)
 
   useEffect(() => {
@@ -72,13 +76,17 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
     let live = true
     setCsvWarns(null)
     void (async () => {
-      const out: CsvWarn[] = []
+      const out: CsvWarn[] = [], ok: CsvWarn[] = []
       for (const { actor, item } of rows) {
         await tick()
         if (!live) return
-        out.push(...(rl ? rlItemExport : exportItemCsv)(project, defs, actor.id, item.id).warnings.map(w => ({ ...w, actorId: actor.id, actorName: actor.name, itemId: item.id })))
+        const who = { actorId: actor.id, actorName: actor.name, itemId: item.id }
+        const sp = splitWarnings(project, item, (rl ? rlItemExport : exportItemCsv)(project, defs, actor.id, item.id).warnings)
+        out.push(...sp.kept.map(w => ({ ...w, ...who })), ...openProblems(project, defs, item).map(o => ({ kind: '검수 미해결' as const, frame: o.frame, channel: '',
+          message: `검수 목록에서 문제 있음으로 판정한 지점에 아직 튐이 있습니다 (클립 f${o.verdict.from}${o.verdict.to > o.verdict.from ? `~f${o.verdict.to}` : ''})`, ...who })))
+        ok.push(...sp.ok.map(w => ({ ...w, ...who })))
       }
-      if (live) setCsvWarns(out)
+      if (live) { setCsvWarns(out); setOkWarns(ok) }
     })()
     return () => { live = false }
   }, [project, defs, open, rows, rl])
@@ -104,12 +112,14 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
     try {
       const taken = new Set<string>(), files: { name: string; text: string }[] = []
       let errors = 0
+      let open = 0 // 검수 미해결 (§13)
       for (const { actor, item } of rs) {
         await tick()
+        open += openProblems(project, defs, item).length
         if (rl) { // RL 학습용: the piece's own frames in original coordinates + its edits.json
           const r = rlItemExport(project, defs, actor.id, item.id, taken, title)
           files.push({ name: r.name, text: r.text }, r.json)
-          errors += r.warnings.filter(w => w.kind === 'jointJumpError').length
+          errors += splitWarnings(project, item, r.warnings).kept.filter(w => w.kind === 'jointJumpError').length // 안무여서 놔둠 ranges not asked about
         } else {
           const { name, text } = exportItemCsv(project, defs, actor.id, item.id, taken, title)
           files.push({ name, text })
@@ -117,6 +127,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
         setExporting({ key, done: rl ? files.length / 2 : files.length, total: rs.length })
       }
       await tick()
+      if (open && !window.confirm(`검수 목록에서 문제 있음으로 판정한 지점 중 아직 해결되지 않은 곳이 ${open}개 있습니다. 그래도 내보낼까요?`)) return
       // RL 학습용: ask only for 관절 점프 오류 (> 50 rad/s, an IK flip); the 25 rad/s ones are shown in the list, not asked about
       if (errors && !window.confirm(`관절 점프 오류(50 rad/s 초과, IK 해 뒤집힘 의심)가 ${errors}개 있습니다. 학습할 수 없는 데이터일 수 있습니다. 그래도 내보낼까요?`)) return
       const what = rl ? `CSV ${files.length / 2}개와 edits.json ${files.length / 2}개` : `CSV ${files.length}개`
@@ -181,12 +192,20 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
       {warnings.length > 0 && (
         <ul className="exp-warn" aria-label="경고">
           {warnings.map((w, i) => (
-            <li key={i} className={w.near ? 'near' : w.kind === 'jointJumpError' ? 'err' : undefined}><button onClick={() => { // that piece: selected, its clip preview looping from the warning's frame (user)
+            <li key={i} className={w.near ? 'near' : w.kind === 'jointJumpError' || w.kind === '검수 미해결' ? 'err' : undefined}><button onClick={() => { // that piece: selected, its clip preview looping from the warning's frame (user)
               setFrame(w.frame); select(w.actorId, w.channel); selectItem(w.itemId); openItemPreview(w.itemId, true); setPreviewFrame(w.frame); seqFocus.fn?.(w.itemId); onClose() }}>
               {w.actorName} · {w.kind} · {w.frame} · {w.channel} · {w.message}
             </button></li>
           ))}
         </ul>
+      )}
+      {okWarns.length > 0 && (
+        <details className="exp-ok">
+          <summary className="exp-dim">안무로 둔 지점 {okWarns.length}건 — 검수 목록에서 안무여서 놔둠으로 판정해 경고에서 뺐습니다</summary>
+          <ul className="exp-warn" aria-label="안무로 둔 지점">
+            {okWarns.map((w, i) => <li key={i} className="ok"><span>{w.actorName} · {w.kind} · {w.frame} · {w.channel} · {w.message}</span></li>)}
+          </ul>
+        </details>
       )}
       <div className="exp-row exp-foot">
         <p role="status" className="exp-dim exp-msg">{msg}</p>

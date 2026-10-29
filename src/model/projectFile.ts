@@ -165,5 +165,12 @@ export function parseProject(text: string, defs: RobotDefs): Project {
   p.version = 2
   if (!isObj(p.physics)) delete p.physics
   if (!(isObj(p.stage) && [p.stage.width, p.stage.depth].every(v => typeof v === 'number' && v >= 1 && v <= 30))) delete p.stage
+  // 검수 판정 (§13): optional; a bad entry (or one on a clip that is gone) is dropped, never rejects the file
+  if (p.review !== undefined) {
+    const ok = Array.isArray(p.review) ? p.review.filter((v: any) => isObj(v) && str(v.clipId) && Object.hasOwn(p.clips, v.clipId) && int(v.from) && int(v.to)
+      && v.from >= 0 && v.to >= v.from && ['limit', 'rel', 'start'].includes(v.kind) && ['bad', 'ok'].includes(v.verdict) && str(v.at)) : []
+    if (ok.length) p.review = ok.map((v: any) => ({ clipId: v.clipId, from: v.from, to: v.to, kind: v.kind, verdict: v.verdict, at: v.at }))
+    else delete p.review
+  }
   return p as Project
 }

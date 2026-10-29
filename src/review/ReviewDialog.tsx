@@ -1,37 +1,42 @@
-// 검수 목록 (수정변동사항.md §12): suspect joint jumps of one target in a list, the frame vs. the frame before it in 3D, the
-// speed / limit around it, and a verdict. Nothing is changed in the project; verdicts last until the page is closed.
+// 검수 목록 (수정변동사항.md §12 · §13): suspect joint jumps of one target in a list, the frame vs. the frame before it in 3D, the
+// speed / limit around it, and a verdict. The motion is never changed; verdicts are saved in the project (Project.review, undoable).
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useEditor, getEditor } from '../store/store'
 import { projectTitle } from '../model/sequence'
 import { COLOR } from '../model/defaults'
 import type { Pose } from '../model/pose'
+import type { ReviewVerdict } from '../model/types'
 import { seqFocus } from '../timeline/viewState'
+import { saveCsvFile } from '../fileio'
 import { CONTEXT, detectSuspects, itemSeries, type Suspect, type SuspectKind } from './detect'
 import { reviewTargets, targetPoses, type ReviewTarget } from './targets'
+import { clipRange, recordCsv, resolvedBad, targetClipId, verdictOf } from './verdicts'
+import { noteCheck } from './reviewState'
 import { ReviewView, type ReviewAngle } from './ReviewView'
 
-type Verdict = 'bad' | 'ok'
-const verdicts = new Map<string, Verdict>() // page session only (1단계: not saved)
-const vKey = (t: ReviewTarget, s: Suspect) => `${t.key}:${s.kind}:${s.from}-${s.to}`
 const KIND: Record<SuspectKind, string> = { limit: '로봇 한계 초과', rel: '파일 기준 급변', start: '첫 프레임 튐' }
 const FILTERS: { key: 'all' | SuspectKind; label: string }[] = [{ key: 'all', label: '전체' }, { key: 'limit', label: KIND.limit }, { key: 'rel', label: KIND.rel }, { key: 'start', label: KIND.start }]
 const ANGLES: ReviewAngle[] = ['3/4', '정면', '측면']
 const JOINT = (n: string) => n.replace(/_joint$/, '')
 const sec = (f: number) => (f / 60).toFixed(1)
+type Group = 'open' | 'bad' | 'ok'
+const GROUP: Record<Group, string> = { open: '미처리', bad: '문제 있음 (미해결)', ok: '안무로 둔 지점' }
 
 export default function ReviewDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null), viewEl = useRef<HTMLDivElement>(null), view = useRef<ReviewView | null>(null)
   const project = useEditor(s => s.project), defs = useEditor(s => s.defs), title = useEditor(s => projectTitle(s.fileName))
+  const setVerdict = useEditor(s => s.setReviewVerdict)
   const targets = useMemo(() => (open ? reviewTargets(project, title) : []), [open, project, title])
   const [tKey, setTKey] = useState('')
   const target = targets.find(t => t.key === tKey) ?? null
+  const clipId = target ? targetClipId(project, target) : undefined
   const [run, setRun] = useState(0) // 다시 검사
   const [res, setRes] = useState<{ key: string; poses: Pose[]; items: Suspect[] } | null>(null)
   const [filter, setFilter] = useState<'all' | SuspectKind>('all')
-  const [showDone, setShowDone] = useState(false)
+  const [showResolved, setShowResolved] = useState(false)
   const [sel, setSel] = useState(0), [cur, setCur] = useState(0)
   const [angle, setAngle] = useState<ReviewAngle>('3/4'), [ghost, setGhost] = useState(true)
-  const [, bump] = useState(0) // a verdict changed
+  const [msg, setMsg] = useState('')
 
   useEffect(() => {
     const d = ref.current
@@ -39,7 +44,7 @@ export default function ReviewDialog({ open, onClose }: { open: boolean; onClose
     if (open && !d.open) {
       const s = getEditor().getState(), ts = reviewTargets(s.project, projectTitle(s.fileName))
       const want = s.selItem ? `item:${s.selItem}` : s.clipEdit ? `clip:${s.clipEdit}` : ''
-      setTKey(ts.find(t => t.key === want)?.key ?? ts[0]?.key ?? ''); setRes(null); setSel(0)
+      setTKey(ts.find(t => t.key === want)?.key ?? ts[0]?.key ?? ''); setRes(null); setSel(0); setMsg('')
       d.showModal()
     }
     if (!open && d.open) d.close()
@@ -52,18 +57,29 @@ export default function ReviewDialog({ open, onClose }: { open: boolean; onClose
     const id = setTimeout(() => {
       const s = getEditor().getState(), poses = targetPoses(s.project, s.defs, target)
       if (!live) return
-      setRes(poses ? { key: target.key, poses, items: detectSuspects(poses, s.defs[target.robot]) } : { key: target.key, poses: [], items: [] })
+      const items = poses ? detectSuspects(poses, s.defs[target.robot]) : []
+      setRes({ key: target.key, poses: poses ?? [], items })
       setSel(0)
+      const cid = targetClipId(s.project, target)
+      if (cid && poses) { // 해결됨: 문제 있음 verdicts in this range that the check no longer finds (the timeline greys them)
+        const inRange = (s.project.review ?? []).filter(v => v.clipId === cid && v.verdict === 'bad' && v.to >= target.clipFrom && v.from < target.clipFrom + poses.length)
+        noteCheck(inRange, resolvedBad(s.project.review, cid, items, target.clipFrom, poses.length))
+      }
     }, 0)
     return () => { live = false; clearTimeout(id) }
   }, [open, tKey, run]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const ready = !!res && !!target && res.key === target.key
   const all = ready ? res!.items : []
-  const shown = all.filter(s => (filter === 'all' || s.kind === filter) && (showDone || !verdicts.has(vKey(target!, s))))
-  const item = shown[Math.min(sel, shown.length - 1)] ?? null
+  const vOf = (s: Suspect): ReviewVerdict | undefined => (clipId && target ? verdictOf(project.review, clipId, s, target.clipFrom) : undefined)
+  const groupOf = (s: Suspect): Group => vOf(s)?.verdict ?? 'open'
+  const filtered = all.filter(s => filter === 'all' || s.kind === filter)
+  const groups = (['open', 'bad', 'ok'] as Group[]).map(g => ({ g, items: filtered.filter(s => groupOf(s) === g) }))
+  const flat = groups.flatMap(x => x.items) // selection order: 미처리, 문제 있음, 안무 (안무 always last, user)
+  const item = flat[Math.min(sel, flat.length - 1)] ?? null
   const counts = (k: 'all' | SuspectKind) => all.filter(s => k === 'all' || s.kind === k).length
-  const todo = ready ? all.filter(s => !verdicts.has(vKey(target!, s))).length : 0
+  const n = (g: Group) => all.filter(s => groupOf(s) === g).length
+  const resolved = ready && clipId ? resolvedBad(project.review, clipId, all, target!.clipFrom, res!.poses.length) : []
 
   useEffect(() => { if (item) setCur(item.worst) }, [item?.from, item?.to, item?.kind, res]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -84,12 +100,13 @@ export default function ReviewDialog({ open, onClose }: { open: boolean; onClose
 
   const series = item && def ? itemSeries(poses, def, item) : null
   const step = (d: number) => { if (series) setCur(c => Math.min(Math.max(c + d, series.from), series.from + series.values.length - 1)) }
-  const judge = (v: Verdict) => {
-    if (!item || !target) return
-    const k = vKey(target, item)
-    if (verdicts.get(k) === v) verdicts.delete(k); else verdicts.set(k, v)
-    bump(n => n + 1)
+  // a verdict is saved on the clip's frames (undoable); the same button again clears it. The item moves to its group, the
+  // selection stays at the same place in the list (= the next 미처리 one after judging one)
+  const judge = (v: ReviewVerdict['verdict']) => {
+    if (!item || !target || !clipId) return
+    setVerdict({ clipId, kind: item.kind, ...clipRange(item, target.clipFrom) }, vOf(item)?.verdict === v ? null : v)
   }
+  const clearResolved = (v: ReviewVerdict) => setVerdict({ clipId: v.clipId, from: v.from, to: v.to, kind: v.kind }, null)
   const goTimeline = () => {
     if (!target) return
     const s = getEditor().getState()
@@ -104,6 +121,14 @@ export default function ReviewDialog({ open, onClose }: { open: boolean; onClose
       getEditor().getState().setFrame(cur)
     }
   }
+  const exportRecord = async () => {
+    if (!target || !clipId || !ready) return
+    const name = project.clips[clipId]?.name ?? 'clip'
+    try {
+      const ok = await saveCsvFile(`${name.replace(/[/\\:*?"<>|#\s]/g, '_')}_검수기록.csv`, recordCsv(name, target, all, project.review, clipId))
+      if (ok) setMsg(`판정 기록 ${all.length}건을 내보냈습니다`)
+    } catch (e) { setMsg(`판정 기록 내보내기 실패: ${e instanceof Error ? e.message : e}`) }
+  }
 
   const csvRow = (f: number) => (target ? target.clipFrom + f + 1 : f + 1)
   const title1 = (s: Suspect) => s.kind === 'start' ? `첫 프레임 튐 · ${s.parts.join('·') || '전신'} ${s.jump.toFixed(2)} rad`
@@ -111,6 +136,7 @@ export default function ReviewDialog({ open, onClose }: { open: boolean; onClose
   const sub1 = (s: Suspect) => `f${s.from}${s.to > s.from ? `~f${s.to}` : ''} · ${sec(s.from)}초 · ${s.to - s.from + 1}프레임 · ${s.joints.length}개 관절`
   const max = series ? Math.max(1.2, ...series.values) : 1
   const H = 100, y = (v: number) => H - 6 - Math.sqrt(v / max) * (H - 14) // sqrt: small values stay visible next to a big jump
+  const itemV = item ? vOf(item)?.verdict : undefined
 
   return (
     <dialog ref={ref} className="rv" onClose={onClose} aria-label="검수 목록"
@@ -120,7 +146,8 @@ export default function ReviewDialog({ open, onClose }: { open: boolean; onClose
       }}>
       <div className="rv-head">
         <h2>⚠ 검수 목록</h2>
-        <span className="rv-dim">튀는 관절을 찾아 직전 프레임과 비교하고 판정합니다 (데이터는 바꾸지 않음)</span>
+        <span className="rv-dim">튀는 관절을 찾아 직전 프레임과 비교하고 판정합니다 (모션은 바꾸지 않음 · 판정은 프로젝트에 저장)</span>
+        {msg && <span role="status" className="rv-msg">{msg}</span>}
         <button className="rv-close" onClick={onClose}>닫기</button>
       </div>
       <div className="rv-bar">
@@ -130,27 +157,44 @@ export default function ReviewDialog({ open, onClose }: { open: boolean; onClose
         <div className="rv-filters" role="group" aria-label="종류">
           {FILTERS.map(f => <button key={f.key} aria-pressed={filter === f.key} onClick={() => { setFilter(f.key); setSel(0) }}>{f.label} {counts(f.key)}</button>)}
         </div>
-        <span className="rv-dim">미처리 {todo} / 전체 {all.length}</span>
-        <label className="rv-check"><input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} />처리한 것도 보기</label>
-        <button className="rv-again" onClick={() => setRun(n => n + 1)} title="지금 상태(수정 층 포함)로 다시 검사합니다">다시 검사</button>
+        <span className="rv-dim rv-count">미처리 {n('open')} · 문제 {n('bad')} · 안무 {n('ok')} / 전체 {all.length}</span>
+        <label className="rv-check"><input type="checkbox" checked={showResolved} onChange={e => setShowResolved(e.target.checked)} />해결된 것도 보기 {resolved.length}</label>
+        <span className="rv-tools">
+        <button className="rv-again" onClick={() => setRun(k => k + 1)} title="지금 상태(수정 층 포함)로 다시 검사합니다. 문제 있음으로 둔 지점에서 튐이 사라졌으면 해결됨이 됩니다">다시 검사</button>
+        <button onClick={exportRecord} disabled={!ready} title="이 대상의 검출 항목을 측정값·판정과 함께 CSV로 저장합니다 (기준 다듬기용)">판정 기록 내보내기</button>
+        </span>
       </div>
       <div className="rv-body">
         <ul className="rv-list" aria-label="의심 지점">
           {!targets.length && <li className="rv-empty">검사할 모션이 없습니다</li>}
           {targets.length > 0 && !ready && <li className="rv-empty">검사 중…</li>}
-          {ready && !shown.length && <li className="rv-empty">{all.length ? '남은 항목이 없습니다' : '의심 지점이 없습니다'}</li>}
-          {shown.map((s, i) => {
-            const v = verdicts.get(vKey(target!, s))
-            return (
-              <li key={vKey(target!, s)}>
-                <button className="rv-item" aria-current={s === item} onClick={() => setSel(i)}>
-                  <span className={`rv-chip ${s.kind}`}>{KIND[s.kind]}</span>
-                  <b>{title1(s)}</b>{v && <span className={`rv-v ${v}`}>{v === 'bad' ? '문제 있음' : '안무'}</span>}
-                  <span className="rv-sub">{sub1(s)}</span>
-                </button>
+          {ready && !all.length && <li className="rv-empty">의심 지점이 없습니다</li>}
+          {ready && all.length > 0 && !n('open') && <li className="rv-empty">미처리 항목이 없습니다</li>}
+          {groups.map(({ g, items }) => items.length > 0 && [
+            g !== 'open' && <li key={`h-${g}`} className={`rv-group ${g}`}>{GROUP[g]} {items.length}</li>,
+            ...items.map(s => {
+              const i = flat.indexOf(s), v = vOf(s)
+              return (
+                <li key={`${g}-${s.kind}-${s.from}-${s.to}`}>
+                  <button className="rv-item" aria-current={s === item} onClick={() => setSel(i)}>
+                    <span className={`rv-chip ${s.kind}`}>{KIND[s.kind]}</span>
+                    <b>{title1(s)}</b>{v && <span className={`rv-v ${v.verdict}`}>{v.verdict === 'bad' ? '문제 있음' : '안무여서 놔둠'}</span>}
+                    <span className="rv-sub">{sub1(s)}</span>
+                  </button>
+                </li>
+              )
+            }),
+          ])}
+          {showResolved && resolved.length > 0 && [
+            <li key="h-res" className="rv-group res">해결됨 {resolved.length}</li>,
+            ...resolved.map(v => (
+              <li key={`res-${v.from}-${v.to}-${v.at}`} className="rv-res">
+                <span className="rv-chip res">해결됨</span>
+                <span>{KIND[v.kind]} · 클립 f{v.from}{v.to > v.from ? `~f${v.to}` : ''} · 문제 있음으로 판정했던 지점, 지금은 튐 없음</span>
+                <button onClick={() => clearResolved(v)} title="해결된 판정을 지웁니다">판정 지우기</button>
               </li>
-            )
-          })}
+            )),
+          ]}
         </ul>
         <div className="rv-main">
           <div className="rv-title">
@@ -178,8 +222,8 @@ export default function ReviewDialog({ open, onClose }: { open: boolean; onClose
             <button disabled={!item} onClick={() => item && setCur(item.worst)}>최악 프레임</button>
             <button disabled={!item} onClick={goTimeline}>타임라인에서 보기</button>
             <span className="rv-gap" />
-            <button disabled={!item} className="bad" aria-pressed={!!item && verdicts.get(vKey(target!, item)) === 'bad'} onClick={() => judge('bad')}>문제 있음</button>
-            <button disabled={!item} className="ok" aria-pressed={!!item && verdicts.get(vKey(target!, item)) === 'ok'} onClick={() => judge('ok')}>안무여서 놔둠</button>
+            <button disabled={!item || !clipId} className="bad" aria-pressed={itemV === 'bad'} onClick={() => judge('bad')} title="미해결 문제로 남깁니다 (타임라인 빨간 표시 · 내보낼 때 경고). 다시 누르면 판정을 지웁니다">문제 있음</button>
+            <button disabled={!item || !clipId} className="ok" aria-pressed={itemV === 'ok'} onClick={() => judge('ok')} title="문제로 세지 않고 '안무로 둔 지점'으로 남깁니다 (내보내기 경고에서 빠지고 따로 표시). 다시 누르면 판정을 지웁니다">안무여서 놔둠</button>
           </div>
         </div>
       </div>

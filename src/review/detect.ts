@@ -27,6 +27,8 @@ export interface Suspect {
   speed: number // rad/s at the worst frame (worst joint)
   ratio: number // speed / that joint's velocity limit
   jump: number // rad, the worst joint's change at the worst frame
+  score: number // 파일 기준 급변 점수: the highest residual / that joint's 95th percentile in the item (판정 기록)
+  atLimit: boolean // an involved joint within 0.01 rad of its limit within 5 frames of the item (판정 기록)
 }
 
 const PART_GO2: Record<string, string> = { FL: '앞왼다리', FR: '앞오른다리', RL: '뒤왼다리', RR: '뒤오른다리' }
@@ -50,6 +52,7 @@ function frameFlags(poses: Pose[], def: RobotDef, skip0: boolean) {
   const n = poses.length, J = def.joints.length
   const ratio: number[][] = poses.map(() => new Array(J).fill(0))
   const flag: boolean[][] = poses.map(() => new Array(J).fill(false))
+  const score: number[][] = poses.map(() => new Array(J).fill(0))
   const resid: number[][] = Array.from({ length: J }, () => [])
   const t0 = skip0 ? 2 : 1
   for (let t = t0; t < n; t++) for (let j = 0; j < J; j++) {
@@ -58,13 +61,13 @@ function frameFlags(poses: Pose[], def: RobotDef, skip0: boolean) {
     if (t >= t0 + 1) resid[j].push(Math.abs(poses[t].q[j] - 2 * poses[t - 1].q[j] + poses[t - 2].q[j]))
   }
   const scale = resid.map(r => Math.max(p95(r), 1e-4))
+  for (let t = t0 + 1; t < n; t++) for (let j = 0; j < J; j++) score[t][j] = Math.abs(poses[t].q[j] - 2 * poses[t - 1].q[j] + poses[t - 2].q[j]) / scale[j]
   for (let t = t0; t < n; t++) for (let j = 0; j < J; j++) {
     if (ratio[t][j] > 1) { flag[t][j] = true; continue }
     if (t < t0 + 1 || ratio[t][j] < REL_MIN_SPEED) continue
-    const r = Math.abs(poses[t].q[j] - 2 * poses[t - 1].q[j] + poses[t - 2].q[j])
-    if (r / scale[j] > REL_SCORE) flag[t][j] = true
+    if (score[t][j] > REL_SCORE) flag[t][j] = true
   }
-  return { ratio, flag }
+  return { ratio, flag, score }
 }
 
 /** True when frame 0 → 1 is a 첫 프레임 튐 (an imported rest-pose row 1). */
@@ -76,6 +79,14 @@ export function startJump(poses: Pose[]): boolean {
   return dq > START_JOINT || dr > START_ROOT
 }
 
+const LIMIT_NEAR = 0.01, LIMIT_WIN = 5
+function nearLimit(poses: Pose[], def: RobotDef, joints: string[], from: number, to: number): boolean {
+  const idx = joints.map(n => def.joints.findIndex(j => j.name === n)).filter(i => i >= 0)
+  for (let t = Math.max(0, from - LIMIT_WIN); t <= Math.min(poses.length - 1, to + LIMIT_WIN); t++)
+    for (const j of idx) { const q = poses[t].q[j], d = def.joints[j]; if (q - d.lower < LIMIT_NEAR || d.upper - q < LIMIT_NEAR) return true }
+  return false
+}
+
 /** The suspect items of a motion, most severe first (첫 프레임 튐 first of all). */
 export function detectSuspects(poses: Pose[], def: RobotDef): Suspect[] {
   const out: Suspect[] = []
@@ -85,9 +96,10 @@ export function detectSuspects(poses: Pose[], def: RobotDef): Suspect[] {
     const dq = a.q.map((v, i) => Math.abs(b.q[i] - v)), k = dq.indexOf(Math.max(...dq))
     const joints = def.joints.map((j, i) => [j.name, dq[i]] as const).filter(([, d]) => d > 0.3).sort((x, y) => y[1] - x[1]).map(([n]) => n)
     const lim = def.joints[k].velocity
-    out.push({ kind: 'start', from: 0, to: 1, worst: 1, joints, parts: [...new Set(joints.map(partOf))], speed: dq[k] * FPS, ratio: lim > 0 ? dq[k] * FPS / lim : 0, jump: dq[k] })
+    out.push({ kind: 'start', from: 0, to: 1, worst: 1, joints, parts: [...new Set(joints.map(partOf))], speed: dq[k] * FPS, ratio: lim > 0 ? dq[k] * FPS / lim : 0, jump: dq[k],
+      score: 0, atLimit: nearLimit(poses, def, joints, 0, 1) })
   }
-  const { ratio, flag } = frameFlags(poses, def, start)
+  const { ratio, flag, score } = frameFlags(poses, def, start)
   const frames = flag.map((row, t) => (row.some(Boolean) ? t : -1)).filter(t => t >= 0)
   const groups: number[][] = []
   for (const t of frames) {
@@ -98,16 +110,17 @@ export function detectSuspects(poses: Pose[], def: RobotDef): Suspect[] {
   for (const g of groups) {
     let worst = g[0], wj = 0, best = -1
     const hit = new Map<number, number>() // joint -> its highest ratio in the item
-    let limit = false
+    let limit = false, sc = 0
     for (const t of g) flag[t].forEach((f, j) => {
       if (!f) return
+      sc = Math.max(sc, score[t][j])
       if (ratio[t][j] > 1) limit = true
       hit.set(j, Math.max(hit.get(j) ?? 0, ratio[t][j]))
       if (ratio[t][j] > best) { best = ratio[t][j]; worst = t; wj = j }
     })
     const joints = [...hit].sort((a, b) => b[1] - a[1]).map(([j]) => def.joints[j].name)
     out.push({ kind: limit ? 'limit' : 'rel', from: g[0], to: g[g.length - 1], worst, joints, parts: [...new Set(joints.map(partOf))],
-      speed: best * def.joints[wj].velocity, ratio: best, jump: Math.abs(poses[worst].q[wj] - poses[worst - 1].q[wj]) })
+      speed: best * def.joints[wj].velocity, ratio: best, jump: Math.abs(poses[worst].q[wj] - poses[worst - 1].q[wj]), score: sc, atLimit: nearLimit(poses, def, joints, g[0], g[g.length - 1]) })
   }
   return out.sort((a, b) => (a.kind === 'start' ? -1 : b.kind === 'start' ? 1 : b.ratio - a.ratio))
 }

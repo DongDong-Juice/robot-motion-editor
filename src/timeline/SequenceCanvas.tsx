@@ -17,6 +17,7 @@ import { mediaUrl, subscribeMedia } from '../media/registry'
 import { exportOne } from '../export/exportOne'
 import { formatTimecode, frameToX, hoverFrame, hoverScrub, xToFrame, type TimeScale } from './timeScale'
 import { usePhysics } from '../physics/physicsStore'
+import { resolvedKey, useReview } from '../review/reviewState'
 import { runItems, stale } from '../physics/runItem'
 import { withDefaults } from '../physics/settings'
 import { badge, drawAssist, segmentAt, seqFrameOf, treeSuffix, treeTag, DIM, WARN_RED } from './physGraph'
@@ -236,6 +237,15 @@ export default function SequenceCanvas() {
             ctx.globalAlpha = ga
             for (const f of fs) ctx.fillRect(Math.round(frameToX(sc, it.start + f - it.trimIn)) - 1, by + bh - 4, 2, 4)
           }
+          if (!video && s.project.review) { // 검수 판정 (§13) on this piece's clip frames: a strip along the bar's top edge — red 문제 있음, grey 안무여서 놔둠 / 해결됨
+            const res = useReview.getState().resolved
+            for (const v of s.project.review) {
+              if (v.clipId !== it.refId || v.to < it.trimIn || v.from >= it.trimOut) continue
+              const a = Math.max(v.from, it.trimIn), b = Math.min(v.to, it.trimOut - 1) + 1, xa = frameToX(sc, it.start + a - it.trimIn)
+              ctx.fillStyle = v.verdict === 'bad' && !res.has(resolvedKey(v)) ? WARN_RED : DIM
+              ctx.fillRect(Math.round(xa) - 1, by, Math.max((b - a) * tv.ppf, 3), 4)
+            }
+          }
           if (video && !mediaUrl(it.refId)) hatch(x, x + w, y, 0.25) // offline
           ctx.strokeStyle = it.id === s.selItem ? C.accent : video ? C.line : color; ctx.lineWidth = 1
           ctx.strokeRect(x + 0.5, by + 0.5, w - 1, bh - 1)
@@ -362,7 +372,7 @@ export default function SequenceCanvas() {
     }
     resetFollow()
     const ro = new ResizeObserver(resize); ro.observe(canvas); resize()
-    const unsub = ed.subscribe(schedule), unsubMedia = subscribeMedia(schedule), unsubPhys = usePhysics.subscribe(schedule)
+    const unsub = ed.subscribe(schedule), unsubMedia = subscribeMedia(schedule), unsubPhys = usePhysics.subscribe(schedule), unsubReview = useReview.subscribe(schedule)
     document.fonts?.addEventListener('loadingdone', schedule) // labels drawn in the fallback font before IBM Plex arrived
 
     // ---- mouse ----
@@ -676,7 +686,7 @@ export default function SequenceCanvas() {
     addEventListener('dragend', clearGhost)
     return () => {
       seqFlash.fn = null; seqFocus.fn = null
-      ro.disconnect(); document.fonts?.removeEventListener('loadingdone', schedule); unsub(); unsubMedia(); unsubPhys(); hover.stop(); edge.stop(); cancelAnimationFrame(raf); clearTimeout(timer)
+      ro.disconnect(); document.fonts?.removeEventListener('loadingdone', schedule); unsub(); unsubMedia(); unsubPhys(); unsubReview(); hover.stop(); edge.stop(); cancelAnimationFrame(raf); clearTimeout(timer)
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('mouseleave', onLeave)

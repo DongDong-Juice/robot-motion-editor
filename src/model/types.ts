@@ -12,5 +12,8 @@ export interface Item { id: string; refId: string; start: number; trimIn: number
 export interface Track { id: string; kind: 'video' | 'motion'; actorId?: string; hidden: boolean; locked: boolean; trail?: true /* 경로 표시 (motion): the root's floor path on the main stage, display only */; items: Item[] }
 export interface Media { id: string; name: string; durationF: number; bin?: string /* 폴더 (virtual, media tab) */ }
 export interface Sequence { tracks: Track[]; markers: { f: number; name: string }[]; inF: number | null; outF: number | null }
-export interface Project { version: 1 | 2; fps: 60; actors: Actor[]; clips: Record<string, Clip>; media: Media[]; bins?: Bin[]; sequence: Sequence; physics?: Partial<PhysicsSettings>; stage?: StageSize }
+export interface Project { version: 1 | 2; fps: 60; actors: Actor[]; clips: Record<string, Clip>; media: Media[]; bins?: Bin[]; sequence: Sequence; physics?: Partial<PhysicsSettings>; stage?: StageSize; review?: ReviewVerdict[] /* 검수 목록 판정 (§13) */ }
+/** 검수 목록 판정 (수정변동사항.md §13): on a clip's frames [from, to] (clip frames, inclusive), so it follows the clip into every piece.
+ * 'bad' = 문제 있음 (stays open until a check no longer finds a jump there), 'ok' = 안무여서 놔둠 (not counted as a problem, still shown). */
+export interface ReviewVerdict { clipId: string; from: number; to: number; kind: 'limit' | 'rel' | 'start'; verdict: 'bad' | 'ok'; at: string /* ISO time */ }
 export interface StageSize { width: number; depth: number } // 무대 size in m (width = world Y length, depth = world X length; audience at +X)

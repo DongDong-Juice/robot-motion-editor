@@ -4,7 +4,8 @@ import { simplifyCurve, simplifyTolerance } from '../model/simplify'
 import { addActor as addActorTo, emptyProject, newProject, nextClipName, stageOf } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
 import { inCrossfade, itemLen, resolve, sortedItems, validTrack } from '../model/sequence'
-import type { Actor, Bin, Item, Clip, Curve, Interp, Project, StageSize, Tan, Track } from '../model/types'
+import type { Actor, Bin, Item, Clip, Curve, Interp, Project, ReviewVerdict, StageSize, Tan, Track } from '../model/types'
+import { reviewOverlap } from '../model/review'
 import { validVideoTrack, videoTrack } from '../model/video'
 import { groundZ, lockFeet, standQ, type Body } from '../model/bodyPose'
 import { baseClip, editedClip, offsetKeyCount } from '../model/itemClip'
@@ -116,6 +117,8 @@ export interface EditorState {
   editing: string | null; openItem(itemId: string): void; closeItem(): void
   setIn(f: number | null): void; setOut(f: number | null): void
   addMarker(f: number): void; renameMarker(index: number, name: string): void; deleteMarker(index: number): void
+  /** 검수 목록 판정 (§13): set (replacing any verdict on an overlapping range of the same clip) or clear (null). One undo step. */
+  setReviewVerdict(at: { clipId: string; from: number; to: number; kind: ReviewVerdict['kind'] }, verdict: ReviewVerdict['verdict'] | null): void
   newClip(robot: RobotKind): string
   // Add an imported clip to the assets. If no actor of its robot exists, create one (no default clip) and place the clip at 0; otherwise assets only (null).
   importClipToActor(clip: Clip): { actorId: string; itemId: string } | null
@@ -527,6 +530,11 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       }, []),
       renameMarker: (i, name) => edit(p => { if (p.sequence.markers[i]) p.sequence.markers[i].name = name }, []),
       deleteMarker: i => edit(p => { p.sequence.markers.splice(i, 1) }, []),
+      setReviewVerdict: (at, verdict) => edit(p => {
+        const rest = (p.review ?? []).filter(v => !(v.clipId === at.clipId && reviewOverlap(v.from, v.to, at.from, at.to))) // a copy: the draft shares p.review
+        if (verdict) rest.push({ ...at, verdict, at: new Date().toISOString() })
+        if (rest.length) p.review = rest; else delete p.review
+      }, []),
       defs, project: freezeClips(initial), frame: 0, playing: false, autoKey: false, view: 'tracks',
       sel: { actorId: null, channel: null, keys: [] },
       setFrame: frame => set({ frame }),
