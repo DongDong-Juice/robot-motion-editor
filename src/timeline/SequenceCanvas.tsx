@@ -616,7 +616,7 @@ export default function SequenceCanvas() {
       } else if (e.shiftKey || x < LABEL_W || (x >= W - SB_W && y >= RULER_H && !!sbar())) { // rows: Shift + wheel, or over the labels / scrollbar; eased in draw (nothing moves when they fit)
         const d = e.shiftKey ? e.deltaY || e.deltaX : e.deltaY
         scrollTo = Math.min(Math.max(scrollTo + (e.deltaMode === 1 ? d * ROW_H : d), 0), maxScroll())
-      } else { // 휠 = 구간 이동 (user): up = later, down = earlier; the playhead keeps following the pointer unless 고정
+      } else { // 휠 = 구간 이동 (user): down = later, up = earlier; the playhead keeps following the pointer unless 고정
         tv.scrollF = Math.max(0, tv.scrollF + wheelFrames(e, tv.ppf))
         const f = y < H - MM_H ? hoverFrame(x, LABEL_W, scale(), hoverOff()) : null
         if (f !== null) hover.push(Math.max(0, f))
@@ -761,7 +761,7 @@ export default function SequenceCanvas() {
       {!rows.length && <div className="seq-empty">CSV 가져오기로 모션을 불러오세요</div>}
       {ctx && (
         <div ref={menuRef} role="menu" aria-label="클립" className="tl-menu" style={{ left: ctx.x, top: ctx.y }} onKeyDown={menuKeys}>
-          {ctx.itemId && <button role="menuitem" tabIndex={-1} onClick={() => { closeCtx(false); void runExport(ctx) }}>export하기</button>}
+          {ctx.itemId && <button role="menuitem" tabIndex={-1} onClick={() => { closeCtx(false); void runExport(ctx) }}>CSV 내보내기</button>}
           {ctxItem && hasEdit(ctxItem) && <button role="menuitem" tabIndex={-1} title="이 조각의 수정을 모두 지우고 원본 클립대로 되돌립니다"
             onClick={() => { closeCtx(false); if (!getEditor().getState().clearOffset(ctxItem.id)) seqFlash.fn?.(LOCKED, ctxItem.id) }}>수정 지우기</button>}
           <button role="menuitem" tabIndex={-1} aria-disabled={noModel} title={noModel ? '미지원' : undefined}

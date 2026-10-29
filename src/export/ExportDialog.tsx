@@ -4,6 +4,7 @@ import { formatTimecode } from '../timeline/timeScale'
 import { downloadBlob, pickDirectory, writeTextFiles } from '../fileio'
 import { zip } from './zip'
 import { exportItemCsv, itemFrameRange } from './csv'
+import { rlItemExport } from './rlExport'
 import { needsRun, physicsWarnings } from './physicsWarn'
 import { usePhysics } from '../physics/physicsStore'
 import { runItems } from '../physics/runItem'
@@ -23,6 +24,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
   const [msg, setMsg] = useState('')
   const [dir, setDir] = useState<FileSystemDirectoryHandle | null>(null) // 다운로드 폴더: kept while the app runs, null = the browser's
   const [skip, setSkip] = useState(false) // 물리 검증 건너뛰기 (dialog state only)
+  const [rl, setRl] = useState(false) // RL 학습용: 원본 좌표 · 기본자세 제외 · edits.json (dialog state only, the usual export unchanged)
   const [exporting, setExporting] = useState<{ key: string; done: number; total: number } | null>(null) // the export in progress: its button shows it
   const [csvWarns, setCsvWarns] = useState<CsvWarn[] | null>(null) // CSV checks: worked out after the dialog shows (null = 검사 중)
   const phys = usePhysics(s => s.byItem), prog = usePhysics(s => s.progress), loading = usePhysics(s => s.loading)
@@ -74,12 +76,12 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
       for (const { actor, item } of rows) {
         await tick()
         if (!live) return
-        out.push(...exportItemCsv(project, defs, actor.id, item.id).warnings.map(w => ({ ...w, actorId: actor.id, actorName: actor.name, itemId: item.id })))
+        out.push(...(rl ? rlItemExport : exportItemCsv)(project, defs, actor.id, item.id).warnings.map(w => ({ ...w, actorId: actor.id, actorName: actor.name, itemId: item.id })))
       }
       if (live) setCsvWarns(out)
     })()
     return () => { live = false }
-  }, [project, defs, open, rows])
+  }, [project, defs, open, rows, rl])
   // physics warnings only once the scan has queued what is stale: before that a stale result's warnings would show
   const warnings = useMemo(() => [...(csvWarns ?? []), ...(open && !skip && !scanning ? rows.flatMap(({ actor, item }) =>
     physicsWarnings(project, defs, item, phys[item.id]).map(w => ({ ...w, actorId: actor.id, actorName: actor.name, itemId: item.id }))) : [])],
@@ -101,20 +103,30 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
     setExporting({ key, done: 0, total: rs.length })
     try {
       const taken = new Set<string>(), files: { name: string; text: string }[] = []
+      let errors = 0
       for (const { actor, item } of rs) {
         await tick()
-        const { name, text } = exportItemCsv(project, defs, actor.id, item.id, taken, title)
-        files.push({ name, text })
-        setExporting({ key, done: files.length, total: rs.length })
+        if (rl) { // RL 학습용: the piece's own frames in original coordinates + its edits.json
+          const r = rlItemExport(project, defs, actor.id, item.id, taken, title)
+          files.push({ name: r.name, text: r.text }, r.json)
+          errors += r.warnings.filter(w => w.kind === 'jointJumpError').length
+        } else {
+          const { name, text } = exportItemCsv(project, defs, actor.id, item.id, taken, title)
+          files.push({ name, text })
+        }
+        setExporting({ key, done: rl ? files.length / 2 : files.length, total: rs.length })
       }
       await tick()
+      // RL 학습용: ask only for 관절 점프 오류 (> 50 rad/s, an IK flip); the 25 rad/s ones are shown in the list, not asked about
+      if (errors && !window.confirm(`관절 점프 오류(50 rad/s 초과, IK 해 뒤집힘 의심)가 ${errors}개 있습니다. 학습할 수 없는 데이터일 수 있습니다. 그래도 내보낼까요?`)) return
+      const what = rl ? `CSV ${files.length / 2}개와 edits.json ${files.length / 2}개` : `CSV ${files.length}개`
       // No folder picked and several files: one zip download instead of a download per file.
       if (!dir && files.length > 1) {
         downloadBlob(zipName, new Blob([zip(files)], { type: 'application/zip' }))
-        setMsg(`${label}CSV ${files.length}개를 zip으로 내보냈습니다.`)
+        setMsg(`${label}${what}를 zip으로 내보냈습니다.`)
       } else {
         await writeTextFiles(dir, files)
-        setMsg(`${label}CSV ${files.length}개를 ${dir ? `${dir.name} 폴더에 ` : ''}내보냈습니다.`)
+        setMsg(`${label}${what}를 ${dir ? `${dir.name} 폴더에 ` : ''}내보냈습니다.`)
       }
     } catch (e) { setMsg(`내보내기 실패: ${e instanceof Error ? e.message : e}`) }
     finally { setExporting(null) }
@@ -130,6 +142,11 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
         <span className="exp-dim exp-dir" title={dir ? dir.name : '브라우저의 기본 다운로드 폴더'}>다운로드 폴더: {dir ? dir.name : '브라우저 기본 다운로드 폴더'}</span>
         <button onClick={choose} disabled={!!exporting}>다운로드 폴더 선택</button>
         {dir && <button onClick={() => setDir(null)} title="브라우저 기본 다운로드 폴더로 되돌립니다">기본으로</button>}
+      </div>
+      <div className="exp-row exp-rlopt">
+        <label className="exp-check" title="원본 CSV 좌표 그대로(이동·회전·무대 배치 없음, 루트 수정은 포함) · 기본자세(리드인·끝 기본자세) 제외 · CSV마다 수정 구간 edits.json 함께 저장 · 관절 점프 검사">
+          <input type="checkbox" checked={rl} disabled={!!exporting} onChange={e => setRl(e.target.checked)} /> RL 학습용 (원본 좌표 · 기본자세 제외 · edits.json)
+        </label>
       </div>
       <div className="exp-items">
         {groups.map(g => {
@@ -164,7 +181,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
       {warnings.length > 0 && (
         <ul className="exp-warn" aria-label="경고">
           {warnings.map((w, i) => (
-            <li key={i}><button onClick={() => { // that piece: selected, its clip preview looping from the warning's frame (user)
+            <li key={i} className={w.near ? 'near' : w.kind === 'jointJumpError' ? 'err' : undefined}><button onClick={() => { // that piece: selected, its clip preview looping from the warning's frame (user)
               setFrame(w.frame); select(w.actorId, w.channel); selectItem(w.itemId); openItemPreview(w.itemId, true); setPreviewFrame(w.frame); seqFocus.fn?.(w.itemId); onClose() }}>
               {w.actorName} · {w.kind} · {w.frame} · {w.channel} · {w.message}
             </button></li>

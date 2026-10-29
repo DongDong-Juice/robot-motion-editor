@@ -12,6 +12,7 @@ import { addOverRange, type Range } from '../model/rangeEdit'
 import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP, previewRange } from '../model/restPose'
 import { SEAM_MAX } from '../model/seam'
 import type { RobotDef, RobotKind } from '../robot/types'
+import { DATA_FPS, setPlayClockFps } from '../playClock'
 
 /** 라이브러리 미리보기 창의 클립 id (프로젝트에 넣지 않는 임시 클립). */
 export const BLOCK_PREVIEW_ID = 'library-preview'
@@ -52,6 +53,8 @@ export interface EditorState {
   /** 배치 이동 toggle (editor state, not saved): on = the playhead sits at the selected GO2's track end - 1. */
   walkMode: boolean; setWalkMode(on: boolean): void
   playheadPinned: boolean; setPlayheadPinned(on: boolean): void // 재생헤드 고정(사용자): 마우스 따라가기만 끔, 화면 전용·저장 안 함
+  /** 재생 fps(사용자): 초당 재생 프레임 수 1~240(정수, 기본 60 = 원래 속도). 데이터·CSV는 60fps 그대로, 재생 시계(playClock)만 바뀜. 저장 안 함. */
+  playFps: number; setPlayFps(fps: number): void
   /** 라이브러리 미리보기(사용자): 프로젝트 밖의 블록 클립 하나를 자기 창에서 반복 재생. 목록·타임라인·저장·실행취소와 무관.
    * clip.id = BLOCK_PREVIEW_ID(프로젝트 클립과 겹치지 않음). 확장: 이 clip에 수정 층(Clip.offset)을 얹어 미세 수정 후 목록에 넣을 수 있게. */
   blockPreview: BlockPreview | null; setBlockPreview(p: BlockPreview | null): void
@@ -570,6 +573,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       openComparePane: id => set(s => s.comparePanes.includes(id) || !s.project.clips[id] ? s : { comparePanes: [...s.comparePanes, id].slice(-2) }),
       closeComparePane: id => set(s => ({ comparePanes: s.comparePanes.filter(x => x !== id) })),
       playheadPinned: false,
+      playFps: DATA_FPS,
+      setPlayFps: fps => set({ playFps: setPlayClockFps(fps) }),
       blockPreview: null,
       setBlockPreview: p => set({ blockPreview: p }),
       clipEditDraft: null,

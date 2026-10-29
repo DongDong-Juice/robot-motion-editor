@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { playNow } from '../playClock'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
@@ -136,7 +137,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
     }
 
     let dirty = true, raf = 0
-    const t0 = performance.now()
+    const t0 = playNow() // pane loops run on the playback clock (재생 fps)
     let shownF = -1
     // compare-pane pose at clip frame f (re-based to the range start when looping a range)
     const clipPose = (clip: Clip, def: RobotDef, f: number) =>
@@ -196,12 +197,12 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
         o.rig.applyPose(pose())
       }
     }
-    const spanT0 = performance.now()
+    const spanT0 = playNow()
     const applyAll = () => {
       if (span) { // 구간 프리뷰: the stored sequence on its own loop over spanPreview (read each frame: a right-drag reshapes it live)
         const s = store.getState(), sp = s.spanPreview
         if (!sp) return
-        const f = sp[0] + Math.floor((performance.now() - spanT0) * 60 / 1000) % Math.max(sp[1] - sp[0], 1)
+        const f = sp[0] + Math.floor((playNow() - spanT0) * 60 / 1000) % Math.max(sp[1] - sp[0], 1)
         for (const a of s.project.actors) {
           const e = entries.get(a.id)
           if (!e) continue
@@ -295,9 +296,9 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       // item preview follows the main playhead: range frame lo shows at the item start, or (기본자세 덧붙이기) 1.5 s before it,
       // where the timeline draws the lead-in, so preview, lane, physics graph and CSV rows line up; clamped to the range outside it
       const it = itemId ? s.project.sequence.tracks.flatMap(t => t.items).find(i => i.id === itemId) : undefined
-      const f = !ranged ? Math.floor((performance.now() - t0) * 60 / 1000) % Math.max(clip.length, 1) // ⇄ 비교: its own loop, not the sequence (user)
+      const f = !ranged ? Math.floor((playNow() - t0) * 60 / 1000) % Math.max(clip.length, 1) // ⇄ 비교: its own loop, not the sequence (user)
         : it ? lo + Math.min(Math.max(s.frame - it.start + (itemLead(s.project, s.defs, it)?.lead ?? 0), 0), hi - lo - 1)
-        : lo + Math.floor((performance.now() - t0) * 60 / 1000) % Math.max(hi - lo, 1)
+        : lo + Math.floor((playNow() - t0) * 60 / 1000) % Math.max(hi - lo, 1)
       if (f === shownF) return
       shownF = f
       const pose = clipPose(clip, s.defs[clip.robot], Math.min(Math.max(f, 0), clip.length - 1))
