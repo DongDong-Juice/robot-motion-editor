@@ -171,7 +171,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
   if (p.review !== undefined) {
     const ok = Array.isArray(p.review) ? p.review.filter((v: any) => isObj(v) && str(v.clipId) && Object.hasOwn(p.clips, v.clipId) && int(v.from) && int(v.to)
       && v.from >= 0 && v.to >= v.from && REVIEW_KINDS.includes(v.kind) && ['bad', 'ok'].includes(v.verdict) && str(v.at)) : []
-    if (ok.length) p.review = ok.map((v: any) => ({ clipId: v.clipId, from: v.from, to: v.to, kind: v.kind, verdict: v.verdict, at: v.at }))
+    if (ok.length) p.review = ok.map((v: any) => ({ clipId: v.clipId, from: v.from, to: v.to, kind: v.kind, verdict: v.verdict, at: v.at, ...(str(v.foot) ? { foot: v.foot } : {}) }))
     else delete p.review
   }
   return p as Project

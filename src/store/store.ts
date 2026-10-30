@@ -5,11 +5,11 @@ import { addActor as addActorTo, emptyProject, newProject, nextClipName, stageOf
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
 import { inCrossfade, itemLen, resolve, sortedItems, validTrack } from '../model/sequence'
 import type { Actor, Bin, Item, Clip, Curve, Interp, Project, ReviewVerdict, StageSize, Tan, Track } from '../model/types'
-import { reviewFamily, reviewOverlap } from '../model/review'
+import { reviewSame } from '../model/review'
 import { validVideoTrack, videoTrack } from '../model/video'
 import { groundZ, lockFeet, standQ, type Body } from '../model/bodyPose'
 import { baseClip, editedClip, offsetKeyCount } from '../model/itemClip'
-import { addOverRange, type Range } from '../model/rangeEdit'
+import { addFrameDeltas, addOverRange, type Range } from '../model/rangeEdit'
 import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP, previewRange } from '../model/restPose'
 import { SEAM_MAX } from '../model/seam'
 import type { RobotDef, RobotKind } from '../robot/types'
@@ -93,6 +93,9 @@ export interface EditorState {
   degrees: boolean; setDegrees(on: boolean): void // angle unit of the value fields (inspector and joint panel)
   clearOffset(itemId: string): boolean // drop the piece's whole 수정 층 (one undo step); false = none / locked
   clearClipOffset(clipId: string): boolean // drop the clip's whole 수정 층 (one undo step); false = none
+  /** 발 미끄러짐 추천대로 고치기 (§17): add per-frame changes (channel → values from clip frame `from`) to a 수정 층 — an item id (the
+   *  piece's) or assetOwner(clipId) (the clip's). One undo step; false = refused (locked track, piece set to 원본 사용, unknown). */
+  addOffsetDeltas(ownerId: string, from: number, deltas: Record<string, number[]>): boolean
   select(actorId: string | null, channel?: string | null): void; selectKeys(keys: KeyRef[], additive: boolean): void
   setValue(actorId: string, channel: string, v: number): void
   setKey(clipId: string, channel: string, f: number, v: number): void
@@ -118,7 +121,7 @@ export interface EditorState {
   setIn(f: number | null): void; setOut(f: number | null): void
   addMarker(f: number): void; renameMarker(index: number, name: string): void; deleteMarker(index: number): void
   /** 검수 목록 판정 (§13): set (replacing any verdict of the same family on an overlapping range of the same clip, §14) or clear (null). One undo step. */
-  setReviewVerdict(at: { clipId: string; from: number; to: number; kind: ReviewVerdict['kind'] }, verdict: ReviewVerdict['verdict'] | null): void
+  setReviewVerdict(at: { clipId: string; from: number; to: number; kind: ReviewVerdict['kind']; foot?: string }, verdict: ReviewVerdict['verdict'] | null): void
   newClip(robot: RobotKind): string
   // Add an imported clip to the assets. If no actor of its robot exists, create one (no default clip) and place the clip at 0; otherwise assets only (null).
   importClipToActor(clip: Clip): { actorId: string; itemId: string } | null
@@ -531,8 +534,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       renameMarker: (i, name) => edit(p => { if (p.sequence.markers[i]) p.sequence.markers[i].name = name }, []),
       deleteMarker: i => edit(p => { p.sequence.markers.splice(i, 1) }, []),
       setReviewVerdict: (at, verdict) => edit(p => {
-        const rest = (p.review ?? []).filter(v => !(v.clipId === at.clipId && reviewFamily(v.kind) === reviewFamily(at.kind) && reviewOverlap(v.from, v.to, at.from, at.to))) // a copy: the draft shares p.review
-        if (verdict) rest.push({ ...at, verdict, at: new Date().toISOString() })
+        const rest = (p.review ?? []).filter(v => !reviewSame(v, at)) // a copy: the draft shares p.review
+        if (verdict) rest.push({ ...(at.foot ? at : { clipId: at.clipId, from: at.from, to: at.to, kind: at.kind }), verdict, at: new Date().toISOString() })
         if (rest.length) p.review = rest; else delete p.review
       }, []),
       defs, project: freezeClips(initial), frame: 0, playing: false, autoKey: false, view: 'tracks',
@@ -567,6 +570,13 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         set(s => ({ sel: { ...s.sel, keys: [] } }))
         return true
       }),
+      addOffsetDeltas: (ownerId, from, deltas) => tryEdit(p => {
+        if (assetClipId(ownerId) === null) { const f = findItem(p, ownerId); if (!f || f.t.locked || f.it.use === 'original') return false }
+        const o = ownerOf(p, ownerId)
+        if (!o?.offset || !Object.keys(deltas).length) return false
+        for (const [ch, d] of Object.entries(deltas)) o.channels[ch] = addFrameDeltas(o.channels[ch], 0, from, d, o.length)
+        return true
+      }, [{ clipId: ownerId, channels: Object.keys(deltas) }]),
       clearClipOffset: clipId => tryEdit(p => {
         if (!p.clips[clipId]?.offset) return false
         delete p.clips[clipId].offset

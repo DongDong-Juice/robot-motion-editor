@@ -9,6 +9,7 @@
 import type { Pose } from '../model/evaluate'
 import type { RobotDef } from '../robot/types'
 import { BODY_PAIRS, HAND_PAIR, pairDepths, pairName } from './collide'
+import { feetTrack, footSlips, frictionItems } from './feet'
 
 export const FPS = 60
 export const REL_SCORE = 8 // 파일 기준 급변: residual / the joint's 95th-percentile residual
@@ -19,6 +20,7 @@ export const START_ROOT = 0.05 // m
 export const CONTEXT = 12 // frames shown either side of an item (구간 지표)
 
 export type SuspectKind = 'limit' | 'rel' | 'start' | 'collision' | 'handTouch' // §14: 자가충돌 · 손 맞닿음 (G1)
+  | 'footSlip' | 'friction' // §16: 발 미끄러짐 · 마찰 부족 (G1, GO2; feet.ts)
 export interface Suspect {
   kind: SuspectKind
   from: number; to: number // frames (inclusive) of the target, 0-based
@@ -32,6 +34,11 @@ export interface Suspect {
   atLimit: boolean // an involved joint within 0.01 rad of its limit within 5 frames of the item (판정 기록)
   pairs?: [string, string][] // collision / handTouch: the part pairs that overlap (collide.ts), deepest first
   depth?: number // collision / handTouch: the deepest overlap in the item, mm
+  level?: 'warn' | 'note' // footSlip / friction: 경고 · 주의
+  foot?: string // footSlip: the foot link
+  travel?: number; load?: number; turn?: number; pivot?: boolean // footSlip: m over the floor, mean weight share 0–1, heading change °, 제자리 회전
+  mu?: number // friction: the highest friction coefficient needed
+  floor?: number // footSlip / friction: the motion's floor height, m (구간 지표 of a window uses it)
 }
 
 const PART_GO2: Record<string, string> = { FL: '앞왼다리', FR: '앞오른다리', RL: '뒤왼다리', RR: '뒤오른다리' }
@@ -126,7 +133,9 @@ export function detectSuspects(poses: Pose[], def: RobotDef): Suspect[] {
       speed: best * def.joints[wj].velocity, ratio: best, jump: Math.abs(poses[worst].q[wj] - poses[worst - 1].q[wj]), score: sc, atLimit: nearLimit(poses, def, joints, g[0], g[g.length - 1]) })
   }
   const jumps = out.sort((a, b) => (a.kind === 'start' ? -1 : b.kind === 'start' ? 1 : b.ratio - a.ratio))
-  return [...jumps, ...collisions(poses, def, BODY_PAIRS, 'collision', COLL_MIN), ...collisions(poses, def, [HAND_PAIR], 'handTouch', HAND_MIN)]
+  const feet = feetTrack(poses, def) // §16
+  return [...jumps, ...collisions(poses, def, BODY_PAIRS, 'collision', COLL_MIN), ...collisions(poses, def, [HAND_PAIR], 'handTouch', HAND_MIN),
+    ...(feet ? [...footSlips(feet), ...frictionItems(feet)] : [])]
 }
 
 // 자가충돌 (§14, user: 5 mm · 2 frames · 손×손 apart at 20 mm): frames where a pair overlaps more than `min` mm, grouped like the

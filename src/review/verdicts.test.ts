@@ -67,8 +67,15 @@ describe('verdicts', () => {
     const lines = csv.replace(/^﻿/, '').trim().split('\n')
     expect(lines).toHaveLength(3)
     expect(lines[0].split(',').slice(0, 4)).toEqual(['클립', '대상', '종류', '시작 클립 프레임'])
-    expect(lines[1].split(',')).toEqual(['a', '타임라인 · G1 #1 · a', '로봇 한계 초과', '60', '60', '60', '61', '1.00', '1', '오른팔', 'right_wrist_roll_joint', '120.0', '3.24', '2.000', '40.0', '예', '', '', '안무여서 놔둠', '2026-10-29T00:00:00.000Z'])
-    expect(lines[2].split(',').slice(-2)).toEqual(['', ''])
+    expect(lines[1].split(',')).toEqual(['a', '타임라인 · G1 #1 · a', '로봇 한계 초과', '60', '60', '60', '61', '1.00', '1', '오른팔', 'right_wrist_roll_joint', '120.0', '3.24', '2.000', '40.0', '예', '', '', '안무여서 놔둠', '2026-10-29T00:00:00.000Z', '', '', '', '', ''])
+    expect(lines[2].split(',').slice(18, 20)).toEqual(['', '']) // 미판정
+    // §16: a 발 미끄러짐 row fills its own columns (last), not the joint-speed ones
+    const slip: Suspect = { kind: 'footSlip', from: 30, to: 45, worst: 40, joints: [], parts: ['왼발'], speed: 0.12, ratio: 0, jump: 0, score: 0, atLimit: false,
+      foot: 'left_ankle_roll_link', travel: 0.034, load: 0.62, turn: 4, pivot: false, level: 'warn', floor: 0 }
+    const row = recordCsv('a', t, [slip], [], 'c').replace(/^\uFEFF/, '').trim().split('\n')[1].split(',')
+    expect(row.slice(2, 3)).toEqual(['발 미끄러짐'])
+    expect(row.slice(9, 18)).toEqual(['왼발', '', '', '', '', '', '', '', ''])
+    expect(row.slice(-5)).toEqual(['경고', '3.4', '62', '4', ''])
   })
 })
 
@@ -105,5 +112,19 @@ describe('project file and store', () => {
     expect(s().project.review!.map(v => v.kind)).toEqual(['limit', 'collision'])
     s().setReviewVerdict({ clipId: c, from: 61, to: 61, kind: 'rel' }, 'ok') // same family (관절 튐): replaces the limit one
     expect(s().project.review!.map(v => [v.kind, v.verdict])).toEqual([['collision', 'ok'], ['rel', 'ok']])
+  })
+})
+
+describe('발 미끄러짐 verdicts (§16)', () => {
+  test('each foot is its own spot: a verdict on the left foot does not answer for the right one on the same frames; saved and reopened', () => {
+    const ed = createEditorStore(defs), s = ed.getState(), c = s.project.sequence.tracks[0].items[0].refId
+    s.setReviewVerdict({ clipId: c, from: 30, to: 40, kind: 'footSlip', foot: 'left_ankle_roll_link' }, 'bad')
+    s.setReviewVerdict({ clipId: c, from: 30, to: 40, kind: 'footSlip', foot: 'right_ankle_roll_link' }, 'ok')
+    const r = ed.getState().project.review!
+    expect(r.map(v => [v.foot, v.verdict])).toEqual([['left_ankle_roll_link', 'bad'], ['right_ankle_roll_link', 'ok']])
+    const slip = (foot: string) => ({ kind: 'footSlip' as const, from: 20, to: 30, foot })
+    expect(verdictOf(r, c, slip('left_ankle_roll_link'), 10)?.verdict).toBe('bad')
+    expect(verdictOf(r, c, slip('right_ankle_roll_link'), 10)?.verdict).toBe('ok')
+    expect(parseProject(serializeProject(ed.getState().project), defs).review?.map(v => v.foot)).toEqual(['left_ankle_roll_link', 'right_ankle_roll_link'])
   })
 })
