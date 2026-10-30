@@ -13,6 +13,8 @@ const packCurves = (chs: Record<string, Curve>) => Object.fromEntries(Object.ent
   k: cv.keys.flatMap(k => [k.f, r6(k.v), INTERP.indexOf(k.interp), r6(k.inTan.df), r6(k.inTan.dv), r6(k.outTan.df), r6(k.outTan.dv)]),
 }]))
 // project files are saved as <title>.mproj; older *.motion.json (and plain .json) still open and save under the new name
+import { REVIEW_KINDS } from './review'
+
 export const PROJECT_EXT = '.mproj'
 export const projectFileName = (name: string) => name.replace(/(\.mproj|(\.motion)?\.json)$/i, '') + PROJECT_EXT
 
@@ -168,7 +170,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
   // 검수 판정 (§13): optional; a bad entry (or one on a clip that is gone) is dropped, never rejects the file
   if (p.review !== undefined) {
     const ok = Array.isArray(p.review) ? p.review.filter((v: any) => isObj(v) && str(v.clipId) && Object.hasOwn(p.clips, v.clipId) && int(v.from) && int(v.to)
-      && v.from >= 0 && v.to >= v.from && ['limit', 'rel', 'start'].includes(v.kind) && ['bad', 'ok'].includes(v.verdict) && str(v.at)) : []
+      && v.from >= 0 && v.to >= v.from && REVIEW_KINDS.includes(v.kind) && ['bad', 'ok'].includes(v.verdict) && str(v.at)) : []
     if (ok.length) p.review = ok.map((v: any) => ({ clipId: v.clipId, from: v.from, to: v.to, kind: v.kind, verdict: v.verdict, at: v.at }))
     else delete p.review
   }

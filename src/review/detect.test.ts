@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'vitest'
 import { loadDef } from '../test/defs'
 import type { Pose } from '../model/pose'
-import { CONTEXT, detectSuspects, itemSeries, partOf, startJump } from './detect'
+import { CONTEXT, detectSuspects as detectAll, itemSeries, partOf, startJump } from './detect'
 
 const g1 = loadDef('g1'), J = g1.joints.length
+// the jump items only: these synthetic motions swing every joint at random, so the arms also cross the torso (자가충돌, collide.test.ts)
+const detectSuspects = (ps: Pose[], def: typeof g1) => detectAll(ps, def).filter(s => s.depth === undefined)
 const idx = (n: string) => g1.joints.findIndex(j => j.name === n)
 // a calm dance: every joint swings slowly (≤ 1 rad/s), root walks a little
 const calm = (n = 600): Pose[] => Array.from({ length: n }, (_, t) => ({

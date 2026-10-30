@@ -50,7 +50,7 @@ function Menubar() {
   return (
     <>
       <FileMenu onExport={() => setExporting(true)} onPhysics={() => setPhysicsOpen(true)} />
-      <button className="mb-review" onClick={() => setReviewOpen(true)} title="모션의 튀는 관절(로봇 속도 한계 초과·급변)을 모아 보고 판정합니다">⚠ 검수 목록</button>
+      <button className="mb-review" onClick={() => setReviewOpen(true)} title="모션의 튀는 관절(로봇 속도 한계 초과·급변)과 자가충돌을 모아 보고 판정합니다">⚠ 검수 목록</button>
       <span className="mb-title">{title}</span>
       {msg && <span role="status" className="mb-msg">{msg}</span>}
       <PhysicsDialog open={physicsOpen} onClose={() => setPhysicsOpen(false)} />

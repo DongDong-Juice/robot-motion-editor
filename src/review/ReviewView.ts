@@ -9,6 +9,7 @@ import { buildRobot, type RobotRig } from '../viewer/buildRobot'
 
 export type ReviewAngle = '3/4' | '정면' | '측면'
 export const GHOST = '#FF9628' // 직전 프레임
+export const HIT = '#E5484D' // 자가충돌: 겹친 부위 (--warn)
 const GHOST_OPACITY = 0.45
 // camera direction in the robot's heading frame (x = facing, y = its left, z = up)
 const DIRS: Record<ReviewAngle, [number, number, number]> = { '3/4': [1, -0.75, 0.35], 정면: [1, 0, 0.12], 측면: [0, -1, 0.12] }
@@ -30,6 +31,8 @@ export class ReviewView {
   private rig: RobotRig | null = null
   private ghost: RobotRig | null = null
   private def: RobotDef | null = null
+  private color = ''
+  private lit: THREE.MeshStandardMaterial[] = [] // 자가충돌: materials painted red (§14)
   private ro: ResizeObserver
   private raf = 0
   private target = new THREE.Vector3()
@@ -73,7 +76,7 @@ export class ReviewView {
   /** Show `pose` (and `prev` as the ghost, or none). Rebuilds the robots when the robot type changes. */
   show(def: RobotDef, color: string, pose: Pose, prev: Pose | null) {
     if (def !== this.def) {
-      this.dropRigs(); this.def = def
+      this.dropRigs(); this.def = def; this.color = color; this.lit = []
       this.rig = buildRobot(def, color)
       this.ghost = buildRobot(def, GHOST); this.ghost.setGhost(true)
       this.ghost.root.traverse(o => { const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined; if (m) m.opacity = GHOST_OPACITY })
@@ -82,6 +85,19 @@ export class ReviewView {
     this.rig!.applyPose(pose)
     this.ghost!.root.visible = !!prev
     if (prev) this.ghost!.applyPose(prev)
+    this.draw()
+  }
+
+  /** 자가충돌 (§14): paint these links (their own meshes, not their children) red; [] = none. */
+  highlight(links: string[]) {
+    for (const m of this.lit) m.color.set(this.color)
+    this.lit = []
+    if (!this.rig) return
+    const want = new Set(links)
+    this.rig.root.traverse(o => {
+      if (!want.has(o.name)) return
+      for (const c of o.children) { const m = (c as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined; if ((c as THREE.Mesh).isMesh && m) { m.color.set(HIT); this.lit.push(m) } }
+    })
     this.draw()
   }
 

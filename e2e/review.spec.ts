@@ -1,24 +1,34 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 
-// 검수 목록 (§12 · §13): a CSV whose right wrist flips 2.5 rad at frame 150 (and stays) shows one 로봇 한계 초과 item. Verdicts are saved
+// 검수 목록 (§12 · §13 · §14): a CSV whose right wrist flips 2.5 rad at frame 150 (and stays) shows one 로봇 한계 초과 item. Verdicts are saved
 // in the project (motion untouched, undoable), 문제 있음 warns on export, 안무여서 놔둠 is listed last and apart in the export.
+// The arms swing a little around a pose clear of the torso (no 자가충돌 there); the second test moves the left forearm into it.
+
+// a 300-frame G1 CSV: every joint a slow small swing; arm joints around a clear pose (elbows bent, shoulders a little out); `q(name, i)`
+// overrides a joint
+async function importCsv(page: Page, name: string, q: (joint: string, i: number) => number | undefined) {
+  const joints = await page.evaluate(() => (window as any).__editor.getState().defs.g1.joints.map((j: { name: string }) => j.name) as string[])
+  const head = ['frequency(fps)', 'RobotType', 'DOF Number', 'time(ms)', 'position X(m)', 'position Y(m)', 'position Z(m)',
+    'quaternion X', 'quaternion Y', 'quaternion Z', 'quaternion W', ...joints].join(',') + ','
+  const base = (n: string, j: number, i: number) => /shoulder|elbow/.test(n)
+    ? (n.includes('elbow') ? 1.2 : n === 'left_shoulder_roll_joint' ? 0.25 : n === 'right_shoulder_roll_joint' ? -0.25 : 0) + 0.05 * Math.sin(i / 40 + j)
+    : 0.3 * Math.sin(i / 40 + j)
+  const csv = Buffer.from([head, ...Array.from({ length: 300 }, (_, i) =>
+    [60, 0, 29, Math.round(i * 1000 / 60), (0.002 * i).toFixed(6), '0.000000', '0.780000', '0', '0', '0', '1',
+      ...joints.map((n, j) => (q(n, i) ?? base(n, j, i)).toFixed(6))].join(',') + ',')].join('\n'))
+  await page.getByRole('button', { name: '메뉴', exact: true }).click()
+  const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('menuitem', { name: 'CSV 가져오기', exact: true }).click()])
+  await fc.setFiles([{ name: `${name}.csv`, mimeType: 'text/csv', buffer: csv }])
+  await expect.poll(() => page.evaluate(() => (window as any).__editor.getState().project.sequence.tracks.some((t: any) => t.items.length))).toBe(true)
+}
+
 test('검수 목록 finds a held joint flip, takes a verdict and jumps to it', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', e => errors.push(String(e)))
   await page.addInitScript(() => { delete (window as any).showOpenFilePicker; delete (window as any).showSaveFilePicker }) // file input / plain download: Playwright sees them
   await page.goto('/')
   await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
-  const joints = await page.evaluate(() => (window as any).__editor.getState().defs.g1.joints.map((j: { name: string }) => j.name) as string[])
-  const head = ['frequency(fps)', 'RobotType', 'DOF Number', 'time(ms)', 'position X(m)', 'position Y(m)', 'position Z(m)',
-    'quaternion X', 'quaternion Y', 'quaternion Z', 'quaternion W', ...joints].join(',') + ','
-  const wrist = joints.indexOf('right_wrist_roll_joint')
-  const csv = Buffer.from([head, ...Array.from({ length: 300 }, (_, i) =>
-    [60, 0, 29, Math.round(i * 1000 / 60), (0.002 * i).toFixed(6), '0.000000', '0.780000', '0', '0', '0', '1',
-      ...joints.map((_, j) => (0.3 * Math.sin(i / 40 + j) + (j === wrist && i >= 150 ? 1.25 : j === wrist ? -1.25 : 0)).toFixed(6))].join(',') + ',')].join('\n'))
-  await page.getByRole('button', { name: '메뉴', exact: true }).click()
-  const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('menuitem', { name: 'CSV 가져오기', exact: true }).click()])
-  await fc.setFiles([{ name: 'flip.csv', mimeType: 'text/csv', buffer: csv }])
-  await expect.poll(() => page.evaluate(() => (window as any).__editor.getState().project.sequence.tracks.some((t: any) => t.items.length))).toBe(true)
+  await importCsv(page, 'flip', (n, i) => (n === 'right_wrist_roll_joint' ? (i >= 150 ? 1.25 : -1.25) + 0.3 * Math.sin(i / 40) : undefined))
   const before = await page.evaluate(() => JSON.stringify((window as any).__editor.getState().project))
 
   await page.getByRole('button', { name: '⚠ 검수 목록' }).click()
@@ -60,7 +70,7 @@ test('검수 목록 finds a held joint flip, takes a verdict and jumps to it', a
   const rec = (await (await import('node:fs/promises')).readFile(await dl.path())).toString('utf8').replace(/^\uFEFF/, '').trim().split('\n')
   expect(rec).toHaveLength(2)
   expect(rec[1]).toContain('로봇 한계 초과,150,150,150,151')
-  expect(rec[1]).toContain(',아니오,문제 있음,') // the wrist (±1.55 at most) never reaches its limit ±1.97
+  expect(rec[1]).toContain(',아니오,,,문제 있음,') // the wrist (±1.55 at most) never reaches its limit ±1.97; no 겹친 부위 / 깊이 for a jump
   await dlg.getByRole('button', { name: '타임라인에서 보기' }).click()
   await expect(dlg).toBeHidden()
   expect(await page.evaluate(() => (window as any).__editor.getState().frame)).toBe(150)
@@ -102,5 +112,37 @@ test('검수 목록 finds a held joint flip, takes a verdict and jumps to it', a
   expect(reopened).toMatchObject([{ clipId, from: 150, to: 150, verdict: 'ok' }])
   await page.keyboard.press('Control+z')
   expect((await proj()).review).toMatchObject([{ verdict: 'bad' }])
+  expect(errors).toEqual([])
+})
+
+// 자가충돌 (§14): the left forearm eases into the torso (frames 100–130), stays, eases out (160–190): one 자가충돌 item, no jump.
+// The overlapping parts are painted red instead of the ghost; the chart is the depth in mm; verdicts work like the jumps'.
+test('검수 목록 finds a forearm in the torso as 자가충돌', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', e => errors.push(String(e)))
+  await page.addInitScript(() => { delete (window as any).showOpenFilePicker; delete (window as any).showSaveFilePicker })
+  await page.goto('/')
+  await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
+  const k = (i: number) => (i < 100 ? 0 : i < 130 ? (i - 100) / 30 : i < 160 ? 1 : i < 190 ? (190 - i) / 30 : 0) // 0 = clear, 1 = in
+  await importCsv(page, 'elbow', (n, i) => n === 'left_shoulder_roll_joint' ? 0.25 - 0.55 * k(i) : n === 'left_shoulder_yaw_joint' ? -0.8 * k(i)
+    : n === 'left_elbow_joint' ? 1.57 : undefined)
+  await page.getByRole('button', { name: '⚠ 검수 목록' }).click()
+  const dlg = page.getByRole('dialog', { name: '검수 목록' }), items = dlg.locator('.rv-item')
+  await expect(items).toHaveCount(1)
+  await expect(items.first()).toContainText('자가충돌')
+  await expect(items.first()).toContainText('왼아래팔×몸통 관통')
+  await expect(dlg.getByRole('button', { name: /^자가충돌 1$/ })).toBeVisible() // its filter
+  await expect(dlg.locator('.rv-legend')).toContainText('빨강 = 겹친 부위')
+  await expect(dlg.locator('.rv-legend')).not.toContainText('주황 = 직전')
+  await expect(dlg.getByRole('button', { name: '겹쳐 보기' })).toBeDisabled()
+  await expect(dlg.locator('.rv-chart-head')).toContainText('관통 깊이(mm)')
+  await dlg.getByRole('button', { name: '문제 있음', exact: true }).click()
+  expect((await page.evaluate(() => (window as any).__editor.getState().project.review))).toMatchObject([{ kind: 'collision', verdict: 'bad' }])
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: '메뉴', exact: true }).click()
+  await page.getByRole('menuitem', { name: '내보내기', exact: true }).click()
+  const exp = page.getByRole('dialog', { name: '내보내기' })
+  await expect(exp.getByRole('list', { name: '경고' })).toContainText('검수 미해결') // still overlapping: open
+  await exp.getByRole('button', { name: '닫기' }).click()
   expect(errors).toEqual([])
 })

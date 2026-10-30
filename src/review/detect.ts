@@ -8,6 +8,7 @@
 // Pure: no store, no three.js. Validated on 12 mocap CSVs + their hand-cleaned versions (all > 50 rad/s jumps found, no flags on cleaned data).
 import type { Pose } from '../model/evaluate'
 import type { RobotDef } from '../robot/types'
+import { BODY_PAIRS, HAND_PAIR, pairDepths, pairName } from './collide'
 
 export const FPS = 60
 export const REL_SCORE = 8 // 파일 기준 급변: residual / the joint's 95th-percentile residual
@@ -17,7 +18,7 @@ export const START_JOINT = 1.0 // rad: 첫 프레임 튐 (RL team: a joint jump 
 export const START_ROOT = 0.05 // m
 export const CONTEXT = 12 // frames shown either side of an item (구간 지표)
 
-export type SuspectKind = 'limit' | 'rel' | 'start'
+export type SuspectKind = 'limit' | 'rel' | 'start' | 'collision' | 'handTouch' // §14: 자가충돌 · 손 맞닿음 (G1)
 export interface Suspect {
   kind: SuspectKind
   from: number; to: number // frames (inclusive) of the target, 0-based
@@ -29,6 +30,8 @@ export interface Suspect {
   jump: number // rad, the worst joint's change at the worst frame
   score: number // 파일 기준 급변 점수: the highest residual / that joint's 95th percentile in the item (판정 기록)
   atLimit: boolean // an involved joint within 0.01 rad of its limit within 5 frames of the item (판정 기록)
+  pairs?: [string, string][] // collision / handTouch: the part pairs that overlap (collide.ts), deepest first
+  depth?: number // collision / handTouch: the deepest overlap in the item, mm
 }
 
 const PART_GO2: Record<string, string> = { FL: '앞왼다리', FR: '앞오른다리', RL: '뒤왼다리', RR: '뒤오른다리' }
@@ -122,7 +125,36 @@ export function detectSuspects(poses: Pose[], def: RobotDef): Suspect[] {
     out.push({ kind: limit ? 'limit' : 'rel', from: g[0], to: g[g.length - 1], worst, joints, parts: [...new Set(joints.map(partOf))],
       speed: best * def.joints[wj].velocity, ratio: best, jump: Math.abs(poses[worst].q[wj] - poses[worst - 1].q[wj]), score: sc, atLimit: nearLimit(poses, def, joints, g[0], g[g.length - 1]) })
   }
-  return out.sort((a, b) => (a.kind === 'start' ? -1 : b.kind === 'start' ? 1 : b.ratio - a.ratio))
+  const jumps = out.sort((a, b) => (a.kind === 'start' ? -1 : b.kind === 'start' ? 1 : b.ratio - a.ratio))
+  return [...jumps, ...collisions(poses, def, BODY_PAIRS, 'collision', COLL_MIN), ...collisions(poses, def, [HAND_PAIR], 'handTouch', HAND_MIN)]
+}
+
+// 자가충돌 (§14, user: 5 mm · 2 frames · 손×손 apart at 20 mm): frames where a pair overlaps more than `min` mm, grouped like the
+// jumps (COLL_GAP), kept when at least COLL_FRAMES frames overlap. Most severe first. G1 only.
+export const COLL_MIN = 5, HAND_MIN = 20, COLL_FRAMES = 2, COLL_GAP = 6
+function collisions(poses: Pose[], def: RobotDef, pairs: [string, string][], kind: 'collision' | 'handTouch', min: number): Suspect[] {
+  const d = pairDepths(poses, def, pairs, min) // under `min`: only known to be under it
+  if (!d) return []
+  const frames = d.map((row, t) => (row.some(x => x > min) ? t : -1)).filter(t => t >= 0), groups: number[][] = []
+  for (const t of frames) { const g = groups[groups.length - 1]; if (g && t - g[g.length - 1] <= COLL_GAP) g.push(t); else groups.push([t]) }
+  return groups.filter(g => g.length >= COLL_FRAMES).map(g => {
+    const best = new Map<number, number>() // pair -> deepest
+    let worst = g[0], depth = -Infinity
+    for (const t of g) d[t].forEach((x, i) => {
+      if (x <= min) return
+      best.set(i, Math.max(best.get(i) ?? -Infinity, x))
+      if (x > depth) { depth = x; worst = t }
+    })
+    const ps = [...best].sort((a, b) => b[1] - a[1]).map(([i]) => pairs[i])
+    return { kind, from: g[0], to: g[g.length - 1], worst, joints: [], parts: ps.map(pairName), speed: 0, ratio: 0, jump: 0, score: 0, atLimit: false, pairs: ps, depth }
+  }).sort((a, b) => b.depth! - a.depth!)
+}
+
+/** 구간 지표 of a collision / handTouch item: overlap depth in mm (the deepest of its pairs) at each frame around it. */
+export function collisionSeries(poses: Pose[], def: RobotDef, s: Suspect): { from: number; values: number[] } {
+  const from = Math.max(0, s.from - CONTEXT), to = Math.min(poses.length - 1, s.to + CONTEXT)
+  const d = pairDepths(poses.slice(from, to + 1), def, s.pairs ?? []) ?? []
+  return { from, values: d.map(row => Math.max(0, ...row)) }
 }
 
 /** 구간 지표: frames [from − CONTEXT, to + CONTEXT] clamped, value = the highest speed / limit of the item's joints at each frame. */

@@ -15,5 +15,5 @@ export interface Sequence { tracks: Track[]; markers: { f: number; name: string 
 export interface Project { version: 1 | 2; fps: 60; actors: Actor[]; clips: Record<string, Clip>; media: Media[]; bins?: Bin[]; sequence: Sequence; physics?: Partial<PhysicsSettings>; stage?: StageSize; review?: ReviewVerdict[] /* 검수 목록 판정 (§13) */ }
 /** 검수 목록 판정 (수정변동사항.md §13): on a clip's frames [from, to] (clip frames, inclusive), so it follows the clip into every piece.
  * 'bad' = 문제 있음 (stays open until a check no longer finds a jump there), 'ok' = 안무여서 놔둠 (not counted as a problem, still shown). */
-export interface ReviewVerdict { clipId: string; from: number; to: number; kind: 'limit' | 'rel' | 'start'; verdict: 'bad' | 'ok'; at: string /* ISO time */ }
+export interface ReviewVerdict { clipId: string; from: number; to: number; kind: 'limit' | 'rel' | 'start' | 'collision' | 'handTouch' /* §14: 자가충돌 · 손 맞닿음 */; verdict: 'bad' | 'ok'; at: string /* ISO time */ }
 export interface StageSize { width: number; depth: number } // 무대 size in m (width = world Y length, depth = world X length; audience at +X)

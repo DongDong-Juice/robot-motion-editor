@@ -1,4 +1,4 @@
-// 검수 목록 (수정변동사항.md §12 · §13): suspect joint jumps of one target in a list, the frame vs. the frame before it in 3D, the
+// 검수 목록 (수정변동사항.md §12 · §13 · §14): suspect joint jumps and self-collisions (§14) of one target in a list, the frame vs. the frame before it in 3D, the
 // speed / limit around it, and a verdict. The motion is never changed; verdicts are saved in the project (Project.review, undoable).
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useEditor, getEditor } from '../store/store'
@@ -8,14 +8,16 @@ import type { Pose } from '../model/pose'
 import type { ReviewVerdict } from '../model/types'
 import { seqFocus } from '../timeline/viewState'
 import { saveCsvFile } from '../fileio'
-import { CONTEXT, detectSuspects, itemSeries, type Suspect, type SuspectKind } from './detect'
+import { COLL_MIN, CONTEXT, HAND_MIN, collisionSeries, detectSuspects, itemSeries, type Suspect, type SuspectKind } from './detect'
+import { overlapLinks } from './collide'
 import { reviewTargets, targetPoses, type ReviewTarget } from './targets'
 import { clipRange, recordCsv, resolvedBad, targetClipId, verdictOf } from './verdicts'
 import { noteCheck } from './reviewState'
 import { ReviewView, type ReviewAngle } from './ReviewView'
 
-const KIND: Record<SuspectKind, string> = { limit: '로봇 한계 초과', rel: '파일 기준 급변', start: '첫 프레임 튐' }
-const FILTERS: { key: 'all' | SuspectKind; label: string }[] = [{ key: 'all', label: '전체' }, { key: 'limit', label: KIND.limit }, { key: 'rel', label: KIND.rel }, { key: 'start', label: KIND.start }]
+const KIND: Record<SuspectKind, string> = { limit: '로봇 한계 초과', rel: '파일 기준 급변', start: '첫 프레임 튐', collision: '자가충돌', handTouch: '손 맞닿음' }
+const FILTERS: { key: 'all' | SuspectKind; label: string }[] = [{ key: 'all', label: '전체' }, ...(['limit', 'rel', 'start', 'collision', 'handTouch'] as const).map(k => ({ key: k, label: KIND[k] }))]
+const isColl = (s: Suspect | null) => !!s && (s.kind === 'collision' || s.kind === 'handTouch') // §14
 const ANGLES: ReviewAngle[] = ['3/4', '정면', '측면']
 const JOINT = (n: string) => n.replace(/_joint$/, '')
 const sec = (f: number) => (f / 60).toFixed(1)
@@ -94,11 +96,13 @@ export default function ReviewDialog({ open, onClose }: { open: boolean; onClose
   useEffect(() => {
     const v = view.current
     if (!v || !def || !item || !poses[cur]) return
-    v.show(def, COLOR[target!.robot], poses[cur], ghost && cur > 0 ? poses[cur - 1] : null)
+    v.show(def, COLOR[target!.robot], poses[cur], ghost && !isColl(item) && cur > 0 ? poses[cur - 1] : null) // 자가충돌: the red parts instead of the ghost
+    v.highlight(isColl(item) ? overlapLinks(poses[cur], def, item.pairs!) : []) // 자가충돌: the links that overlap in this frame red (§15)
   }, [item, cur, ghost, poses, def]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const v = view.current; if (v && item && poses[item.worst]) v.aim(poses[item.worst], angle) }, [item, angle, poses])
 
-  const series = item && def ? itemSeries(poses, def, item) : null
+  const series = item && def ? (isColl(item) ? collisionSeries(poses, def, item) : itemSeries(poses, def, item)) : null
+  const lim = item?.kind === 'handTouch' ? HAND_MIN : isColl(item) ? COLL_MIN : 1 // the chart's red line: 관통 기준 (mm) or 한계 1.0배
   const step = (d: number) => { if (series) setCur(c => Math.min(Math.max(c + d, series.from), series.from + series.values.length - 1)) }
   // a verdict is saved on the clip's frames (undoable); the same button again clears it. The item moves to its group, the
   // selection stays at the same place in the list (= the next 미처리 one after judging one)
@@ -131,10 +135,11 @@ export default function ReviewDialog({ open, onClose }: { open: boolean; onClose
   }
 
   const csvRow = (f: number) => (target ? target.clipFrom + f + 1 : f + 1)
-  const title1 = (s: Suspect) => s.kind === 'start' ? `첫 프레임 튐 · ${s.parts.join('·') || '전신'} ${s.jump.toFixed(2)} rad`
+  const title1 = (s: Suspect) => isColl(s) ? `${s.parts.slice(0, 2).join(', ')}${s.parts.length > 2 ? ` 외 ${s.parts.length - 2}` : ''} 관통 ${s.depth!.toFixed(1)}mm`
+    : s.kind === 'start' ? `첫 프레임 튐 · ${s.parts.join('·') || '전신'} ${s.jump.toFixed(2)} rad`
     : `${s.parts.join('·')} ${Math.round(s.speed)} rad/s · 로봇 한계 ${s.ratio.toFixed(1)}배`
-  const sub1 = (s: Suspect) => `f${s.from}${s.to > s.from ? `~f${s.to}` : ''} · ${sec(s.from)}초 · ${s.to - s.from + 1}프레임 · ${s.joints.length}개 관절`
-  const max = series ? Math.max(1.2, ...series.values) : 1
+  const sub1 = (s: Suspect) => `f${s.from}${s.to > s.from ? `~f${s.to}` : ''} · ${sec(s.from)}초 · ${s.to - s.from + 1}프레임` + (isColl(s) ? ` · 최악 f${s.worst}` : ` · ${s.joints.length}개 관절`)
+  const max = series ? Math.max(lim * 1.2, ...series.values) : 1
   const H = 100, y = (v: number) => H - 6 - Math.sqrt(v / max) * (H - 14) // sqrt: small values stay visible next to a big jump
   const itemV = item ? vOf(item)?.verdict : undefined
 
@@ -146,7 +151,7 @@ export default function ReviewDialog({ open, onClose }: { open: boolean; onClose
       }}>
       <div className="rv-head">
         <h2>⚠ 검수 목록</h2>
-        <span className="rv-dim">튀는 관절을 찾아 직전 프레임과 비교하고 판정합니다 (모션은 바꾸지 않음 · 판정은 프로젝트에 저장)</span>
+        <span className="rv-dim">튀는 관절·자가충돌을 찾아 3D로 확인하고 판정합니다 (모션은 바꾸지 않음 · 판정은 프로젝트에 저장)</span>
         {msg && <span role="status" className="rv-msg">{msg}</span>}
         <button className="rv-close" onClick={onClose}>닫기</button>
       </div>
@@ -198,24 +203,24 @@ export default function ReviewDialog({ open, onClose }: { open: boolean; onClose
         </ul>
         <div className="rv-main">
           <div className="rv-title">
-            {item ? <><b>f{cur} · {sec(cur)}초</b><span className="rv-dim">CSV {csvRow(cur)}행{target!.kind === 'item' ? ` · 시퀀스 F${target!.firstFrame + cur}` : ''} · {KIND[item.kind]} · {item.joints.map(JOINT).join(', ')}</span></> : <span className="rv-dim">항목을 고르세요</span>}
+            {item ? <><b>f{cur} · {sec(cur)}초</b><span className="rv-dim">CSV {csvRow(cur)}행{target!.kind === 'item' ? ` · 시퀀스 F${target!.firstFrame + cur}` : ''} · {KIND[item.kind]} · {isColl(item) ? item.parts.join(', ') : item.joints.map(JOINT).join(', ')}</span></> : <span className="rv-dim">항목을 고르세요</span>}
           </div>
           <div className="rv-view" ref={viewEl}>
-            <div className="rv-legend"><i className="g" />주황 = 직전 f{Math.max(cur - 1, 0)} <i className="c" />지금 f{cur}</div>
+            <div className="rv-legend">{isColl(item) && <><i className="h" />빨강 = 겹친 부위 </>}{ghost && !isColl(item) && <><i className="g" />주황 = 직전 f{Math.max(cur - 1, 0)} </>}<i className="c" />지금 f{cur}</div>
             <div className="rv-angles">
-              <button aria-pressed={ghost} onClick={() => setGhost(g => !g)}>겹쳐 보기</button>
+              <button aria-pressed={ghost && !isColl(item)} disabled={isColl(item)} title={isColl(item) ? '자가충돌은 겹친 부위를 빨간색으로 보여 줍니다' : '직전 프레임을 주황색으로 겹쳐 봅니다'} onClick={() => setGhost(g => !g)}>겹쳐 보기</button>
               {ANGLES.map(a => <button key={a} aria-pressed={angle === a} onClick={() => setAngle(a)}>{a}</button>)}
             </div>
           </div>
-          <div className="rv-chart-head"><b>구간 지표</b>{series && <span className="rv-dim">f{series.from}~f{series.from + series.values.length - 1} (앞뒤 {CONTEXT}프레임) · 관련 관절 속도 / 로봇 한계 · 최대 {Math.max(...series.values).toFixed(1)}배</span>}</div>
+          <div className="rv-chart-head"><b>구간 지표</b>{series && <span className="rv-dim">f{series.from}~f{series.from + series.values.length - 1} (앞뒤 {CONTEXT}프레임) · {isColl(item) ? `관통 깊이(mm) · 최대 ${Math.max(...series.values).toFixed(1)}mm` : `관련 관절 속도 / 로봇 한계 · 최대 ${Math.max(...series.values).toFixed(1)}배`}</span>}</div>
           <svg className="rv-chart" viewBox={`0 0 ${series?.values.length ?? 1} ${H}`} preserveAspectRatio="none" role="img" aria-label="구간 지표">
             {series?.values.map((v, i) => {
               const f = series.from + i, inItem = item && f >= item.from && f <= item.to
-              return <rect key={i} x={i + 0.12} width={0.76} y={y(v)} height={H - 6 - y(v)} className={f === cur ? 'cur' : v > 1 ? 'over' : inItem ? 'in' : ''} onClick={() => setCur(f)} />
+              return <rect key={i} x={i + 0.12} width={0.76} y={y(v)} height={H - 6 - y(v)} className={f === cur ? 'cur' : v > lim ? 'over' : inItem ? 'in' : ''} onClick={() => setCur(f)} />
             })}
-            {series && <line x1={0} x2={series.values.length} y1={y(1)} y2={y(1)} className="lim" />}
+            {series && <line x1={0} x2={series.values.length} y1={y(lim)} y2={y(lim)} className="lim" />}
           </svg>
-          <div className="rv-legend2 rv-dim">회색 = 앞뒤 여유 · 밝은 회색 = 의심 구간 · 주황 = 로봇 한계 초과 · 흰색 = 보고 있는 프레임 · 빨간 점선 = 한계(1.0배) · 막대를 누르면 그 프레임</div>
+          <div className="rv-legend2 rv-dim">회색 = 앞뒤 여유 · 밝은 회색 = 의심 구간 · 주황 = {isColl(item) ? `기준(${lim}mm) 넘게 겹침` : '로봇 한계 초과'} · 흰색 = 보고 있는 프레임 · 빨간 점선 = {isColl(item) ? `기준 ${lim}mm` : '한계(1.0배)'} · 막대를 누르면 그 프레임</div>
           <div className="rv-actions">
             <button disabled={!item} onClick={() => step(-1)}>◀ 1</button>
             <button disabled={!item} onClick={() => step(1)}>1 ▶</button>

@@ -30,6 +30,14 @@ describe('verdicts', () => {
     expect(verdictOf(review, 'c', S(195, 196), 10)?.verdict).toBe('ok')
   })
 
+  test('families (§14): a 자가충돌 verdict does not answer for a 관절 튐 on the same frames, nor the other way; 손 맞닿음 is its own', () => {
+    const review = [{ ...V(60, 60, 'ok'), kind: 'collision' as const }]
+    expect(verdictOf(review, 'c', S(50, 50), 10)).toBeUndefined() // a jump item on clip frame 60
+    expect(verdictOf(review, 'c', { ...S(50, 50), kind: 'collision' }, 10)?.verdict).toBe('ok')
+    expect(verdictOf(review, 'c', { ...S(50, 50), kind: 'handTouch' }, 10)).toBeUndefined()
+    expect(resolvedBad([{ ...V(60, 60, 'bad'), kind: 'collision' as const }], 'c', [S(50, 50)], 10, 200)).toHaveLength(1) // only a jump found there: still resolved
+  })
+
   test('resolvedBad: a 문제 있음 range that a check no longer finds, inside the checked frames only', () => {
     const review = [V(60, 60, 'bad'), V(90, 95, 'bad'), V(300, 300, 'bad'), V(120, 120, 'ok')]
     expect(resolvedBad(review, 'c', [S(50, 50)], 10, 200).map(v => v.from)).toEqual([90]) // 300 is outside [10, 210)
@@ -59,7 +67,7 @@ describe('verdicts', () => {
     const lines = csv.replace(/^﻿/, '').trim().split('\n')
     expect(lines).toHaveLength(3)
     expect(lines[0].split(',').slice(0, 4)).toEqual(['클립', '대상', '종류', '시작 클립 프레임'])
-    expect(lines[1].split(',')).toEqual(['a', '타임라인 · G1 #1 · a', '로봇 한계 초과', '60', '60', '60', '61', '1.00', '1', '오른팔', 'right_wrist_roll_joint', '120.0', '3.24', '2.000', '40.0', '예', '안무여서 놔둠', '2026-10-29T00:00:00.000Z'])
+    expect(lines[1].split(',')).toEqual(['a', '타임라인 · G1 #1 · a', '로봇 한계 초과', '60', '60', '60', '61', '1.00', '1', '오른팔', 'right_wrist_roll_joint', '120.0', '3.24', '2.000', '40.0', '예', '', '', '안무여서 놔둠', '2026-10-29T00:00:00.000Z'])
     expect(lines[2].split(',').slice(-2)).toEqual(['', ''])
   })
 })
@@ -92,5 +100,10 @@ describe('project file and store', () => {
     expect(s().project.review).toHaveLength(1)
     s().setReviewVerdict({ clipId: c, from: 61, to: 62, kind: 'limit' }, null)
     expect(s().project.review).toBeUndefined()
+    s().setReviewVerdict({ clipId: c, from: 60, to: 60, kind: 'limit' }, 'bad')
+    s().setReviewVerdict({ clipId: c, from: 60, to: 64, kind: 'collision' }, 'ok') // another family on the same frames: both kept
+    expect(s().project.review!.map(v => v.kind)).toEqual(['limit', 'collision'])
+    s().setReviewVerdict({ clipId: c, from: 61, to: 61, kind: 'rel' }, 'ok') // same family (관절 튐): replaces the limit one
+    expect(s().project.review!.map(v => [v.kind, v.verdict])).toEqual([['collision', 'ok'], ['rel', 'ok']])
   })
 })
