@@ -21,6 +21,7 @@ export const CONTEXT = 12 // frames shown either side of an item (구간 지표)
 
 export type SuspectKind = 'limit' | 'rel' | 'start' | 'collision' | 'handTouch' // §14: 자가충돌 · 손 맞닿음 (G1)
   | 'footSlip' | 'friction' // §16: 발 미끄러짐 · 마찰 부족 (G1, GO2; feet.ts)
+  | 'stage' // §18: 무대 이탈 (pieces only; stage.ts — not from detectSuspects, which sees the motion alone)
 export interface Suspect {
   kind: SuspectKind
   from: number; to: number // frames (inclusive) of the target, 0-based
@@ -39,6 +40,7 @@ export interface Suspect {
   travel?: number; load?: number; turn?: number; pivot?: boolean // footSlip: m over the floor, mean weight share 0–1, heading change °, 제자리 회전
   mu?: number // friction: the highest friction coefficient needed
   floor?: number // footSlip / friction: the motion's floor height, m (구간 지표 of a window uses it)
+  over?: number; side?: 'back' | 'front' | 'right' | 'left' // stage: how far past that edge of the 무대 at worst, m
 }
 
 const PART_GO2: Record<string, string> = { FL: '앞왼다리', FR: '앞오른다리', RL: '뒤왼다리', RR: '뒤오른다리' }

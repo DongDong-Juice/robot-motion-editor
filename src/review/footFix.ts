@@ -4,15 +4,17 @@
 // of the drag) or starts moving fast (FOOT.vMax), then eased back over EASE_OUT frames
 // in the air; eased in over EASE_IN frames before. The leg's joints are solved by IK (model/legIk.ts), pelvis and upper body untouched.
 // Checked before it may be applied: the leg reaches, no joint jolt, the item is gone and nothing new is found, no deeper floor.
+// When the full fix fails a check, a weaker one is tried (FIX.ks: the slide undone by 80 %, 60 %, 40 % — 붙잡는 세기, as the Go2 editor's
+// pinStrength): it may leave part of the slide (the item stays listed) if that is at most FIX.restMax of it; 100 % is the fix as before.
 // Validated on 12 G1 mocap clips (93 of 113 items fixable, leg joints changed by 4° median) — holding the whole foot pose of the first
 // frame instead (G1 Motion Editor) bent the legs 32° median. Pure: no store.
 import type { Pose } from '../model/pose'
-import { footMat, legsOf, solveLeg } from '../model/legIk'
+import { footMat, legsOf, solveLeg, type Leg } from '../model/legIk'
 import type { RobotDef } from '../robot/types'
 import { detectSuspects, type Suspect } from './detect'
 import { FOOT, feetTrack, type FeetTrack } from './feet'
 
-export const FIX = { easeIn: 6, easeOut: 8, maxHold: 300, air: 5, reach: 0.005, jolt: 1.5, joltMin: 12, deeper: 0.005 }
+export const FIX = { easeIn: 6, easeOut: 8, maxHold: 300, air: 5, reach: 0.005, jolt: 1.5, joltMin: 12, deeper: 0.005, ks: [1, 0.8, 0.6, 0.4], restMax: 0.8 }
 const ss = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x))
 const DEG = 180 / Math.PI
 
@@ -26,7 +28,9 @@ export interface FootFix {
   q: number[][] // per changed frame: the new values of qis
   reach: number // the leg's worst miss while held, m
   maxDeg: number // the biggest joint change, °
-  drift: number // how far the foot slid by the time it lifts, m (what is undone)
+  drift: number // how far the foot slid by the time it lifts, m (k of it is undone)
+  k: number // 붙잡는 세기: the share of the slide undone (1 = all; FIX.ks)
+  rest: number // the slide left at the same place after the fix (its item's travel, m); 0 = none found (gone or under the detection limits)
   shift: number; shiftAt: number // the fixed foot vs the foot now: the biggest gap over the floor, m, and its frame (개선 가이드)
   soon: boolean // lifts within FIX.easeIn frames after the item: maybe a step
   poses?: Pose[] // the fixed motion (for the preview), when it was computed
@@ -41,7 +45,7 @@ const rootM = (p: Pose) => {
 }
 const fam = (k: Suspect['kind']) => (k === 'limit' || k === 'rel' || k === 'start' ? 'jump' : k)
 const same = (a: Suspect, b: Suspect) => fam(a.kind) === fam(b.kind) && (a.foot ?? '') === (b.foot ?? '') && a.from <= b.to + 2 && b.from <= a.to + 2
-const KO: Record<Suspect['kind'], string> = { limit: '로봇 한계 초과', rel: '파일 기준 급변', start: '첫 프레임 튐', collision: '자가충돌', handTouch: '손 맞닿음', footSlip: '발 미끄러짐', friction: '마찰 부족' }
+const KO: Record<Suspect['kind'], string> = { limit: '로봇 한계 초과', rel: '파일 기준 급변', start: '첫 프레임 튐', collision: '자가충돌', handTouch: '손 맞닿음', footSlip: '발 미끄러짐', friction: '마찰 부족', stage: '무대 이탈' }
 
 /** The links from the root down to `foot` (not the root): the leg the fix changes (the 3D view paints it). */
 export function legLinks(def: RobotDef, foot: string): string[] {
@@ -54,7 +58,7 @@ export function legLinks(def: RobotDef, foot: string): string[] {
 export function planFootFix(poses: Pose[], def: RobotDef, item: Suspect, found: Suspect[], track?: FeetTrack): FootFix {
   const N = poses.length, t = track ?? feetTrack(poses, def), leg = legsOf(def).find(l => l.foot === item.foot)
   const k = t ? t.feet.findIndex(f => f.link === item.foot) : -1
-  const none = (why: string): FootFix => ({ ok: false, why: [why], from: item.from, to: item.to, hold: [item.from, item.to], lift: -1, qis: leg?.qis ?? [], q: [], reach: 0, maxDeg: 0, drift: 0, shift: 0, shiftAt: item.from, soon: false, path: [], floor: t?.floor ?? 0 })
+  const none = (why: string): FootFix => ({ ok: false, why: [why], from: item.from, to: item.to, hold: [item.from, item.to], lift: -1, qis: leg?.qis ?? [], q: [], reach: 0, maxDeg: 0, drift: 0, k: 1, rest: 0, shift: 0, shiftAt: item.from, soon: false, path: [], floor: t?.floor ?? 0 })
   if (item.kind !== 'footSlip' || !t || !leg || k < 0) return none('발 미끄러짐 항목이 아닙니다')
   let lift = -1
   // the foot lifts: up for FIX.air frames or more (a shorter hop of a dragged foot is part of the drag: held on), or moving fast on the floor
@@ -66,10 +70,18 @@ export function planFootFix(poses: Pose[], def: RobotDef, item: Suspect, found: 
     f = u - 1
   }
   if (lift < 0) return none(`발을 떼는 순간이 ${FIX.maxHold / 60}초 안에 없음 — 어느 쪽으로 붙잡아도 다른 곳이 미끄러짐`)
-  const a = item.from, s = Math.max(0, a - FIX.easeIn), e = Math.min(N - 1, lift + FIX.easeOut)
+  const full = fixWith(poses, def, item, found, t, leg, k, lift, 1)
+  if (full.ok) return full
+  for (const K of FIX.ks.slice(1)) { const w = fixWith(poses, def, item, found, t, leg, k, lift, K); if (w.ok) return w }
+  return full // none works: the reasons of the full fix
+}
+
+/** The fix undoing `K` of the slide (1 = all), with its checks. */
+function fixWith(poses: Pose[], def: RobotDef, item: Suspect, found: Suspect[], t: FeetTrack, leg: Leg, k: number, lift: number, K: number): FootFix {
+  const N = poses.length, a = item.from, s = Math.max(0, a - FIX.easeIn), e = Math.min(N - 1, lift + FIX.easeOut)
   // the slide so far, undone: minus the contact point's moves from a up to the frame (kept from the lift on)
   const back: [number, number][] = poses.map(() => [0, 0])
-  for (let f = a; f < lift; f++) back[f + 1] = [back[f][0] - t.move[k][f][0], back[f][1] - t.move[k][f][1]]
+  for (let f = a; f < lift; f++) back[f + 1] = [back[f][0] - K * t.move[k][f][0], back[f][1] - K * t.move[k][f][1]]
   for (let f = lift + 1; f <= e; f++) back[f] = back[lift]
   const out = poses.map(p => p), q: number[][] = []
   let warm = [...poses[s].q], reach = 0, maxDeg = 0, shift = 0, shiftAt = a
@@ -97,9 +109,10 @@ export function planFootFix(poses: Pose[], def: RobotDef, item: Suspect, found: 
   const t2 = feetTrack(out.slice(s, e + 1), def, t.floor)!, low = (L: number[]) => Math.min(...L)
   if (low(t2.low[k]) < low(t.low[k].slice(s, e + 1)) - FIX.deeper) why.push('발이 바닥을 더 파고듦')
   const after = detectSuspects(out, def)
-  if (after.some(x => same(x, item))) why.push('고쳐도 같은 자리에 미끄러짐이 남음')
+  const left = after.find(x => same(x, item)), rest = left?.travel ?? 0
+  if (left && (K === 1 || rest > FIX.restMax * (item.travel ?? 0))) why.push('고쳐도 같은 자리에 미끄러짐이 남음') // a weaker fix may leave a little
   const fresh = after.filter(x => !found.some(y => same(x, y)))
   if (fresh.length) why.push(`새 문제가 생김: ${fresh.slice(0, 3).map(x => `${KO[x.kind]}${x.foot ? `(${x.parts[0]})` : ''} f${x.from}`).join(', ')}${fresh.length > 3 ? ` 외 ${fresh.length - 3}` : ''}`)
-  return { ok: !why.length, why, from: s, to: e, hold: [a, lift], lift, qis: leg.qis, q, reach, maxDeg, drift: Math.hypot(...back[lift]), shift, shiftAt, soon: lift - item.to < FIX.easeIn, poses: out,
+  return { ok: !why.length, why, from: s, to: e, hold: [a, lift], lift, qis: leg.qis, q, reach, maxDeg, drift: Math.hypot(...back[lift]) / K, k: K, rest, shift, shiftAt, soon: lift - item.to < FIX.easeIn, poses: out,
     path: t.at[k].slice(a, lift + 1).map(p => [p[0], p[1]] as [number, number]), floor: t.floor }
 }

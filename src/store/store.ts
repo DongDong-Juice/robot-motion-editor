@@ -110,6 +110,7 @@ export interface EditorState {
   poseAt(actorId: string): { def: RobotDef; f: number; body: Body; q: number[] } | null // the pose the joint panel shows
   editPose(actorId: string, values: Record<string, number>): boolean // channel -> target, one undo step (joins an open gesture); false = refused, nothing written
   standPose(actorId: string): void // 차렷 joints, no tilt, rest height; x/y/yaw kept; no foot lock
+  shiftBody(actorId: string, forward: number, left: number): boolean // 체중 이동: the body moved (m, along its own heading) with the feet held (always, whatever feetLock is); one undo step; false = the legs cannot hold, nothing written
   setTrackFlag(trackId: string, flag: 'hidden' | 'locked' | 'trail', on: boolean): void // trail: 경로 표시 (display only, also on a locked track)
   setItemHidden(itemId: string, on: boolean): void // display only, also on a locked track (like the track's 숨기기)
   setClip(clipId: string, patch: { name?: string; length?: number }): boolean
@@ -743,6 +744,12 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         if (!get().autoGround) v['root.z'] = p.def.rest.z
         standQ(p.def).forEach((x, i) => { v[p.def.joints[i].name] = x })
         editPose(actorId, v, false)
+      },
+      shiftBody: (actorId, forward, left) => {
+        const p = poseAt(actorId)
+        if (!p) return false
+        const c = Math.cos(p.body.yaw), sn = Math.sin(p.body.yaw)
+        return editPose(actorId, { 'root.x': p.body.x + c * forward - sn * left, 'root.y': p.body.y + sn * forward + c * left }, true)
       },
       setStage: patch => {
         const clean: Partial<StageSize> = {}

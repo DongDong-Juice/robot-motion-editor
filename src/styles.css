@@ -491,6 +491,7 @@ body {
 .jp-wrap { flex-wrap: wrap; }
 .jp-tools button { white-space: nowrap; }
 .jp-check { display: inline-flex; align-items: center; gap: 4px; color: var(--text); font-size: 11.5px; white-space: nowrap; }
+.jp-lbl { color: var(--dim); font-size: 11.5px; white-space: nowrap; } /* 체중 이동 row label */
 .insp .jp .jp-check input { width: auto; height: auto; margin: 0; accent-color: var(--accent); }
 .jp-sec { margin: 10px 0 0; padding-top: 6px; border-top: 1px solid var(--line); font-size: 11.5px; font-weight: 500; color: var(--dim); }
 .jp-unit[aria-pressed="true"] { color: var(--accent); }
@@ -529,6 +530,7 @@ body {
 .rv-chip { font-size: 11px; padding: 0 6px; border: 1px solid; border-radius: 3px; white-space: nowrap; }
 .rv-chip.limit { color: var(--warn); } .rv-chip.rel { color: var(--accent); } .rv-chip.start { color: var(--rest); } .rv-chip.collision { color: var(--blend); } .rv-chip.handTouch { color: var(--inertia); }
 .rv-chip.footSlip { color: #56d364; } .rv-chip.friction { color: #b392f0; } /* §16 */
+.rv-chip.stage { color: #f0883e; } /* §18 무대 이탈 */
 .rv-lv { font-size: 11px; padding: 0 5px; border-radius: 3px; white-space: nowrap; } .rv-lv.warn { background: var(--warn); color: #fff; } .rv-lv.note { border: 1px solid var(--dim); color: var(--dim); }
 .rv-v { font-size: 11px; } .rv-v.bad { color: var(--warn); } .rv-v.ok { color: #56d364; }
 .rv-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }

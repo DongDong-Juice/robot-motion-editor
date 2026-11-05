@@ -191,3 +191,40 @@ export function overlapLinks(pose: Pose, def: RobotDef, pairs: [string, string][
   }
   return [...out]
 }
+
+// ---- 무대 이탈 (수정변동사항.md §18): how far the whole robot reaches over the floor, with the same link hulls (every link with a mesh) ----
+const bodies = new WeakMap<RobotDef, Plan>()
+function bodyOf(def: RobotDef): Plan {
+  const hit = bodies.get(def)
+  if (hit) return hit
+  const byChild = new Map([...def.joints, ...def.fixedJoints].map(j => [j.child, j]))
+  const qi = new Map(def.joints.map((j, i) => [j.name, i])), seen = new Set<string>(), steps: Step[] = [], shapes: Record<string, Shape> = {}
+  const visit = (link: string) => { // parents first
+    const j = byChild.get(link)
+    if (!j || seen.has(link)) return
+    visit(j.parent); seen.add(link)
+    steps.push({ parent: j.parent, child: link, xyz: j.xyz, Ro: rpy(j.rpy), axis: j.axis, qi: qi.get(j.name) ?? -1 })
+  }
+  for (const l of Object.keys(def.links)) { const s = shapeOf(def, l); if (s) { shapes[l] = s; visit(l) } } // links without a mesh: nothing to reach with
+  const plan = { steps, shapes }
+  bodies.set(def, plan)
+  return plan
+}
+const quatR = ([x, y, z, w]: number[]): R3 => [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w), 2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+  2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]
+const AXES: Vec3[] = [[-1, 0, 0], [1, 0, 0], [0, -1, 0], [0, 1, 0]]
+/** The robot's reach over the floor in this (world) pose: [min x, max x, min y, max y] in m of its link hulls (≈ the meshes). */
+export function floorBox(pose: Pose, def: RobotDef): [number, number, number, number] {
+  const plan = bodyOf(def), fr = linkFrames(def, plan, pose.q), R0 = quatR(pose.rootQuat), P0 = pose.rootPos
+  const out = [Infinity, -Infinity, Infinity, -Infinity]
+  for (const [l, s] of Object.entries(plan.shapes)) {
+    const f = fr[l]
+    if (!f) continue
+    const R = mulR(R0, f.R), p = add(P0, mulV(R0, f.p))
+    AXES.forEach((d, i) => { // reach along d: −min x, max x, −min y, max y
+      const v = dot(p, d) + support(s, mulTV(R, d))
+      if (i % 2) out[i] = Math.max(out[i], v); else out[i] = Math.min(out[i], -v)
+    })
+  }
+  return out as [number, number, number, number]
+}

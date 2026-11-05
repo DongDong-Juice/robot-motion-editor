@@ -6,7 +6,7 @@ import { addFrameDeltas } from '../model/rangeEdit'
 import { createEditorStore } from '../store/store'
 import { detectSuspects } from './detect'
 import { feetTrack, footSlips } from './feet'
-import { planFootFix } from './footFix'
+import { FIX, planFootFix } from './footFix'
 
 const g1 = loadDef('g1'), go2 = loadDef('go2'), defs: RobotDefs = { g1, go2 }
 const yawQ = (t: number): [number, number, number, number] => [0, 0, Math.sin(t / 2), Math.cos(t / 2)]
@@ -24,6 +24,7 @@ describe('발 미끄러짐 추천대로 고치기 (§17)', () => {
       const fix = planFootFix(ps, def, slip, found)
       expect(fix.why).toEqual([])
       expect(fix.ok).toBe(true)
+      expect(fix.k).toBe(1); expect(fix.rest).toBe(0) // the full fix: nothing left
       expect(fix.hold[0]).toBe(60); expect(fix.hold[1]).toBeGreaterThan(100); expect(fix.hold[1]).toBeLessThan(108) // lifted 12 mm a few frames into the rise
       expect(fix.drift).toBeCloseTo(0.0667, 2) // 40 frames × 10 cm/s
       expect(fix.maxDeg).toBeLessThan(15)
@@ -40,6 +41,17 @@ describe('발 미끄러짐 추천대로 고치기 (§17)', () => {
     const fix = planFootFix(ps, g1, slip, found)
     expect(fix.hold[1]).toBeGreaterThan(120) // not 90: the hop does not end the hold
     expect(fix.shift).toBeGreaterThan(0.05); expect(fix.shiftAt).toBeGreaterThan(110)
+  })
+
+  test('붙잡는 세기: when the full fix fails a check, a weaker one undoes part of the slide (the rest stays listed)', () => {
+    // straight legs, glides 12 cm/s for 60 frames (12 cm), then rises: undoing all of it is out of the leg's reach
+    const ps: Pose[] = Array.from({ length: 180 }, (_, f) => ({ rootPos: [Math.max(0, Math.min(f, 120) - 60) * 0.12 / 60, 0, g1.rest.z + 0.08 * ss((f - 120) / 12)], rootQuat: yawQ(0), q: [...g1.rest.q] }))
+    const found = detectSuspects(ps, g1), slip = found.find(s => s.kind === 'footSlip')!, fix = planFootFix(ps, g1, slip, found)
+    expect(fix.ok).toBe(true)
+    expect(fix.k).toBe(0.6) // 100 % and 80 %: the leg does not reach
+    expect(fix.why).toEqual([])
+    expect(fix.rest).toBeGreaterThan(0); expect(fix.rest).toBeLessThanOrEqual(FIX.restMax * slip.travel!) // 12 cm → about 5 cm left
+    expect(fix.drift).toBeCloseTo(0.12, 1) // the whole slide, of which 60 % is undone
   })
 
   test('a foot that never lifts cannot be held: refused with the reason', () => {

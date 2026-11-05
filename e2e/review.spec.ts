@@ -171,6 +171,32 @@ test('검수 목록 finds feet gliding over the floor as 발 미끄러짐', asyn
   expect(errors).toEqual([])
 })
 
+// 무대 이탈 (§18): the robot walks out to x = 3.5 m (stage 10 × 6 m: the 객석 edge at x = 3). Listed with how far; the guide suggests
+// the 배치 change (nothing moved: set by hand) and no verdict is taken.
+test('검수 목록 finds a piece past the stage edge as 무대 이탈 and suggests the 배치 change', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', e => errors.push(String(e)))
+  await page.addInitScript(() => { delete (window as any).showOpenFilePicker; delete (window as any).showSaveFilePicker })
+  await page.goto('/')
+  await expect(page.locator('#stage canvas')).toBeVisible({ timeout: 30000 })
+  await importCsv(page, 'walkout', () => undefined, i => 3.5 * i / 299)
+  const place = () => page.evaluate(() => JSON.stringify((window as any).__editor.getState().project.actors.map((a: any) => a.placement)))
+  const before = await place()
+  await page.getByRole('button', { name: '⚠ 검수 목록' }).click()
+  const dlg = page.getByRole('dialog', { name: '검수 목록' }), items = dlg.locator('.rv-item')
+  await dlg.getByRole('button', { name: /^무대 이탈 1$/ }).click()
+  await expect(items).toHaveCount(1)
+  await expect(items.first()).toContainText('객석 쪽 경계를')
+  const guide = dlg.getByLabel('배치 추천')
+  await expect(guide).toContainText('옮기면 이 조각은 무대 안')
+  await expect(guide).toContainText('인스펙터 배치')
+  await expect(dlg.locator('.rv-chart-head')).toContainText('경계를 넘은 거리(cm')
+  await expect(dlg.getByRole('button', { name: '문제 있음', exact: true })).toBeDisabled()
+  await expect(dlg.getByRole('button', { name: '안무여서 놔둠', exact: true })).toBeDisabled()
+  expect(await place()).toBe(before) // nothing moved
+  expect(errors).toEqual([])
+})
+
 // 추천대로 고치기 (§17): knees bent, glides 10 cm/s with its feet down from frame 170, then rises off the floor at 200. The guide offers the fix;
 // applying it puts the leg change in the piece's 수정 층 (the clip untouched), the check finds no 발 미끄러짐 any more, Ctrl+Z brings it back.
 test('검수 목록 fixes a foot slide as recommended (추천대로 고치기)', async ({ page }) => {

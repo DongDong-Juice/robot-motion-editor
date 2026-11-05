@@ -10,9 +10,9 @@ import { targetPoses, type ReviewTarget } from './targets'
 
 const SLACK = REVIEW_SLACK
 // the same spot: same clip, same family (관절 튐 / 자가충돌 / 손 맞닿음 §14 / 발 미끄러짐 · 마찰 부족 §16), same foot, ranges overlapping
-// within SLACK
+// within SLACK. 무대 이탈 (§18) takes no verdict: where a piece stands depends on the piece, not on the clip's frames.
 const same = (v: ReviewVerdict, clipId: string, s: Pick<Suspect, 'kind' | 'foot'>, r: { from: number; to: number }) =>
-  reviewSame(v, { clipId, kind: s.kind, foot: s.foot, ...r })
+  s.kind !== 'stage' && reviewSame(v, { clipId, kind: s.kind, foot: s.foot, ...r })
 
 /** A found item on clip frames: clipFrom = the target's clip frame of its pose 0. */
 export const clipRange = (s: Pick<Suspect, 'from' | 'to'>, clipFrom: number) => ({ from: clipFrom + s.from, to: clipFrom + s.to })
@@ -59,7 +59,7 @@ export function openProblems(p: Project, defs: RobotDefs, it: Item): { frame: nu
     .map(v => ({ frame: it.start + Math.max(v.from, it.trimIn) - it.trimIn, verdict: v }))
 }
 
-const KIND: Record<Suspect['kind'], string> = { limit: '로봇 한계 초과', rel: '파일 기준 급변', start: '첫 프레임 튐', collision: '자가충돌', handTouch: '손 맞닿음', footSlip: '발 미끄러짐', friction: '마찰 부족' }
+const KIND: Record<Suspect['kind'], string> = { limit: '로봇 한계 초과', rel: '파일 기준 급변', start: '첫 프레임 튐', collision: '자가충돌', handTouch: '손 맞닿음', footSlip: '발 미끄러짐', friction: '마찰 부족', stage: '무대 이탈' }
 const cell = (v: string | number) => { const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
 
 /** 판정 기록 CSV: every found item of a target with its measurements and verdict (미판정 = empty). Header row, UTF-8 BOM for Excel. */
