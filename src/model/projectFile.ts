@@ -146,6 +146,13 @@ export function parseProject(text: string, defs: RobotDefs): Project {
         if (it.restBlend !== undefined && it.restBlend !== 'auto' && !(int(it.restBlend) && it.restBlend >= 0)) fail(`${it_}.restBlend`)
         if (it.inertia !== undefined && !(int(it.inertia) && it.inertia >= 0)) fail(`${it_}.inertia`)
         for (const k of ['tailHold', 'tailBlend', 'seam']) if (it[k] !== undefined && !(int(it[k]) && it[k] >= 0)) fail(`${it_}.${k}`)
+        if (it.step !== undefined && typeof it.step !== 'boolean') fail(`${it_}.step`)
+        if (it.walk !== undefined) { // 걷기 (§20)
+          const w = it.walk
+          if (!isObj(w) || !Array.isArray(w.to) || w.to.length !== 2 || !w.to.every(num) || !['travel', 'keep', 'audience'].includes(w.face)
+            || (w.yaw !== undefined && !num(w.yaw)) || (w.slow !== undefined && !['walk', 'after', 'before'].includes(w.slow))) fail(`${it_}.walk`)
+          if (t.kind !== 'motion' || it.trimIn !== 0) fail(`${it_}.walk`, '걷기 조각이 올바르지 않습니다')
+        }
         if (itemIds.has(it.id)) fail(`${it_}.id`, '중복된 ID입니다')
         itemIds.add(it.id)
         if (t.kind === 'video') {
@@ -167,6 +174,7 @@ export function parseProject(text: string, defs: RobotDefs): Project {
   p.version = 2
   if (!isObj(p.physics)) delete p.physics
   if (!(isObj(p.stage) && [p.stage.width, p.stage.depth].every(v => typeof v === 'number' && v >= 1 && v <= 30))) delete p.stage
+  if (p.stepSeam !== true) delete p.stepSeam // GO2 발 걸음 이음매 기본값 (§19): optional, anything but true is off
   // 검수 판정 (§13): optional; a bad entry (or one on a clip that is gone) is dropped, never rejects the file
   if (p.review !== undefined) {
     const ok = Array.isArray(p.review) ? p.review.filter((v: any) => isObj(v) && str(v.clipId) && Object.hasOwn(p.clips, v.clipId) && int(v.from) && int(v.to)

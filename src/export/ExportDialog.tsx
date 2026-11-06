@@ -11,13 +11,15 @@ import { runItems } from '../physics/runItem'
 import { pieceName, projectTitle } from '../model/sequence'
 import { seqFocus } from '../timeline/viewState'
 import { openProblems, splitWarnings } from '../review/verdicts'
+import { redWalks } from '../model/itemClip'
 
 const Spin = () => <span className="spin" aria-hidden="true" />
 const tick = () => new Promise<void>(r => setTimeout(r, 0)) // let the dialog repaint between items (a long export froze the page)
 type Row = { actor: { id: string; name: string; robot: string }; item: import('../model/types').Item; t: import('../model/types').Track }
 type W = ReturnType<typeof exportItemCsv>['warnings'][number]
 // '검수 미해결': a 문제 있음 verdict (검수 목록, §13) that a fresh check still finds on the piece
-type CsvWarn = Omit<W, 'kind'> & { kind: W['kind'] | '검수 미해결'; actorId: string; actorName: string; itemId: string }
+// '걷기 한계 초과' (§22): a 걷기 piece that stands instead of walking — not exported until it is fixed
+type CsvWarn = Omit<W, 'kind'> & { kind: W['kind'] | '검수 미해결' | '걷기 한계 초과'; actorId: string; actorName: string; itemId: string }
 
 export default function ExportDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null)
@@ -85,6 +87,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
         out.push(...sp.kept.map(w => ({ ...w, ...who })), ...openProblems(project, defs, item).map(o => ({ kind: '검수 미해결' as const, frame: o.frame, channel: '',
           message: `검수 목록에서 문제 있음으로 판정한 지점에 아직 튐이 있습니다 (클립 f${o.verdict.from}${o.verdict.to > o.verdict.from ? `~f${o.verdict.to}` : ''})`, ...who })))
         ok.push(...sp.ok.map(w => ({ ...w, ...who })))
+        out.push(...redWalks(project, defs, [item.id]).map(r => ({ kind: '걷기 한계 초과' as const, frame: item.start, channel: '', message: `걷지 않고 서 있음 — ${r.text} (고치기 전에는 내보내지 않음)`, ...who })))
       }
       if (live) { setCsvWarns(out); setOkWarns(ok) }
     })()
@@ -108,6 +111,8 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
   // one robot's items (G1 / GO2 내보내기) or one item (row 내보내기) into the 다운로드 폴더: label prefixes the message, zipName names the zip
   async function doExport(rs: Row[], key: string, zipName = 'motion_export.zip', label = '') {
     if (exporting) return
+    const red = redWalks(project, defs, rs.map(r => r.item.id)) // §22 안정성 우선: no 한계 초과 walk goes out (CSV or RL 학습용)
+    if (red.length) { setMsg(`${label}내보내지 않았습니다 — 한계 초과 걷기 ${red.length}개 (경고 목록에서 눌러 고칠 곳으로 이동)`); return }
     setExporting({ key, done: 0, total: rs.length })
     try {
       const taken = new Set<string>(), files: { name: string; text: string }[] = []
@@ -192,7 +197,7 @@ export default function ExportDialog({ open, onClose }: { open: boolean; onClose
       {warnings.length > 0 && (
         <ul className="exp-warn" aria-label="경고">
           {warnings.map((w, i) => (
-            <li key={i} className={w.near ? 'near' : w.kind === 'jointJumpError' || w.kind === '검수 미해결' ? 'err' : undefined}><button onClick={() => { // that piece: selected, its clip preview looping from the warning's frame (user)
+            <li key={i} className={w.near ? 'near' : w.kind === 'jointJumpError' || w.kind === '검수 미해결' || w.kind === '걷기 한계 초과' ? 'err' : undefined}><button onClick={() => { // that piece: selected, its clip preview looping from the warning's frame (user)
               setFrame(w.frame); select(w.actorId, w.channel); selectItem(w.itemId); openItemPreview(w.itemId, true); setPreviewFrame(w.frame); seqFocus.fn?.(w.itemId); onClose() }}>
               {w.actorName} · {w.kind} · {w.frame} · {w.channel} · {w.message}
             </button></li>
