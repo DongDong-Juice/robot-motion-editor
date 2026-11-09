@@ -290,13 +290,14 @@ function posesClip(poses: Pose[], def: RobotDef, base: Clip): Clip {
 /** What a new 걷기 piece of `frames` frames at the end of `actorId`'s track (null = a new robot at the origin) would do — for the
  * 라이브러리 add panel: its start (stage) and its report. It ends standing in 기본서기 (nothing after it yet). */
 export function walkPreview(p: Project, defs: RobotDefs, actorId: string | null, spec: { to: [number, number]; face: 'travel' | 'keep' | 'audience'; yaw?: number; slow?: 'walk' | 'after' | 'before' }, frames: number,
-  viaStand = false /* after a 기본서기 경유 전이 조각 (it starts in 기본서기 over the last piece's feet) */): { start: Pose; report: WalkReport; minFrames: number | null } | null {
+  viaStand = false /* after a 기본서기 경유 전이 조각 (it starts in 기본서기 over the last piece's feet) */,
+  place?: { x: number; y: number; yaw: number } /* §27 출발 위치: the robot's 배치 when the walk is its first piece */): { start: Pose; report: WalkReport; minFrames: number | null } | null {
   const def = defs.go2, actor = actorId ? p.actors.find(a => a.id === actorId) : null
   if (actorId && (!actor || actor.robot !== 'go2')) return null
   const track = actor && p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actor.id)
-  const pl = actor?.placement ?? { x: newActorX(p), y: 0, yaw: 0 } // a new robot: where addActor will place it
-  let start: Pose = { rootPos: [0, 0, def.rest.z], rootQuat: [0, 0, 0, 1], q: [...def.rest.q] }
   const last = track && sortedItems(track).at(-1)
+  const pl = (!last && place) || (actor?.placement ?? { x: newActorX(p), y: 0, yaw: 0 }) // a new robot: where addActor will place it
+  let start: Pose = { rootPos: [0, 0, def.rest.z], rootQuat: [0, 0, 0, 1], q: [...def.rest.q] }
   if (track && last) {
     const lc = itemClip(p, defs, last), xf = stitchXf(p, defs, track, last.id)
     if (lc && xf) start = applyXf(evaluateClip(lc, def, last.trimOut - 1), xf)

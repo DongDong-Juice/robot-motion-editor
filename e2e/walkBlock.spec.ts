@@ -30,7 +30,7 @@ test('걷기 (가상): add from the library, change it in the inspector, its sta
   await panel.getByRole('spinbutton', { name: '시간' }).fill('3')
   await panel.getByRole('spinbutton', { name: '시간' }).press('Enter')
   await expect(panel.locator('.wk-tone')).toContainText('정상')
-  await expect(panel.locator('[role=note]')).toContainText('출발점에서')
+  await expect(panel.locator('[role=note]').filter({ hasText: '출발점에서' })).toBeVisible() // (a new GO2: also the §27 출발 위치 note)
   await panel.getByRole('button', { name: '추가', exact: true }).click()
   await expect(panel.locator('.pp-msg')).toContainText('걷기를 추가했습니다')
   const actor = await page.evaluate(() => (window as any).__editor.getState().project.actors.at(-1).id as string)
@@ -86,9 +86,9 @@ test('걷기 (가상): add from the library, change it in the inspector, its sta
   await page.mouse.move(box.x + 80, box.y + 24 + 28 + 14)
   await expect.poll(() => cv.getAttribute('title')).toContain('걷기: 정상')
 
-  // the stage: dashed path, target ring, heading arrow while it is selected
+  // the stage: dashed path, target ring, heading arrow while it is selected (+ the 출발 고리, §27: it is the track's first piece)
   const guide = () => page.evaluate(() => { const g = (window as any).__stage.walkGuide(); return { on: g.visible, n: g.children.length } })
-  await expect.poll(guide).toEqual({ on: true, n: 3 })
+  await expect.poll(guide).toEqual({ on: true, n: 4 })
   await page.evaluate(() => (window as any).__editor.getState().selectItem(null))
   await expect.poll(async () => (await guide()).on).toBe(false)
 
@@ -110,9 +110,9 @@ test('도착 위치를 무대에서: 찍기 (라이브러리 · 인스펙터, Es
   // 라이브러리: 찍기, the floor clicked → 도착 X / Y; the button turns off
   await page.getByRole('tab', { name: '라이브러리' }).click()
   await page.locator('.pp-row[data-kind=walk]').click()
-  const panel = page.locator('.pp-blk'), btn = panel.getByRole('button', { name: '무대에서 찍기' })
+  const panel = page.locator('.pp-blk'), btn = panel.getByTitle(/도착 위치를 정합니다/) // (§27: the 출발 위치 has its own 찍기)
   await btn.click()
-  await expect(panel.locator('.wk-pick')).toHaveAttribute('aria-pressed', 'true')
+  await expect(btn).toHaveAttribute('aria-pressed', 'true')
   let [x, y] = await at(0.8, 0.4)
   await page.mouse.move(x - 20, y); await page.mouse.move(x, y)
   await expect.poll(() => page.evaluate(() => (window as any).__stage.walkPickShown())).toBe(true)
@@ -121,12 +121,12 @@ test('도착 위치를 무대에서: 찍기 (라이브러리 · 인스펙터, Es
   await expect.poll(async () => Math.hypot(Number(await panel.getByRole('spinbutton', { name: '도착 X' }).inputValue()) - 0.8,
     Number(await panel.getByRole('spinbutton', { name: '도착 Y' }).inputValue()) - 0.4)).toBeLessThanOrEqual(0.03) // whole pixels: ±1 cm
   const picked = [Number(await panel.getByRole('spinbutton', { name: '도착 X' }).inputValue()), Number(await panel.getByRole('spinbutton', { name: '도착 Y' }).inputValue())]
-  await expect(panel.locator('.wk-pick')).toHaveAttribute('aria-pressed', 'false')
+  await expect(btn).toHaveAttribute('aria-pressed', 'false')
   expect(await page.evaluate(() => (window as any).__stage.walkPickShown())).toBe(false)
   // Esc cancels without a change
   await btn.click(); [x, y] = await at(0.2, -0.6); await page.mouse.move(x, y)
   await page.keyboard.press('Escape')
-  await expect(panel.locator('.wk-pick')).toHaveAttribute('aria-pressed', 'false')
+  await expect(btn).toHaveAttribute('aria-pressed', 'false')
   await page.mouse.click(x, y)
   await expect(panel.getByRole('spinbutton', { name: '도착 X' })).toHaveValue(String(picked[0]))
   await panel.getByRole('button', { name: '추가', exact: true }).click()
@@ -138,7 +138,7 @@ test('도착 위치를 무대에서: 찍기 (라이브러리 · 인스펙터, Es
   // 인스펙터: 찍기 on the selected piece — one undo back
   await page.evaluate(([a, id]) => { const s = (window as any).__editor.getState(); s.selectItem(id); s.select(a); s.setFrame(0) }, [actor, id] as const)
   const insp = page.locator('.insp')
-  await insp.getByRole('button', { name: '무대에서 찍기' }).click();
+  await insp.getByTitle(/도착 위치를 정합니다/).click();
   [x, y] = await at(1.2, -0.3)
   await page.mouse.move(x, y); await page.mouse.click(x, y)
   await expect.poll(async () => { const t = (await walkOfIt()).walk.to; return Math.hypot(t[0] - 1.2, t[1] + 0.3) <= 0.03 }).toBe(true)
@@ -210,5 +210,59 @@ test('§23 도착 X · Y entered together (no half change); 추천 수정 with t
   await page.locator('.insp-sec-t').first().click()
   expect(await same()).toBe(true)
   await expect(insp.getByRole('alert')).toHaveCount(0)
+  expect(errors).toEqual([])
+})
+
+test('§27 출발 위치: a first walk sets where the robot starts (library and inspector); a spot that makes it 한계 초과 is refused with 최소 시간', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', e => errors.push(String(e)))
+  await boot(page)
+  await page.getByRole('tab', { name: '라이브러리' }).click()
+  await page.locator('.pp-row[data-kind=walk]').click()
+  const panel = page.locator('.pp-blk')
+  // a new GO2: 출발 위치 boxes (its 배치), the default 1 m ahead follows it
+  const sx = panel.getByRole('spinbutton', { name: '출발 X' }), sy = panel.getByRole('spinbutton', { name: '출발 Y' })
+  await expect(sx).toHaveValue('0')
+  await sx.fill('-1'); await sy.fill('0.5'); await sy.press('Enter')
+  await expect(panel.getByRole('spinbutton', { name: '도착 X' })).toHaveValue('0')
+  await expect(panel.getByRole('spinbutton', { name: '도착 Y' })).toHaveValue('0.5')
+  await panel.getByRole('button', { name: '추가', exact: true }).click()
+  await expect(panel.locator('.pp-msg')).toContainText('걷기를 추가했습니다')
+  const a = await page.evaluate(() => (window as any).__editor.getState().project.actors[0])
+  expect(a.placement).toMatchObject({ x: -1, y: 0.5 })
+
+  // inspector of that walk (the track's first piece): 출발 위치 shown; a far spot is refused → 최소 시간 … 하고 옮기기
+  const its = await items(page, a.id)
+  await page.evaluate(([actor, id]) => { const s = (window as any).__editor.getState(); s.selectItem(id); s.select(actor); s.setFrame(0) }, [a.id, its[0].id] as const)
+  const insp = page.locator('.insp')
+  const ix = insp.getByRole('spinbutton', { name: '출발 X' })
+  await expect(ix).toHaveValue('-1')
+  await ix.fill('-4'); await ix.press('Enter')
+  const box = insp.getByRole('alert')
+  await expect(box).toContainText('적용하지 않았습니다')
+  expect((await page.evaluate(() => (window as any).__editor.getState().project.actors[0].placement.x))).toBe(-1)
+  await box.getByRole('button', { name: /^최소 시간 .*하고 옮기기/ }).click()
+  await expect(insp.locator('.insp-hint[role=status]')).toContainText('출발 위치를 옮겼습니다')
+  expect((await page.evaluate(() => (window as any).__editor.getState().project.actors[0].placement.x))).toBe(-4)
+
+  // the 출발 고리 on the stage dragged: the robot's 배치 on release, one undo
+  await page.evaluate(() => (window as any).__editor.getState().undo()) // back to (-1, 0.5)
+  await expect.poll(() => page.evaluate(() => { const g = (window as any).__stage.walkGuide(); return g.visible && g.children.length })).toBe(4)
+  const at = (x: number, y: number) => page.evaluate(([x, y]) => (window as any).__stage.screenOf(x, y) as [number, number], [x, y] as const)
+  const [rx, ry] = await at(-1, 0.5), [tx, ty] = await at(-0.6, 0.3)
+  await page.mouse.move(rx, ry); await page.mouse.down()
+  await page.mouse.move((rx + tx) / 2, (ry + ty) / 2); await page.mouse.move(tx, ty)
+  await expect(page.locator('.wk-pick-tag')).toContainText('도착점까지')
+  await page.mouse.up()
+  await expect.poll(() => page.evaluate(() => { const p = (window as any).__editor.getState().project.actors[0].placement; return Math.hypot(p.x + 0.6, p.y - 0.3) <= 0.03 })).toBe(true)
+  await page.evaluate(() => (window as any).__editor.getState().undo())
+  expect((await page.evaluate(() => (window as any).__editor.getState().project.actors[0].placement))).toMatchObject({ x: -1, y: 0.5 })
+
+  // a second walk starts where the first ends: no 출발 boxes there
+  await page.evaluate(id => (window as any).__editor.getState().addWalk(id, { to: [1, 1], face: 'keep' }, 240), a.id)
+  const two = await items(page, a.id)
+  await page.evaluate(([actor, id]) => { const s = (window as any).__editor.getState(); s.selectItem(id); s.select(actor) }, [a.id, two[1].id] as const)
+  await expect(insp.getByRole('spinbutton', { name: '출발 X' })).toHaveCount(0)
+  await expect(insp.getByRole('note').filter({ hasText: '앞 조각이 끝나는 자리' })).toBeVisible()
   expect(errors).toEqual([])
 })

@@ -267,6 +267,40 @@ describe('걷기 조각 on the timeline', () => {
     const it = s().project.sequence.tracks.flatMap(t => t.items).find(i => i.id === w)!
     expect(evaluate(s().project, defs, a.id, endF(it)).rootPos[0]).toBeCloseTo(4, 2)
   })
+  test('§27 출발 위치: a first walk added with a spot puts the robot there (one undo); after a piece it is refused', async () => {
+    const { walkPreview } = await import('./itemClip')
+    const st = createEditorStore(defs, emptyProject()), s = () => st.getState()
+    const place = { x: -1, y: 0.5, yaw: Math.PI / 2 }
+    const pv = walkPreview(s().project, defs, null, { to: [-1, 1.5], face: 'keep' }, 120, false, place)!
+    expect([pv.start.rootPos[0], pv.start.rootPos[1]].map(v => +v.toFixed(6))).toEqual([-1, 0.5])
+    expect(pv.report.tone).not.toBe('bad') // 1 m straight ahead (facing +y)
+    const w = s().addWalk(null, { to: [-1, 1.5], face: 'keep' }, 120, undefined, place)!
+    const a = s().project.actors[0], it = s().project.sequence.tracks.flatMap(t => t.items).find(i => i.id === w)!
+    expect(a.placement).toEqual(place)
+    const e = evaluate(s().project, defs, a.id, endF(it)).rootPos
+    expect(e[0]).toBeCloseTo(-1, 2); expect(e[1]).toBeCloseTo(1.5, 2)
+    s().undo(); expect(s().project.actors).toHaveLength(0) // the robot and its spot: one undo
+    s().redo()
+    expect(s().addWalk(s().project.actors[0].id, { to: [0, 1.5], face: 'keep' }, 120, undefined, place)).toBeNull() // not the first piece
+  })
+  test('§27 배치 (출발 위치) that would make a walk 한계 초과 is refused, with the 최소 시간 that passes; already-held walks do not block it', () => {
+    const st = createEditorStore(defs, emptyProject()), s = () => st.getState()
+    const w = s().addWalk(null, { to: [1, 0], face: 'keep' }, 120)!
+    const actor = s().project.actors[0].id
+    expect(s().setPlacement(actor, { x: 0.6 })).toBe(true) // closer: fine
+    const far = { x: -2.5 } // 3.5 m in 2 s: too fast
+    expect(s().setPlacement(actor, far)).toBe(false)
+    expect(s().project.actors[0].placement.x).toBe(0.6)
+    const pv = s().previewPlacement(actor, far)!
+    expect(pv.blocked.map(b => b.itemId)).toEqual([w])
+    expect(pv.fix).toHaveLength(1)
+    expect(s().setPlacement(actor, far, pv.fix!)).toBe(true) // the 해결 button: moved and the walk made longer, one undo
+    const it = s().project.sequence.tracks.flatMap(t => t.items).find(i => i.id === w)!
+    expect(it.trimOut - it.trimIn).toBe(pv.fix![0].frames)
+    expect(walkOf(s().project, defs, it)!.report.tone).not.toBe('bad')
+    s().undo(); expect(s().project.actors[0].placement.x).toBe(0.6)
+    expect(s().setPlacement(actor, { x: Number.NaN })).toBe(false)
+  })
   test('saved and opened again; a bad walk entry is refused', () => {
     const { s, actor } = stage()
     const spec: WalkSpec = { to: [1, 0.5], face: 'travel', yaw: 0.2, slow: 'after' }

@@ -352,7 +352,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
     guide.renderOrder = 997
     if (mainView) scene.add(guide)
     let guideKey: [Project | null, string | null] = [null, null]
-    let guideAt: { itemId: string; actorId: string; to: [number, number]; from: [number, number] } | null = null // the ring 끌기 (§21) reads it
+    let guideAt: { itemId: string; actorId: string; to: [number, number]; from: [number, number]; first: boolean } | null = null // the ring 끌기 (§21, §27) reads it
     const syncGuide = () => {
       const s = store.getState(), id = !s.editing && !s.clipEdit ? s.selItem : null
       if (guideKey[0] === s.project && guideKey[1] === id) return
@@ -377,7 +377,13 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       arrow.traverse(o => { const m = (o as THREE.Mesh).material as THREE.Material | undefined; if (m) { m.depthTest = false; m.transparent = true } })
       for (const o of [line, ring, arrow]) o.renderOrder = 997
       guide.add(line, ring, arrow)
-      if (guide.visible) guideAt = { itemId: it.id, actorId: track.actorId, to: [it.walk!.to[0], it.walk!.to[1]], from: [pts[0], pts[1]] }
+      const first = sortedItems(track)[0]?.id === it.id
+      if (first) { // 출발 위치 (§27): the track's first piece starts at the robot's 배치 — a smaller hollow ring there, draggable
+        const st = new THREE.Mesh(new THREE.RingGeometry(0.09, 0.115, 40), new THREE.MeshBasicMaterial({ color: actor?.color ?? tone, side: THREE.DoubleSide, depthTest: false, transparent: true, opacity: 0.9 }))
+        st.position.set(pts[0], pts[1], 0.005); st.renderOrder = 997
+        guide.add(st)
+      }
+      if (guide.visible) guideAt = { itemId: it.id, actorId: track.actorId, to: [it.walk!.to[0], it.walk!.to[1]], from: [pts[0], pts[1]], first }
     }
 
     // crossfade (displayed pose is a blend, not invertible) or stitched first frame (root x/y/yaw pinned): no gizmo
@@ -544,7 +550,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
     }
     const floor = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), hitP = new THREE.Vector3()
     // grab candidate from pointerdown on a draggable robot; `on` once it moved past 4 px
-    let grab: { id: string; at: THREE.Vector3; x: number; y: number; on: boolean } | null = null
+    let grab: { id: string; at: THREE.Vector3; x: number; y: number; on: boolean; refused?: true } | null = null
     // 배치 이동 + GO2: the robot stays; a dashed line from its track-end spot to the cursor, release appends a walk clip
     // there (trackDrag, so Ctrl+Z mid-drag cancels it)
     let walking = false
@@ -586,14 +592,14 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
     pickLine.renderOrder = pickRing.renderOrder = 998; pickG.add(pickLine, pickRing); pickG.visible = false
     if (mainView) scene.add(pickG)
     const cm = (v: number) => Math.round(v * 100) / 100
-    const showPick = (ev: MouseEvent, from: [number, number]): [number, number] | null => {
+    const showPick = (ev: MouseEvent, from: [number, number], label = '출발점에서'): [number, number] | null => {
       aim(ev)
       if (!ray.ray.intersectPlane(floor, hitP)) { hidePick(); return null }
       const x = cm(hitP.x), y = cm(hitP.y)
       pickLine.geometry.setFromPoints([new THREE.Vector3(from[0], from[1], 0.008), new THREE.Vector3(x, y, 0.008)]); pickLine.computeLineDistances()
       pickRing.position.set(x, y, 0.009); pickG.visible = true
       const r = el.getBoundingClientRect()
-      pickTag.textContent = `X ${x.toFixed(2)} · Y ${y.toFixed(2)} m · 출발점에서 ${Math.hypot(x - from[0], y - from[1]).toFixed(2)} m`
+      pickTag.textContent = `X ${x.toFixed(2)} · Y ${y.toFixed(2)} m · ${label} ${Math.hypot(x - from[0], y - from[1]).toFixed(2)} m`
       pickTag.style.left = `${ev.clientX - r.left + 6}px`; pickTag.style.top = `${ev.clientY - r.top}px`; pickTag.hidden = false
       dirty = true
       return [x, y]
@@ -604,10 +610,23 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       const g = guideAt, s = store.getState()
       if (!g || s.walkPick || s.playing || trackLocked(s.project, g.actorId)) return false
       aim(ev)
-      if (!ray.ray.intersectPlane(floor, hitP) || Math.hypot(hitP.x - g.to[0], hitP.y - g.to[1]) > 0.25) return false
+      if (!ray.ray.intersectPlane(floor, hitP)) return false
+      const dTo = Math.hypot(hitP.x - g.to[0], hitP.y - g.to[1]), dFrom = Math.hypot(hitP.x - g.from[0], hitP.y - g.from[1])
+      const startRing = g.first && dFrom <= 0.2 && dFrom < dTo // 출발 고리 (§27): the robot's 배치
+      if (!startRing && dTo > 0.25) return false
       ringDragging = true; consumed = true; orbit.enabled = false; dom.style.cursor = 'grabbing'; guide.visible = false
       let at: [number, number] | null = null
       const stop = () => { ringDragging = false; hidePick(); orbit.enabled = true; dom.style.cursor = ''; guideKey = [null, null]; syncGuide() }
+      if (startRing) {
+        trackDrag(m => { at = showPick(m, g.to, '도착점까지') ?? at }, () => {
+          stop()
+          const s2 = store.getState()
+          if (!at || (at[0] === g.from[0] && at[1] === g.from[1]) || s2.setPlacement(g.actorId, { x: at[0], y: at[1] })) return
+          const pv = s2.previewPlacement(g.actorId, { x: at[0], y: at[1] })
+          setWalkMsg(pv?.blocked.length ? `걷기가 한계 초과가 되어 출발 위치를 옮기지 않았습니다${pv.fix ? ' (시간을 늘려야 함' : ' (시간으로는 못 고침'} — 인스펙터에서 찍으면 추천 수정이 나옴)` : '출발 위치를 바꿀 수 없습니다')
+        }, stop)
+        return true
+      }
       trackDrag(m => { at = showPick(m, g.from) ?? at }, () => {
         stop()
         if (!at || (at[0] === g.to[0] && at[1] === g.to[1]) || store.getState().setWalk(g.itemId, { to: at })) return
@@ -638,7 +657,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
     let hoverEv: PointerEvent | null = null, hoverRaf = 0
     const onMove = (ev: PointerEvent) => {
       const wp = mainView && !ringDragging ? store.getState().walkPick : null
-      if (wp && !grab) { showPick(ev, wp.from); dom.style.cursor = 'crosshair'; return }
+      if (wp && !grab) { showPick(ev, wp.from, wp.label); dom.style.cursor = 'crosshair'; return }
       if (!grab) { // hover cursor, one raycast per frame
         if (!ev.buttons && !hoverRaf) hoverRaf = requestAnimationFrame(() => { hoverRaf = 0; const b = hoverEv && pick(hoverEv); dom.style.cursor = b && canDrag(b.id) ? 'grab' : '' })
         hoverEv = ev
@@ -652,7 +671,10 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       }
       pick(ev)
       if (!ray.ray.intersectPlane(floor, hitP)) return
-      store.getState().setPlacement(grab.id, { x: grab.x + hitP.x - grab.at.x, y: grab.y + hitP.y - grab.at.y })
+      // §27: a spot that would make a 걷기 of its track 한계 초과 is not taken — the robot stays at the last one that is not
+      const ok = store.getState().setPlacement(grab.id, { x: grab.x + hitP.x - grab.at.x, y: grab.y + hitP.y - grab.at.y })
+      dom.style.cursor = ok ? 'grabbing' : 'not-allowed'
+      if (!ok && !grab.refused && !trackLocked(store.getState().project, grab.id)) { grab.refused = true; setWalkMsg('여기로 옮기면 걷기가 한계 초과가 되어 옮기지 않습니다 (걷기 시간을 늘리면 옮길 수 있음)') }
     }
     const onCancel = () => {
       const g = grab
@@ -667,7 +689,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       if (!down || Math.hypot(ev.clientX - down[0], ev.clientY - down[1]) > 4 || onGizmo) return
       const wp = mainView ? store.getState().walkPick : null
       if (wp) { // 찍기: a left click sets it, a right click cancels; off either way
-        const at = ev.button === 0 ? showPick(ev, wp.from) : null
+        const at = ev.button === 0 ? showPick(ev, wp.from, wp.label) : null
         store.getState().setWalkPick(null)
         if (at) wp.apply(at)
         return
