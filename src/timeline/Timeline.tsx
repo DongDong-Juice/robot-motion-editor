@@ -14,6 +14,7 @@ import { formatTimecode, parseTimecode } from './timeScale'
 import { usePhysics } from '../physics/physicsStore'
 import { cancelAll } from '../physics/runItem'
 import { PHYS_NOTE } from './physGraph'
+import { clipBlock, saveUserBlock } from '../userBlocks'
 
 // 자르기: type a sequence frame (starts at the playhead) and cut the piece there — same target rule as the C key.
 function CutControl({ disabled }: { disabled: boolean }) {
@@ -150,6 +151,14 @@ function ClipEditBar({ clipId, name }: { clipId: string; name: string }) {
         + (jump.length ? ` · 관절 점프 ${jump.length}개${near.length ? ` (이음매 근처 ${near.length}개: 프레임 ${near.slice(0, 3).map(w => w.frame).join(', ')}${near.length > 3 ? '…' : ''})` : ''}` : ''))
     } catch (err) { setMsg(`저장 실패: ${err instanceof Error ? err.message : err}`) }
   }
+  // 사용자 블록 (§26): this clip as 클립 편집 shows it (its 수정 층 included), frozen and kept in this browser only
+  const saveUser = () => {
+    const s = getEditor().getState(), nm = window.prompt('사용자 블록 이름 (이 브라우저에만 저장됩니다)', `${name} 사용자`)?.trim()
+    if (!nm) return
+    const clip = clipBlock(s.project, s.defs, clipId, nm)
+    if (typeof clip === 'string') { setMsg(clip); return }
+    void saveUserBlock(clip).then(() => setMsg(`사용자 블록으로 저장했습니다: ${nm} (이 브라우저에만 저장)`))
+  }
   const hold = (on: boolean) => () => st.setClipPeek(on)
   return (
     <span className="tl-crumb tl-clipedit" role="group" aria-label="클립 편집">
@@ -160,6 +169,7 @@ function ClipEditBar({ clipId, name }: { clipId: string; name: string }) {
         title="누르고 있는 동안 수정 전 원본을 보여 줍니다">원본 보기</button>
       <button aria-pressed={overlay} onClick={() => st.setCompareOverlay(!overlay)} title="수정 전 원본을 반투명으로 겹쳐 보여 줍니다">겹쳐 보기</button>
       {draft && <button onClick={() => st.cancelDraftClip()} title="라이브러리 미리보기에서 넣은 이 클립을 목록에서 빼고 나갑니다 (실행취소로 되돌릴 수 있음)">추가 취소</button>}
+      <button onClick={saveUser} title="수정이 반영된 이 클립을 새 블록으로 굳혀 라이브러리 › 사용자 블록에 둡니다 (이 브라우저에만 저장 — 사이트 데이터를 지우거나 다른 PC에서는 보이지 않음)">사용자 블록으로 저장</button>
       <button onClick={saveRl} title="RL 학습용: 수정이 반영된 전체 CSV를 원본 좌표 그대로(이동·회전 없음) 저장하고, 수정한 프레임 구간 edits.json을 함께 내려받습니다">RL 학습용 저장</button>
       <button className="tl-primary" onClick={saveCsv} title="수정한 클립을 CSV로 저장합니다 (기본자세·리드인 없이, 루트 로컬)">CSV 저장</button>
       {msg && <span className="tl-cutmsg" role="status">{msg}</span>}

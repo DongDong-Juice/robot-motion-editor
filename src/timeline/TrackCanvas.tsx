@@ -4,6 +4,7 @@ import { onHandleArrow } from '../layout/useLayout'
 import { actorOf, clampDf, CLIP_ACTOR, clipLocked, editingItem, editTarget, getEditor, keyOwner, keyTarget, targetItem, type KeyRef } from '../store/store'
 import type { Interp, Sequence } from '../model/types'
 import { tv } from './viewState'
+import PinMenu from './PinMenu'
 import { buildRows, frameToX, hitKey, hoverFrame, hoverScrub, keysIn, xToFrame, type TimeScale } from './timeScale'
 import { edgeScroll, followStep, markHover, markUserScroll, resetFollow, wheelFrames } from './follow'
 import { drawRuler, LABEL_W, RULER_H } from './ruler'
@@ -31,8 +32,9 @@ export default function TrackCanvas() {
   const cv = useRef<HTMLCanvasElement>(null)
   const ui = useRef<Ui>({ scrollY: 0, dragDf: 0, box: null })
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const [pin, setPin] = useState<{ x: number; y: number } | null>(null) // 재생헤드 고정 menu (§24: ruler / empty space right-click, as in the sequence)
   const menuOpen = useRef(false)
-  menuOpen.current = !!menu
+  menuOpen.current = !!menu || !!pin
 
   useEffect(() => {
     const canvas = cv.current!, ed = getEditor(), u = ui.current
@@ -267,7 +269,10 @@ export default function TrackCanvas() {
     const onContext = (e: MouseEvent) => {
       e.preventDefault()
       const { x, y } = pos(e), k = keyAt(x, y), s = ed.getState()
-      if (!k) return
+      if (!k) { // the ruler or empty track space: 재생헤드 고정 / 고정 해제 (not over the labels or the scrollbar)
+        if (x >= LABEL_W && !(y >= top() && x >= W - SB_W && !!sbar())) setPin({ x: e.clientX, y: e.clientY })
+        return
+      }
       if (s.sel.actorId !== k.actorId) s.select(k.actorId, null)
       if (!selected(k.hit)) s.selectKeys(k.hit, false)
       if (clipLocked(s.project, k.clipId)) return
@@ -347,6 +352,7 @@ export default function TrackCanvas() {
   return (
     <>
       <canvas ref={cv} tabIndex={0} className="track-canvas" />
+      {pin && <PinMenu at={pin} close={() => setPin(null)} refocus={() => cv.current?.focus()} />}
       {menu && (
         <div className="tl-menu" style={{ left: menu.x, top: menu.y }} onMouseDown={e => e.stopPropagation()}>
           {([['선형', 'linear'], ['이즈', 'bezier'], ['홀드', 'hold']] as const).map(([l, i]) =>

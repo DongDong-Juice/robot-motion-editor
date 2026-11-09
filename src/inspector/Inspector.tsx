@@ -6,6 +6,7 @@ import JointPanel from '../viewer/JointPanel'
 import { sortedItems } from '../model/sequence'
 import type { Item, Project } from '../model/types'
 import { WalkInspector } from './WalkPanel'
+import OverlayPanel from './OverlayPanel'
 
 const ROOT = ['root.x', 'root.y', 'root.z', 'root.roll', 'root.pitch', 'root.yaw']
 
@@ -90,6 +91,8 @@ export default function Inspector() {
         <b className="insp-title">{clipMode ? `${actor.name} (클립 편집)` : actor.name}</b>
         <span className="pp-tag">{actor.robot === 'g1' ? 'G1' : 'GO2'}</span>
       </div>
+      {/* §26 부위 얹기: a sequence piece only (not 클립 편집 / 클립 보기) */}
+      {!clipMode && !editing && project.sequence.tracks.some(t => t.kind === 'motion' && t.items.some(i => i.id === item.id)) && <OverlayPanel key={item.id} item={item} />}
       {/* edits always go to a 수정 층 (user: only the clip being edited changes): 시퀀스 = this piece, 클립 편집 = this clip */}
       <div className="insp-note">
         <span className="insp-hint">{nOffset ? `${clipMode ? '이 클립' : '이 조각'}의 수정 키 ${nOffset}개` : clipMode ? '원본은 그대로 두고 이 클립에 더합니다' : '원본 클립은 그대로 두고 이 조각에만 더합니다'}</span>

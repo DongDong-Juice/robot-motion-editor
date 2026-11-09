@@ -5,7 +5,9 @@ import { itemLen, sortedItems, pieceName, pieceTag, projectTitle } from '../mode
 import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP, itemLead, itemTail, previewRange, REST_BLEND, REST_HOLD } from '../model/restPose'
 import { SEAM_MAX } from '../model/seam'
 import type { Item, Track } from '../model/types'
-import { boundaryStep, itemSeam, offsetKeyCount, walkOf } from '../model/itemClip'
+import { boundaryStep, itemSeam, offsetKeyCount, overlayStates, walkOf } from '../model/itemClip'
+import { partLabel } from '../model/overlay'
+import { pieceBlock, saveUserBlock } from '../userBlocks'
 import type { WalkReport } from '../model/walk'
 import { prevTouching, stepText } from '../model/transition'
 import { BRIDGE_NAME, bridgeFor, type BridgeKind } from '../model/bridge'
@@ -186,9 +188,19 @@ export default function SequenceCanvas() {
     const walkDeny = (it: Item, mode: string, df: number) => {
       if (mode === 'move') return `${DENY} (겹치거나 걷기가 한계 초과가 됨)`
       const pv = ed.getState().previewWalk(it.id, { frames: it.trimOut - it.trimIn + df })
-      return pv?.report.tone === 'bad' ? `걷기 한계 초과 — ${pv.minFrames ? `최소 ${(pv.minFrames / 60).toFixed(1)}초` : '시간으로는 못 고침'} (인스펙터에서 고치기)` : DENY
+      if (!pv?.blocked.length) return DENY
+      const own = pv.fix?.length === 1 && pv.fix[0].itemId === it.id ? pv.fix[0].frames : null
+      return `걷기 한계 초과 — ${own ? `최소 ${(own / 60).toFixed(1)}초` : pv.fix ? '뒤 걷기 시간도 늘려야 함' : '시간으로는 못 고침'} (인스펙터에서 고치기)`
     }
     const walkRep = (it: Item) => { if (!it.walk) return null; const s = ed.getState(); return walkOf(s.project, s.defs, it)?.report ?? null } // cached per project
+    // 부위 얹기 (§26): the piece's overlays with their state (cached per project and item); none on a 걷기 piece
+    const ovRep = (it: Item) => { if (!it.overlays?.length || it.walk) return null; const s = ed.getState(); return overlayStates(s.project, s.defs, it) }
+    const ovTip = (it: Item) => {
+      const st = ovRep(it), s = ed.getState(), def = s.defs[s.project.clips[it.refId]?.robot ?? 'go2']
+      if (!st) return ''
+      const off = it.use === 'original' ? ' — 원본 사용 중이라 쓰지 않음' : ''
+      return st.map(({ ov, report: r }) => `\n얹기: ${ov.parts.map(x => partLabel(def, x)).join(' · ')} ← ${s.project.clips[ov.src]?.name ?? '(없음)'} (${r.held ? '한계 초과 — 재생 안 함' : WALK_TONE[r.tone]})${off}`).join('')
+    }
     seqFlash.fn = (text, itemId) => flash(text, layout().findIndex(r => !r.it && r.t.items.some(i => i.id === itemId)))
 
     const draw = () => {
@@ -265,6 +277,13 @@ export default function SequenceCanvas() {
             if (lane && fs.length) { const a = Math.min(...fs), b = Math.max(...fs) + 1; ctx.globalAlpha = 0.3 * ga; ctx.fillRect(frameToX(sc, it.start + a - it.trimIn), by, (b - a) * tv.ppf, bh) }
             ctx.globalAlpha = ga
             for (const f of fs) ctx.fillRect(Math.round(frameToX(sc, it.start + f - it.trimIn)) - 1, by + bh - 4, 2, 4)
+          }
+          const ovs = video || it.use === 'original' ? null : ovRep(it)
+          if (ovs) for (const { ov, report: r } of ovs) { // 부위 얹기 (§26): its range as a strip on the bar's bottom edge, in its state color (빨강 = 재생 안 함)
+            const a = Math.max(ov.at, it.trimIn), b = Math.min(ov.at + ov.len, it.trimOut)
+            if (b <= a) continue
+            ctx.fillStyle = r.tone === 'ok' ? STEP_OK : r.tone === 'warn' ? STEP_WARN : WARN_RED
+            ctx.fillRect(frameToX(sc, it.start + a - it.trimIn), by + bh - 3, Math.max((b - a) * tv.ppf, 2), 3)
           }
           if (!video && s.project.review) { // 검수 판정 (§13) on this piece's clip frames: a strip along the bar's top edge — red 문제 있음, grey 안무여서 놔둠 / 해결됨
             const res = useReview.getState().resolved
@@ -643,7 +662,7 @@ export default function SequenceCanvas() {
     const laneTip = (t: Track, it: Item) => {
       const s = ed.getState(), { st, old } = phys(t, it), ld = it.restPose === 'prepend' ? leadOf(it) : null
       return childLabel(t, it, s.project.clips[it.refId]?.name ?? '') + treeSuffix(st, old).replace(/^ · /, '\n물리 검증: ')
-        + (ld?.why === 'review' ? '\n관성 검토 필요' : '') + (seamOf(it)?.warn ? `\n${SEAM_WARN}` : '') + stepTip(it) + (walkRep(it) ? walkTip(walkRep(it)!) : '') + (it.restTail ? '\n끝 기본자세 (전이 · 정지 0.5초)' : '') + (hasEdit(it) ? `\n수정됨 · 수정 키 ${offsetKeyCount(it)}개 (클립 프리뷰에서 고침 · 우클릭: 수정 지우기)` : '')
+        + (ld?.why === 'review' ? '\n관성 검토 필요' : '') + (seamOf(it)?.warn ? `\n${SEAM_WARN}` : '') + stepTip(it) + (walkRep(it) ? walkTip(walkRep(it)!) : '') + ovTip(it) + (it.restTail ? '\n끝 기본자세 (전이 · 정지 0.5초)' : '') + (hasEdit(it) ? `\n수정됨 · 수정 키 ${offsetKeyCount(it)}개 (클립 프리뷰에서 고침 · 우클릭: 수정 지우기)` : '')
         + (it.id === s.itemPreview ? '\n클립 프리뷰에서 보는 중' : '')
     }
     const stepTip = (it: Item) => { const bs = stepOf(it); if (!bs) return ''; const t = stepText(bs.status); return `\n발 걸음 이음매: ${t.label}${t.detail ? ` (${t.detail})` : ''}` }
@@ -822,6 +841,14 @@ export default function SequenceCanvas() {
     title="이 프로젝트의 GO2 블록 경계 전체에 발 걸음 이음매를 기본으로 켜고 끕니다 (조각마다 따로 정한 것은 그대로)"
     onClick={() => { closeCtx(false); getEditor().getState().setStepSeam(!project.stepSeam) }}>
     <span className="tl-check" aria-hidden="true">{project.stepSeam ? '✓' : ''}</span>발 걸음 이음매 기본값 (프로젝트)</button> : null
+  // 사용자 블록 (§26): the piece's frames frozen under a name, kept in this browser (IndexedDB) — not in the project file
+  const saveAsUserBlock = (it: Item) => {
+    const st = getEditor().getState(), name = window.prompt('사용자 블록 이름 (이 브라우저에만 저장됩니다)', `${st.project.clips[it.refId]?.name ?? '블록'} 사용자`)?.trim()
+    if (!name) return
+    const clip = pieceBlock(st.project, st.defs, it.id, name)
+    if (typeof clip === 'string') { seqFlash.fn?.(clip, it.id); return }
+    void saveUserBlock(clip).then(() => seqFlash.fn?.(`사용자 블록으로 저장했습니다: ${name} (이 브라우저에만 저장)`, it.id))
+  }
   const rows = project.sequence.tracks.filter(t => t.kind === 'motion' || (isVideo(t) && project.media.length > 0))
   return (
     <div className="tl-body">
@@ -856,6 +883,8 @@ export default function SequenceCanvas() {
           {ctx.itemId && <button role="menuitem" tabIndex={-1} onClick={() => { closeCtx(false); void runExport(ctx) }}>CSV 내보내기</button>}
           {ctxItem && hasEdit(ctxItem) && <button role="menuitem" tabIndex={-1} title="이 조각의 수정을 모두 지우고 원본 클립대로 되돌립니다"
             onClick={() => { closeCtx(false); if (!getEditor().getState().clearOffset(ctxItem.id)) seqFlash.fn?.(LOCKED, ctxItem.id) }}>수정 지우기</button>}
+          {ctxItem && !ctxItem.walk && <button role="menuitem" tabIndex={-1} title="이 조각이 재생하는 동작(얹은 동작 · 수정 포함)을 새 블록으로 굳혀 라이브러리 › 사용자 블록에 둡니다 — 이 브라우저에만 저장"
+            onClick={() => { closeCtx(false); saveAsUserBlock(ctxItem) }}>사용자 블록으로 저장…</button>}
           <button role="menuitem" tabIndex={-1} aria-disabled={noModel} title={noModel ? '미지원' : undefined}
             onClick={() => { if (noModel) return; closeCtx(false); runPhys(ctx) }}>{ctx.itemId ? '물리 검증' : '트랙 물리 검증'}</button>
           {pinItem}

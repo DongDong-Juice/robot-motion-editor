@@ -31,8 +31,11 @@ function makeActor(p: Project | null, robot: RobotKind, x: number, withClip = tr
 }
 
 // withClip=false: an actor with an empty motion track and no clip (the importer fills it).
+/** Where a new robot is placed on the stage (x; y = 0, yaw = 0): 1.5 m along x per robot already there, so they do not overlap. */
+export const newActorX = (p: Project) => 1.5 * p.actors.length
+
 export function addActor(p: Project, robot: RobotKind, withClip = true): Project {
-  const { actor, clip, track } = makeActor(p, robot, 1.5 * p.actors.length, withClip)
+  const { actor, clip, track } = makeActor(p, robot, newActorX(p), withClip)
   return {
     ...p,
     actors: [...p.actors, actor],

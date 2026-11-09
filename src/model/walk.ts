@@ -257,13 +257,12 @@ export function minWalkFrames(def: RobotDef, start: Pose, end: Pose, n: number, 
   if (!bad(n)) return n
   const key = JSON.stringify([start, end, face, slow]), hit = minMemo.get(key)
   if (hit !== undefined) return hit
-  let lo = n, hi = Math.ceil(n * 1.25) + 6, out: number | null = null
-  while (hi <= 60 * 120 && bad(hi)) { lo = hi; hi = Math.ceil(hi * 1.5) }
-  if (hi <= 60 * 120) {
-    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (bad(m)) lo = m; else hi = m }
-    out = Math.ceil(hi / 6) * 6
-    for (let k = 0; k < 10 && bad(out); k++) out += 6
-    if (bad(out)) out = null
+  // in 0.1 s steps (6 frames) throughout: grow until not 한계 초과, then halve the gap (fewer walks made than frame by frame)
+  let lo = Math.floor(n / 6), hi = Math.ceil(n * 1.25 / 6) + 1, out: number | null = null
+  while (hi * 6 <= 60 * 120 && bad(hi * 6)) { lo = hi; hi = Math.ceil(hi * 1.5) }
+  if (hi * 6 <= 60 * 120) {
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (bad(m * 6)) lo = m; else hi = m }
+    out = hi * 6
   }
   if (minMemo.size > 100) minMemo.delete(minMemo.keys().next().value!)
   minMemo.set(key, out)

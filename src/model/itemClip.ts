@@ -9,6 +9,8 @@ import { evaluateClip, type Pose } from './pose'
 import { eulerToQuat, nearestAngle, quatToEuler, quatYaw } from './rootMath'
 import { feetOf, makeWalk, minWalkFrames, standPose, type WalkReport } from './walk'
 import { applyXf, sortedItems, stitchXf } from './sequence'
+import { overlayResult, type Overlay, type OverlayReport } from './overlay'
+import { newActorX } from './defaults'
 
 // 조각 수정 층: Item.offset holds per-channel delta curves in clip frames (joints rad, root m/rad). The piece plays
 // clip + offset; the shared clip is never touched. Spec docs/superpowers/specs/2026-10-13-piece-offset-design.md.
@@ -145,9 +147,53 @@ export function baseClip(p: Project, defs: RobotDefs, clipId: string): Clip | un
   return r
 }
 
-/** The piece's 수정본 (baseClip + its 수정 층) whichever side it uses: what the editors (inspector, graph, gizmo) and the 수정본 pane show. */
+// ---- 부위 얹기 (§26) ----
+export interface OverlayState { ov: Overlay; report: OverlayReport }
+const ovCache = new WeakMap<Project, WeakMap<Item, { clip: Clip | undefined; states: OverlayState[] }>>()
+// per under clip and source clip object (both new only after an edit of them), then the overlay and the piece's trims
+const ovMemo = new WeakMap<Clip, WeakMap<Clip, Map<string, ReturnType<typeof overlayResult> & { baked: Clip }>>>()
+const missing = (text: string): OverlayReport => ({ tone: 'bad', reasons: [{ tone: 'bad', text }], vel: 0, gap: null, ground: null, held: true })
+function overlaid(p: Project, defs: RobotDefs, it: Item) {
+  let m = ovCache.get(p)
+  if (!m) ovCache.set(p, m = new WeakMap())
+  const hit = m.get(it)
+  if (hit) return hit
+  let clip = baseClip(p, defs, it.refId)
+  const states: OverlayState[] = []
+  if (clip && it.overlays?.length && !it.walk) {
+    const def = defs[clip.robot]
+    for (const ov of it.overlays) {
+      const src = baseClip(p, defs, ov.src)
+      if (!src || src.robot !== clip.robot) { states.push({ ov, report: missing('원본 블록이 없음') }); continue }
+      let a = ovMemo.get(clip)
+      if (!a) ovMemo.set(clip, a = new WeakMap())
+      let b = a.get(src)
+      if (!b) a.set(src, b = new Map())
+      const key = JSON.stringify([ov, it.trimIn, it.trimOut])
+      let r = b.get(key)
+      if (!r) {
+        const res = overlayResult(def, clip, src, ov, it.trimIn, it.trimOut)
+        r = { ...res, baked: res.frames.size && res.report.tone !== 'bad' ? bakeFrames(clip, def, res.frames) : clip }
+        if (b.size > 50) b.delete(b.keys().next().value!)
+        b.set(key, r)
+      }
+      if (r.report.tone === 'bad') { states.push({ ov, report: { ...r.report, held: true } }); continue } // 빨강: not played (§22)
+      clip = r.baked
+      states.push({ ov, report: r.report })
+    }
+  }
+  const out = { clip, states }
+  m.set(it, out)
+  return out
+}
+/** baseClip with the piece's 부위 얹기 laid on (the ones not 한계 초과): what its 수정 층 is added to. */
+export const overlaidClip = (p: Project, defs: RobotDefs, it: Item): Clip | undefined => overlaid(p, defs, it).clip
+/** Each 부위 얹기 of the piece with its report (held = 한계 초과, not played). */
+export const overlayStates = (p: Project, defs: RobotDefs, it: Item): OverlayState[] => overlaid(p, defs, it).states
+
+/** The piece's 수정본 (baseClip + its 부위 얹기 + its 수정 층) whichever side it uses: what the editors (inspector, graph, gizmo) and the 수정본 pane show. */
 export function editedClip(p: Project, defs: RobotDefs, it: Item): Clip | undefined {
-  const clip = baseClip(p, defs, it.refId)
+  const clip = overlaidClip(p, defs, it)
   if (!clip || !it.offset || !offsetKeyCount(it)) return clip
   let m = cache.get(it.offset)
   if (!m) cache.set(it.offset, m = new WeakMap())
@@ -248,7 +294,7 @@ export function walkPreview(p: Project, defs: RobotDefs, actorId: string | null,
   const def = defs.go2, actor = actorId ? p.actors.find(a => a.id === actorId) : null
   if (actorId && (!actor || actor.robot !== 'go2')) return null
   const track = actor && p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === actor.id)
-  const pl = actor?.placement ?? { x: 0, y: 0, yaw: 0 }
+  const pl = actor?.placement ?? { x: newActorX(p), y: 0, yaw: 0 } // a new robot: where addActor will place it
   let start: Pose = { rootPos: [0, 0, def.rest.z], rootQuat: [0, 0, 0, 1], q: [...def.rest.q] }
   const last = track && sortedItems(track).at(-1)
   if (track && last) {
@@ -266,13 +312,19 @@ export function walkPreview(p: Project, defs: RobotDefs, actorId: string | null,
   return { start: applyXf(start, pl), report: w.report, minFrames: w.report.tone === 'bad' ? minWalkFrames(def, start, end, n, spec.face, spec.slow ?? 'walk') : null }
 }
 
-/** The 걷기 pieces among `itemIds` that are 한계 초과 (they stand instead of walking): CSV · RL 학습용 내보내기 refuses them (§22). */
-export function redWalks(p: Project, defs: RobotDefs, itemIds: string[]): { itemId: string; text: string }[] {
-  const out: { itemId: string; text: string }[] = []
+/** The pieces among `itemIds` that are 한계 초과 — a 걷기 that stands instead of walking (§22), a 부위 얹기 that is not played (§26):
+ * CSV · RL 학습용 내보내기 refuses them. `kind` names which. */
+export function redWalks(p: Project, defs: RobotDefs, itemIds: string[]): { itemId: string; text: string; kind: '걷기' | '부위 얹기' }[] {
+  const out: { itemId: string; text: string; kind: '걷기' | '부위 얹기' }[] = []
   for (const it of p.sequence.tracks.flatMap(t => t.items)) {
-    if (!it.walk || !itemIds.includes(it.id)) continue
-    const w = walkOf(p, defs, it)
-    if (w?.report.tone === 'bad') out.push({ itemId: it.id, text: w.report.reasons.filter(r => r.tone === 'bad').map(r => r.text).join(' · ') })
+    if (!itemIds.includes(it.id)) continue
+    if (it.walk) {
+      const w = walkOf(p, defs, it)
+      if (w?.report.tone === 'bad') out.push({ itemId: it.id, kind: '걷기', text: w.report.reasons.filter(r => r.tone === 'bad').map(r => r.text).join(' · ') })
+    } else if (it.overlays?.length && it.use !== 'original') {
+      const held = overlayStates(p, defs, it).filter(s => s.report.held)
+      if (held.length) out.push({ itemId: it.id, kind: '부위 얹기', text: held.flatMap(s => s.report.reasons.filter(r => r.tone === 'bad').map(r => r.text)).join(' · ') })
+    }
   }
   return out
 }

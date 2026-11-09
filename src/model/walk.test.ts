@@ -164,6 +164,25 @@ describe('걷기 조각 on the timeline', () => {
     expect(s().setWalk(w, { to: [1.6, 0] })).toBe(false) // w2 would have 1.8 m in 2 s
     expect(item(w).walk!.to).toEqual([2.56, 0])
   })
+  test('§23 추천 수정 covers the walks after it: the new end moves the next walk\'s start — one fix, one undo', () => {
+    const { s, actor, item } = stage()
+    const w1 = s().addWalk(actor, { to: [0.5, 0], face: 'keep' }, 120)!, w2 = s().addWalk(actor, { to: [1.2, 0], face: 'keep' }, 120)!
+    const c = s().appendClip(actor, hold(STAND, 'c', 90, facingX))!
+    const c0 = item(c).start
+    expect(s().setWalk(w1, { to: [-1.5, 0] })).toBe(false) // w1 too fast, and w2 would have 2.7 m in 2 s
+    const pv = s().previewWalk(w1, { to: [-1.5, 0] })!
+    expect(pv.blocked.map(b => b.itemId)).toEqual([w1, w2])
+    expect(pv.fix!.map(x => x.itemId)).toEqual([w1, w2])
+    expect(pv.fix!.every(x => x.frames % 6 === 0 && x.d > 0)).toBe(true)
+    expect(s().setWalk(w1, { to: [-1.5, 0] }, pv.fix!)).toBe(true)
+    expect([walkOf(s().project, defs, item(w1))!.report.tone, walkOf(s().project, defs, item(w2))!.report.tone]).not.toContain('bad')
+    expect(item(c).start).toBe(c0 + pv.fix!.reduce((t, x) => t + x.d, 0)) // the pieces after move back by both
+    s().undo()
+    expect([item(w1).walk!.to, item(w1).trimOut, item(w2).trimOut, item(c).start]).toEqual([[0.5, 0], 120, 120, c0])
+    // this walk fine, only the next one: the fix is the next one's length
+    const pv2 = s().previewWalk(w1, { to: [0.5, 1.0] })
+    if (pv2?.blocked.length) expect(pv2.fix?.length).toBeGreaterThan(0)
+  })
   test('starting from a piece that does not stand (앉기): refused; 기본서기 경유 넣고 추가 makes it — one undo', async () => {
     const { standBridgeAfter } = await import('./bridge')
     const { walkPreview } = await import('./itemClip')
@@ -232,6 +251,21 @@ describe('걷기 조각 on the timeline', () => {
     const actor = s().project.actors[0].id, it = s().project.sequence.tracks.flatMap(t => t.items).find(i => i.id === w)!
     expect(evaluate(s().project, defs, actor, it.start).q).toEqual(def.rest.q)
     expect(evaluate(s().project, defs, actor, endF(it)).rootPos[0]).toBeCloseTo(0.6, 2)
+  })
+  test('a new GO2 next to other robots: the 라이브러리 preview starts where the robot will be placed (x = 1.5 m × robots), so it adds', async () => {
+    const { walkPreview } = await import('./itemClip')
+    const st = createEditorStore(defs, emptyProject()), s = () => st.getState()
+    s().addActor('g1'); s().addActor('g1') // two G1s, no GO2 (the user's project)
+    const pv = walkPreview(s().project, defs, null, { to: [0, 0], face: 'keep' }, 120)!
+    expect(pv.start.rootPos[0]).toBeCloseTo(3, 9) // not the stage centre
+    const to: [number, number] = [pv.start.rootPos[0] + 1, pv.start.rootPos[1]] // the panel's default: 1 m ahead
+    expect(walkPreview(s().project, defs, null, { to, face: 'keep' }, 120)!.report.tone).toBe('ok')
+    const w = s().addWalk(null, { to, face: 'keep' }, 120)
+    expect(w).not.toBeNull()
+    const a = s().project.actors.at(-1)!
+    expect([a.robot, a.placement.x]).toEqual(['go2', 3])
+    const it = s().project.sequence.tracks.flatMap(t => t.items).find(i => i.id === w)!
+    expect(evaluate(s().project, defs, a.id, endF(it)).rootPos[0]).toBeCloseTo(4, 2)
   })
   test('saved and opened again; a bad walk entry is refused', () => {
     const { s, actor } = stage()

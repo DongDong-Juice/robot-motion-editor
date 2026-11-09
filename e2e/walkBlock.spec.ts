@@ -160,3 +160,55 @@ test('도착 위치를 무대에서: 찍기 (라이브러리 · 인스펙터, Es
   expect((await walkOfIt()).walk.to).toEqual(picked)
   expect(errors).toEqual([])
 })
+
+test('§23 도착 X · Y entered together (no half change); 추천 수정 with the next walk: one button, one undo; an unchanged box commits nothing', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', e => errors.push(String(e)))
+  await boot(page)
+  const ids = await page.evaluate(async () => {
+    const { parseCsvPoses, posesToClip } = await import('/src/export/importCsv.ts')
+    const s = (window as any).__editor.getState()
+    const text = await (await fetch('/go2-blocks/' + encodeURI('기본 자세/003_기본_서기.csv'))).text()
+    const { robot, fps, poses } = parseCsvPoses(text, s.defs, 60), last = { ...poses[poses.length - 1], rootQuat: [0, 0, 0, 1] }
+    s.appendClip(null, { ...posesToClip(Array.from({ length: 90 }, () => structuredClone(last)), fps, robot, s.defs, 'a'), id: 'a' })
+    const ed = (window as any).__editor, a = ed.getState().project.actors.at(-1).id
+    const w1 = ed.getState().addWalk(a, { to: [0.5, 0], face: 'keep' }, 120), w2 = ed.getState().addWalk(a, { to: [1.2, 0], face: 'keep' }, 120)
+    ed.getState().selectItem(w1); ed.getState().select(a)
+    return { a, w1, w2 }
+  })
+  const walks = () => page.evaluate(({ w1, w2 }) => { const its = (window as any).__editor.getState().project.sequence.tracks.flatMap((t: any) => t.items)
+    const g = (id: string) => its.find((i: any) => i.id === id); return [g(w1).walk.to, g(w1).trimOut, g(w2).trimOut] }, ids)
+  const mark = () => page.evaluate(() => { (window as any).__p0 = (window as any).__editor.getState().project })
+  const same = () => page.evaluate(() => (window as any).__editor.getState().project === (window as any).__p0) // nothing committed since mark()
+  const insp = page.locator('.insp')
+  // X then Y: nothing applied while moving between the two boxes; the pair applies on Enter
+  await mark()
+  await insp.getByRole('spinbutton', { name: '도착 X' }).fill('-1.5')
+  await insp.getByRole('spinbutton', { name: '도착 Y' }).click()
+  expect(await same()).toBe(true)
+  await expect(insp.getByRole('spinbutton', { name: '도착 Y' })).toBeFocused()
+  await insp.getByRole('spinbutton', { name: '도착 Y' }).fill('0.2')
+  await insp.getByRole('spinbutton', { name: '도착 Y' }).press('Enter')
+  // refused for the pair (-1.5, 0.2): this walk and the next one; one button for both
+  const box = insp.getByRole('alert')
+  await expect(box).toContainText('적용하지 않았습니다')
+  await expect(box.locator('.wk-who')).toHaveText(['이 걷기', '다음 걷기'])
+  const btn = box.getByRole('button', { name: /^최소 시간으로 하고 적용 — 이 걷기 [\d.]+초 · 다음 걷기 [\d.]+초 — 뒤 조각 [\d.]+초 밀림$/ })
+  await expect(btn).toBeVisible()
+  await btn.click()
+  await expect(box).toHaveCount(0)
+  const [to, f1, f2] = await walks()
+  expect(to).toEqual([-1.5, 0.2])
+  expect(f1).toBeGreaterThan(120); expect(f2).toBeGreaterThan(120)
+  await page.evaluate(() => (window as any).__editor.getState().undo()) // one undo takes all of it back
+  expect(await walks()).toEqual([[0.5, 0], 120, 120])
+  // tabbing through unchanged boxes commits nothing
+  await mark()
+  await insp.getByRole('spinbutton', { name: '도착 X' }).focus()
+  await page.keyboard.press('Tab'); await page.keyboard.press('Tab'); await page.keyboard.press('Tab')
+  await insp.getByRole('spinbutton', { name: '시간' }).focus(); await insp.getByRole('spinbutton', { name: '속도' }).focus()
+  await page.locator('.insp-sec-t').first().click()
+  expect(await same()).toBe(true)
+  await expect(insp.getByRole('alert')).toHaveCount(0)
+  expect(errors).toEqual([])
+})

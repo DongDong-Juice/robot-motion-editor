@@ -1,7 +1,7 @@
 // 걷기 블록 설정 칸 (§20): the 라이브러리's 걷기 (가상) add panel and the inspector of a selected 걷기 piece share these fields —
 // 도착 위치 (무대 기준), 방향, 시간 ⇄ 속도, 시간에 비해 거리가 짧을 때 — and the walk's state (초록 / 주황 / 빨강 with the reasons).
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { getEditor, trackLocked, useEditor } from '../store/store'
+import { getEditor, trackLocked, useEditor, type WalkFix, type WalkPlan } from '../store/store'
 import { walkOf, walkPreview } from '../model/itemClip'
 import { bridgeFor, standBridgeAfter } from '../model/bridge'
 import { sortedItems } from '../model/sequence'
@@ -14,14 +14,39 @@ const SLOWS: [WalkSlow, string][] = [['walk', '천천히 계속 걷기'], ['afte
 const TONE: Record<WalkReport['tone'], string> = { ok: '정상', warn: '주의', bad: '한계 초과' }
 export const WALK_DEFAULT_FRAMES = 120
 
-/** A number box that commits on blur / Enter (an empty box commits `undefined` when `optional`). */
-function Num({ label, value, unit, step, onCommit, disabled, optional, placeholder }: { label: string; value: number | undefined; unit: string; step: number
+const shown = (v: number | undefined) => v === undefined ? '' : String(+v.toFixed(3)) // what a box shows for a value
+/** A number box that commits on blur / Enter — only a changed value (an empty box commits `undefined` when `optional`). */
+export function Num({ label, value, unit, step, onCommit, disabled, optional, placeholder }: { label: string; value: number | undefined; unit: string; step: number
   onCommit: (v: number | undefined) => void; disabled?: boolean; optional?: boolean; placeholder?: string }) {
   return (
     <span className="insp-unit wk-num"><input type="number" aria-label={label} step={step} disabled={disabled} placeholder={placeholder}
-      key={value === undefined ? 'none' : value.toFixed(4)} defaultValue={value === undefined ? '' : +value.toFixed(3)}
-      onBlur={e => { const v = e.target.value.trim() === '' ? undefined : e.target.valueAsNumber; if (v === undefined ? optional : Number.isFinite(v)) onCommit(v) }}
+      key={value === undefined ? 'none' : value.toFixed(4)} defaultValue={shown(value)}
+      onBlur={e => {
+        const t = e.target.value.trim(), v = t === '' ? undefined : e.target.valueAsNumber
+        if (t === shown(value) || (v !== undefined && shown(v) === shown(value))) return // unchanged: nothing to do (a held walk would refuse it)
+        if (v === undefined ? optional : Number.isFinite(v)) onCommit(v)
+      }}
       onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} /><i>{unit}</i></span>
+  )
+}
+
+/** 도착 X · Y (§23): one change for both — moving between the two boxes commits nothing; leaving them (or Enter) commits the pair. */
+function TargetXY({ to, disabled, onCommit }: { to: [number, number]; disabled?: boolean; onCommit: (to: [number, number]) => void }) {
+  const row = useRef<HTMLDivElement>(null), xr = useRef<HTMLInputElement>(null), yr = useRef<HTMLInputElement>(null)
+  const commit = () => {
+    const x = xr.current!.valueAsNumber, y = yr.current!.valueAsNumber
+    if (!Number.isFinite(x) || !Number.isFinite(y)) { xr.current!.value = shown(to[0]); yr.current!.value = shown(to[1]); return }
+    if (shown(x) !== shown(to[0]) || shown(y) !== shown(to[1])) onCommit([x, y])
+  }
+  const box = (lab: 'X' | 'Y', i: 0 | 1, r: typeof xr) => <>
+    <span className="wk-dim" aria-hidden="true">{lab}</span>
+    <span className="insp-unit wk-num"><input ref={r} type="number" aria-label={`도착 ${lab}`} step={0.05} disabled={disabled} key={to[i].toFixed(4)} defaultValue={shown(to[i])}
+      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commit() } }} /><i>m</i></span>
+  </>
+  return (
+    <div className="wk-row" ref={row} onBlur={e => { if (!row.current?.contains(e.relatedTarget as Node | null)) commit() }}>
+      {box('X', 0, xr)}{box('Y', 1, yr)}
+    </div>
   )
 }
 
@@ -44,12 +69,7 @@ export function WalkFields({ pickKey, spec, frames, start, dist, report, onSpec,
       <div className="insp-field"><span className="insp-lab">도착 위치 (무대 기준)
         <button type="button" className="wk-pick" aria-pressed={picking} disabled={off} onClick={pick}
           title="무대 바닥을 클릭해 도착 위치를 정합니다 (Esc · 우클릭: 취소)">{picking ? '찍는 중… (Esc 취소)' : '무대에서 찍기'}</button></span>
-        <div className="wk-row">
-          <span className="wk-dim" aria-hidden="true">X</span>
-          <Num label="도착 X" value={spec.to[0]} unit="m" step={0.05} disabled={disabled} onCommit={v => onSpec({ to: [v!, spec.to[1]] })} />
-          <span className="wk-dim" aria-hidden="true">Y</span>
-          <Num label="도착 Y" value={spec.to[1]} unit="m" step={0.05} disabled={disabled} onCommit={v => onSpec({ to: [spec.to[0], v!] })} />
-        </div>
+        <TargetXY to={spec.to} disabled={disabled} onCommit={to => onSpec({ to })} />
         {start && <span className="wk-dim" role="note">{describeTo(start, spec.to)}</span>}
       </div>
       <div className="insp-field"><span className="insp-lab">방향</span>
@@ -93,10 +113,12 @@ export function WalkState({ report, children }: { report: WalkReport; children?:
 }
 
 const sec = (f: number) => (f / 60).toFixed(1)
-type Refused = { patch: Partial<WalkSpec> & { frames?: number }; report: WalkReport; minFrames: number | null }
+type Patch = Partial<WalkSpec> & { frames?: number }
+type Refused = { patch: Patch; plan: WalkPlan | null }
 
-/** Inspector: the selected 걷기 piece. An edit that would leave it (or another walk of the track) 한계 초과 is not applied (§22):
- * the reasons and 해결 버튼 show instead — 최소 시간으로 (the pieces after it move back; only when pressed), 기본서기 경유 넣기. */
+/** Inspector: the selected 걷기 piece. An edit that would leave it (or a later walk of the track) 한계 초과 is not applied (§22):
+ * the reasons and the 추천 수정 show instead — 최소 시간으로 (this walk and, when its new end makes them 한계 초과, the later walks:
+ * one button, one undo, §23), 기본서기 경유 넣기. Time is added only when a button is pressed. */
 export function WalkInspector({ item }: { item: Item }) {
   const project = useEditor(s => s.project), defs = useEditor(s => s.defs)
   const track = project.sequence.tracks.find(t => t.items.some(i => i.id === item.id)), actor = project.actors.find(a => a.id === track?.actorId)
@@ -109,32 +131,50 @@ export function WalkInspector({ item }: { item: Item }) {
   const dist = Math.hypot(item.walk!.to[0] - start.rootPos[0], item.walk!.to[1] - start.rootPos[1])
   const act = getEditor().getState(), len = item.trimOut - item.trimIn
   const moved = (d: number) => d ? ` · 뒤 조각이 ${sec(Math.abs(d))}초 ${d > 0 ? '밀렸습니다' : '당겨졌습니다'}` : ''
-  const apply = (patch: Refused['patch'], done = '') => {
-    if (act.setWalk(item.id, patch)) { setRefused(null); setMsg(done + (patch.frames !== undefined ? moved(patch.frames - len) : '')); return }
-    const pv = act.previewWalk(item.id, patch)
+  // the pieces at the track end move by this much: the patch's own length change and the fix's
+  const shift = (patch: Patch, fix: WalkFix[]) => {
+    const own = fix.find(x => x.itemId === item.id)?.frames ?? patch.frames ?? len
+    return own - len + fix.filter(x => x.itemId !== item.id).reduce((t, x) => t + x.d, 0)
+  }
+  const apply = (patch: Patch, fix: WalkFix[] = []) => {
+    if (act.setWalk(item.id, patch, fix)) { setRefused(null); setMsg(shift(patch, fix) ? moved(shift(patch, fix)).replace(/^ · /, '') : ''); return }
     setRev(r => r + 1)
-    if (pv && pv.report.tone === 'bad') { setRefused({ patch, ...pv }); setMsg('') }
-    else setMsg(pv ? '다른 걷기 조각이 한계 초과가 되어 적용하지 않았습니다' : locked ? '잠긴 트랙입니다' : '바꿀 수 없습니다')
+    const plan = act.previewWalk(item.id, patch)
+    if (plan && plan.blocked.length) { setRefused({ patch, plan }); setMsg(''); return } // the new reasons (never the last box left standing)
+    setRefused(null); setMsg(plan ? '바꿀 수 없습니다 (다른 조각과 겹침)' : locked ? '잠긴 트랙입니다' : '바꿀 수 없습니다')
+  }
+  const later = track ? sortedItems(track).filter(i => i.walk && i.start > item.start).map(i => i.id) : []
+  const name = (id: string) => { const k = later.indexOf(id); return id === item.id ? '이 걷기' : k === 0 ? '다음 걷기' : `${k + 1}번째 뒤 걷기` }
+  const fixBtn = (patch: Patch, plan: WalkPlan | null) => {
+    if (!plan?.fix?.length) return null
+    const d = shift(patch, plan.fix), only = plan.fix.length === 1 && plan.fix[0].itemId === item.id, changes = Object.keys(patch).some(k => k !== 'frames')
+    const what = only ? `최소 시간 ${sec(plan.fix[0].frames)}초로${changes ? ' 하고 적용' : ''}`
+      : `최소 시간으로${changes ? ' 하고 적용' : ''} — ${plan.fix.map(x => `${name(x.itemId)} ${sec(x.frames)}초`).join(' · ')}`
+    return <button onClick={() => apply(patch, plan.fix!)} title="한계 안에 드는 가장 짧은 시간으로 바꿉니다 (0.1초 단위, 실행취소 한 번)">
+      {what}{d ? ` — 뒤 조각 ${sec(Math.abs(d))}초 ${d > 0 ? '밀림' : '당겨짐'}` : ''}</button>
   }
   // already 한계 초과 (held — another piece changed, or a file opened): the ways out
   const now = w.report.tone === 'bad' && !locked ? act.previewWalk(item.id, {}) : null
   const stand = w.report.startBad && !locked ? bridgeFor(project, defs, item.id, 'stand') : null
-  const standBtn = stand && 'clip' in stand ? <button onClick={() => { if (act.insertBridge(item.id, stand.clip)) setMsg(`기본서기 경유 ${sec(stand.clip.length)}초를 넣었습니다${moved(stand.clip.length)}`) }}
+  const standBtn = stand && 'clip' in stand ? <button onClick={() => { if (act.insertBridge(item.id, stand.clip)) { setRefused(null); setMsg(`기본서기 경유 ${sec(stand.clip.length)}초를 넣었습니다${moved(stand.clip.length)}`) } }}
     title="앞 조각 끝 자세에서 기본서기로 서는 전이 조각을 이 걷기 앞에 넣습니다 (시간이 늘어남, 실행취소 한 번)">기본서기 경유 넣기 — 뒤 조각 {sec(stand.clip.length)}초 밀림</button> : null
-  const minBtn = (n: number | null | undefined, patch: Refused['patch'] = {}) => n ? <button onClick={() => apply({ ...patch, frames: n })}
-    title="한계 안에 드는 가장 짧은 시간으로 바꿉니다 (0.1초 단위, 실행취소 한 번)">최소 시간 {sec(n)}초로{Object.keys(patch).some(k => k !== 'frames') ? ' 하고 적용' : ''} — 뒤 조각 {sec(Math.abs(n - len))}초 {n >= len ? '밀림' : '당겨짐'}</button> : null
+  const nowFix = fixBtn({}, now)
   return (
     <section className="insp-sec">
       <h3 className="insp-sec-t">걷기 조각</h3>
       <WalkFields key={rev} pickKey={item.id} spec={item.walk!} frames={len} start={start} dist={dist} report={w.report} disabled={locked}
-        fix={w.report.tone === 'bad' && (minBtn(now?.minFrames) || standBtn) ? <>{minBtn(now?.minFrames)}{standBtn}</> : null}
+        fix={w.report.tone === 'bad' && (nowFix || standBtn) ? <>{nowFix}{standBtn}</> : null}
         onSpec={patch => apply(patch)} onFrames={n => apply({ frames: n })} />
-      {refused && <div className="wk-refused" role="alert">
+      {refused?.plan && <div className="wk-refused" role="alert">
         <b>적용하지 않았습니다 — 한계 초과가 됩니다</b>
-        {refused.report.reasons.filter(r => r.tone === 'bad').map((r, i) => <div key={i} className="wk-why bad">{r.text}</div>)}
+        {refused.plan.blocked.map(b => <div key={b.itemId}>
+          {(refused.plan!.blocked.length > 1 || b.itemId !== item.id) && <div className="wk-who">{name(b.itemId)}</div>}
+          {b.report.reasons.filter(r => r.tone === 'bad').map((r, i) => <div key={i} className="wk-why bad">{r.text}</div>)}
+        </div>)}
+        {!refused.plan.fix && <div className="wk-dim">시간을 늘려서는 고칠 수 없습니다</div>}
         <div className="wk-fix">
-          {minBtn(refused.minFrames, refused.patch)}
-          {refused.report.startBad && standBtn}
+          {fixBtn(refused.patch, refused.plan)}
+          {refused.plan.blocked.some(b => b.itemId === item.id && b.report.startBad) && standBtn}
           <button onClick={() => setRefused(null)}>닫기</button>
         </div>
       </div>}
@@ -144,6 +184,7 @@ export function WalkInspector({ item }: { item: Item }) {
         <li>앞 조각이 바뀌어도 도착점은 그대로 — 뒤 조각 위치 유지</li>
         <li>걷기는 순수 이동 — 관절 수정·자르기 없음 (길이는 막대 끝을 끌어서)</li>
         <li>한계를 넘는 걷기는 만들지 않음 — 시간은 버튼을 눌렀을 때만 늘어남</li>
+        <li>도착 X · Y는 두 칸을 벗어나거나 Enter를 누르면 한 번에 적용</li>
       </ul>
       {locked && <p className="insp-hint" role="status">잠긴 트랙입니다</p>}
       {msg && <p className="insp-hint" role="status">{msg}</p>}

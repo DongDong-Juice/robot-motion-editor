@@ -8,7 +8,8 @@ import type { Actor, Bin, Item, Clip, Curve, Interp, Project, ReviewVerdict, Sta
 import { reviewSame } from '../model/review'
 import { validVideoTrack, videoTrack } from '../model/video'
 import { groundZ, lockFeet, standQ, type Body } from '../model/bodyPose'
-import { baseClip, editedClip, offsetKeyCount, walkOf } from '../model/itemClip'
+import { baseClip, editedClip, offsetKeyCount, overlaidClip, overlayStates, walkOf } from '../model/itemClip'
+import { type Overlay, type OverlayReport } from '../model/overlay'
 import { addFrameDeltas, addOverRange, type Range } from '../model/rangeEdit'
 import { BLEND_RANGE, HOLD_RANGE, INERTIA_CAP, previewRange } from '../model/restPose'
 import { SEAM_MAX } from '../model/seam'
@@ -176,10 +177,21 @@ export interface EditorState {
   addWalk(actorId: string | null, spec: WalkSpec, frames: number, bridge?: Clip): string | null
   /** 걷기 설정 (§20): spec fields; `frames` = its new length — the pieces after it on the track move by the difference (asked for by
    * the user: time is changed on purpose). One undo; false = locked / not a 걷기 piece / the result would be 한계 초과 (§22). */
-  setWalk(itemId: string, patch: Partial<WalkSpec> & { frames?: number }): boolean
-  /** What `setWalk(itemId, patch)` would make, without changing anything: its report and (when 한계 초과) the shortest length that
-   * is not (null = no length fixes it). null = not a 걷기 piece / not a valid change. */
-  previewWalk(itemId: string, patch: Partial<WalkSpec> & { frames?: number }): { report: WalkReport; minFrames: number | null } | null
+  /** 부위 얹기 (§26): add `ov` to the piece (or replace the one with its id). `srcClip` = a block not in 목록 yet (라이브러리): put in
+   * first (a 목록 clip of the same robot and name is reused). Refused (false) when the piece is locked / a 걷기 / not a motion piece,
+   * the overlay is not valid, it would be 한계 초과, or a 걷기 of the track would become 한계 초과. One undo. */
+  setOverlay(itemId: string, ov: Overlay, srcClip?: Clip): boolean
+  removeOverlay(itemId: string, ovId: string): boolean
+  /** What setOverlay would make, without changing anything: the overlay's report and, when 한계 초과, the 해결 values that pass (the
+   * largest 세기, the shortest 섞임). null = not a valid overlay for this piece. */
+  previewOverlay(itemId: string, ov: Overlay, srcClip?: Clip): OverlayPlan | null
+  /** `fix` = 추천 수정 from previewWalk (other 걷기 lengths set in the same undo, §23). */
+  setWalk(itemId: string, patch: Partial<WalkSpec> & { frames?: number }, fix?: WalkFix[]): boolean
+  /** What `setWalk(itemId, patch)` would make, without changing anything (§23): this walk's report; `blocked` = the walks it leaves
+   * 한계 초과 (this one, and later ones of the track that were not), with their reports; `fix` = the lengths (0.1 s steps, this walk
+   * and later walks of the track in order) that make it go through — null when no length does (출발 불가 …); `minFrames` = this
+   * walk's length in it (or its own when the walk is fine). null = not a 걷기 piece / not a valid change. */
+  previewWalk(itemId: string, patch: Partial<WalkSpec> & { frames?: number }): WalkPlan | null
   beginGesture(): void; endGesture(): void
   inGesture: boolean // a slider/gizmo drag is under way (views may skip heavy recomputation until it ends)
   // Drop the current gesture's changes (back to the pre-gesture project, nothing on redo); no-op outside a gesture.
@@ -222,6 +234,9 @@ function addUniqueClip(p: Project, clip: Clip) {
 /** The clip every 걷기 piece (§20) refers to (its length only). */
 export const WALK_CLIP = '걷기'
 export interface WalkPick { key: string; from: [number, number]; apply(to: [number, number]): void }
+export interface OverlayPlan { report: OverlayReport; walks: string[] /* 걷기 pieces it would make 한계 초과 */; fix: { weight?: number; fade?: number } }
+export interface WalkFix { itemId: string; frames: number; d: number /* frames added (− = shorter) */ }
+export interface WalkPlan { report: WalkReport; minFrames: number | null; blocked: { itemId: string; report: WalkReport }[]; fix: WalkFix[] | null }
 export const trackLocked = (p: Project, actorId: string) => p.sequence.tracks.some(t => t.kind === 'motion' && t.actorId === actorId && t.locked)
 // (also takes an item id: that piece's 수정 층 is locked with its track)
 export const clipLocked = (p: Project, clipId: string) => p.sequence.tracks.some(t => t.locked && t.items.some(i => i.refId === clipId || i.id === clipId))
@@ -450,6 +465,39 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       }
       return validTrack(f.t.items)
     }
+    // 부위 얹기 (§26): put `ov` on the draft's piece (validated; a 라이브러리 block goes into 목록 first)
+    const applyOverlay = (p: Project, itemId: string, ov: Overlay, srcClip?: Clip): boolean => {
+      const f = findItem(p, itemId)
+      if (!f || f.t.locked || f.t.kind !== 'motion' || f.it.walk) return false
+      const robot = p.clips[f.it.refId]?.robot, def = robot && defs[robot]
+      if (!def) return false
+      let src = ov.src
+      if (srcClip && !p.clips[src]) {
+        if (srcClip.robot !== robot) return false
+        const have = Object.values(p.clips).find(c => c.robot === robot && c.name === srcClip.name && c.length === srcClip.length) // same block in 목록: reuse it
+        if (have) src = have.id; else { addUniqueClip(p, srcClip); src = srcClip.id }
+      }
+      const sc = p.clips[src], names = new Set(def.groups.map(g => g.name))
+      if (!sc || sc.robot !== robot || !ov.parts.length || !ov.parts.every(x => names.has(x)) || !['replace', 'add'].includes(ov.mode)) return false
+      const ints = [ov.srcA, ov.srcB, ov.at, ov.len, ov.fade].every(Number.isInteger)
+      if (!ints || ov.srcA < 0 || ov.srcB <= ov.srcA || ov.srcB > sc.length || ov.len < 2 || ov.fade < 0 || !(ov.weight > 0 && ov.weight <= 1)) return false
+      if (ov.at < f.it.trimIn || ov.at + ov.len > f.it.trimOut) return false // inside the piece
+      const o: Overlay = { id: ov.id, src, srcA: ov.srcA, srcB: ov.srcB, at: ov.at, len: ov.len, parts: [...ov.parts], mode: ov.mode, weight: ov.weight, fade: ov.fade, ...(ov.loop ? { loop: true as const } : {}) }
+      const list = f.it.overlays ?? [], k = list.findIndex(x => x.id === ov.id)
+      f.it.overlays = k >= 0 ? list.map((x, i) => i === k ? o : x) : [...list, o]
+      return true
+    }
+    // the draft's overlay is not 한계 초과 and no 걷기 of its track became 한계 초과 by it (§22, §23)
+    const overlayOk = (p: Project, itemId: string, ovId: string) => {
+      const f = findItem(p, itemId)
+      if (!f) return false
+      const st = overlayStates({ ...p }, defs, f.it).find(x => x.ov.id === ovId)
+      return !!st && st.report.tone !== 'bad' && !newlyBadWalks(p, f.t).length
+    }
+    const newlyBadWalks = (p: Project, t: Track): string[] => {
+      const before = get().project
+      return t.items.filter(o => o.walk && isBad({ ...p }, o) && !(findItem(before, o.id) && isBad(before, findItem(before, o.id)!.it))).map(o => o.id)
+    }
     // §22 안정성 우선: an edit of a 걷기 piece (`ids`) is refused when it leaves that piece 한계 초과, or makes another 걷기 piece of
     // its track 한계 초과 that was not (walks never made with a broken pose by an edit; one already held by other changes stays held)
     const isBad = (p: Project, it: Item) => !!it.walk && walkOf(p, defs, it)?.report.tone === 'bad'
@@ -511,7 +559,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       if (ownerId === t.clipId && clipLocked(s.project, t.clipId)) return
       const own = keyOwner(s.project, ownerId)
       if (!own) return
-      const under = own.offset ? (asset ? raw : baseClip(s.project, defs, t.clipId)!) : null
+      const pieceIt = !asset ? findItem(s.project, t.itemId)?.it : undefined // 조각 수정 층: on top of its 부위 얹기 (§26)
+      const under = own.offset ? (asset ? raw : (pieceIt && overlaidClip(s.project, defs, pieceIt)) || baseClip(s.project, defs, t.clipId)!) : null
       const cur = (under ? evalCurve(under.channels[channel] ?? { keys: [] }, t.f, fb) : 0) + evalCurve(own.channels[channel] ?? { keys: [] }, t.f, own.offset ? 0 : fb)
       const d = v - cur
       if (Math.abs(d) < 1e-12) return
@@ -699,7 +748,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       setPreviewPlaying: previewPlaying => set({ previewPlaying }),
       setItemUse: (itemId, use) => tryEdit(p => {
         const f = findItem(p, itemId)
-        if (!f || f.t.locked || f.t.kind !== 'motion' || (use && !offsetKeyCount(f.it))) return false
+        if (!f || f.t.locked || f.t.kind !== 'motion' || (use && !offsetKeyCount(f.it) && !f.it.overlays?.length)) return false // 원본 사용: without its 수정 층 and 부위 얹기
         if (use) f.it.use = use; else delete f.it.use
         return true
       }),
@@ -725,7 +774,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         // 수정 층: key the difference from what lies under it (클립 수정 층: the original; 조각: the clip with its 수정 층), so the
         // result shows v here (joints clamped like a clip key)
         const asset = s.layer === 'asset' || t.itemId === CLIP_ITEM
-        const under = asset ? s.project.clips[t.clipId] : baseClip(s.project, defs, t.clipId)!, def = defs[under.robot], j = def.joints.find(j => j.name === channel)
+        const pieceIt = !asset ? findItem(s.project, t.itemId)?.it : undefined // 조각 수정 층: on top of its 부위 얹기 (§26)
+        const under = asset ? s.project.clips[t.clipId] : (pieceIt && overlaidClip(s.project, defs, pieceIt)) || baseClip(s.project, defs, t.clipId)!, def = defs[under.robot], j = def.joints.find(j => j.name === channel)
         if (j) v = Math.min(Math.max(v, j.lower), j.upper)
         const ownerId = asset ? assetOwner(t.clipId) : t.itemId, d = v - evalCurve(under.channels[channel] ?? { keys: [] }, t.f, channel === 'root.z' ? def.standingHeight : 0)
         if (clipLocked(s.project, ownerId)) return
@@ -858,13 +908,63 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         })
         return ok ? out : null
       },
-      setWalk: (itemId, patch) => tryEdit(p => applyWalk(p, itemId, patch) && !walkBad(p, itemId)),
+      setWalk: (itemId, patch, fix = []) => tryEdit(p => applyWalk(p, itemId, patch) && fix.every(x => applyWalk(p, x.itemId, { frames: x.frames }))
+        && !walkBad(p, itemId, ...fix.map(x => x.itemId))),
+      setOverlay: (itemId, ov, srcClip) => tryEdit(p => applyOverlay(p, itemId, ov, srcClip) && overlayOk(p, itemId, ov.id)),
+      removeOverlay: (itemId, ovId) => tryEdit(p => {
+        const f = findItem(p, itemId)
+        if (!f || f.t.locked || !f.it.overlays?.some(o => o.id === ovId)) return false
+        f.it.overlays = f.it.overlays.filter(o => o.id !== ovId)
+        if (!f.it.overlays.length) delete f.it.overlays
+        return !newlyBadWalks(p, f.t).length // its new end could still leave a walk 한계 초과
+      }),
+      previewOverlay: (itemId, ov, srcClip) => {
+        const judge = (o: Overlay) => {
+          const p = draft([])
+          if (!applyOverlay(p, itemId, o, srcClip)) return null
+          const f = findItem(p, itemId)!, st = overlayStates(p, defs, f.it).find(x => x.ov.id === o.id)
+          return st ? { report: st.report, walks: newlyBadWalks(p, f.t) } : null
+        }
+        const r = judge(ov)
+        if (!r) return null
+        const fix: OverlayPlan['fix'] = {}
+        if (r.report.tone === 'bad') { // 해결: the largest 세기 (5 % steps) / the shortest 섞임 (2 frames) that pass — halving (they get easier one way)
+          const ok = (o: Overlay) => { const x = judge(o); return !!x && x.report.tone !== 'bad' && !x.walks.length }
+          let lo = 0, hi = Math.round(ov.weight * 20) // weight lo/20 passes (0 = none found), hi/20 does not
+          if (ok({ ...ov, weight: 0.05 })) { lo = 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (ok({ ...ov, weight: m / 20 })) lo = m; else hi = m } fix.weight = lo / 20 }
+          const top = Math.floor(ov.len / 2)
+          if (top > ov.fade && ok({ ...ov, fade: top })) {
+            const fv = (k: number) => Math.min(ov.fade + 2 * k, top)
+            let lo2 = 0, hi2 = Math.ceil((top - ov.fade) / 2) // fv(lo2) fails, fv(hi2) passes
+            while (hi2 - lo2 > 1) { const m = (lo2 + hi2) >> 1; if (ok({ ...ov, fade: fv(m) })) hi2 = m; else lo2 = m }
+            fix.fade = fv(hi2)
+          }
+        }
+        return { report: { ...r.report, held: undefined }, walks: r.walks, fix }
+      },
       previewWalk: (itemId, patch) => {
-        const p = draft([])
+        // the walk and the later walks of its track one by one: each 한계 초과 one (this, or a later one that was not before) gets the
+        // shortest length that is not; the project object is renewed after each change (walkOf caches by project and item)
+        let p = draft([])
         if (!applyWalk(p, itemId, patch)) return null
-        const f = findItem(p, itemId), w = f && walkOf(p, defs, f.it)
-        if (!f || !w) return null
-        return { report: w.report, minFrames: w.report.tone === 'bad' ? minWalkFrames(defs.go2, w.start, w.end, itemLen(f.it), f.it.walk!.face, f.it.walk!.slow ?? 'walk') : null }
+        const before = get().project, f0 = findItem(p, itemId), w0 = f0 && walkOf(p, defs, f0.it)
+        if (!f0 || !w0) return null
+        const order = sortedItems(f0.t), from = order.indexOf(f0.it), ids = order.slice(from).filter(i => i.walk).map(i => i.id)
+        const blocked: WalkPlan['blocked'] = [], fix: WalkFix[] = []
+        let ok = true
+        for (const id of ids) {
+          const g = findItem(p, id)!
+          if (id !== itemId) { const b = findItem(before, id); if (b && isBad(before, b.it)) continue } // already held: not this edit's
+          const w = walkOf(p, defs, g.it)
+          if (!w || w.report.tone !== 'bad') continue
+          blocked.push({ itemId: id, report: w.report })
+          const n = itemLen(g.it), m = ok ? minWalkFrames(defs.go2, w.start, w.end, n, g.it.walk!.face, g.it.walk!.slow ?? 'walk') : null
+          if (!m) { ok = false; continue }
+          if (!applyWalk(p, id, { frames: m })) { ok = false; continue }
+          fix.push({ itemId: id, frames: m, d: m - n }); p = { ...p }
+        }
+        if (ok && fix.length && walkBad({ ...p }, itemId, ...fix.map(x => x.itemId))) ok = false
+        return { report: w0.report, minFrames: w0.report.tone === 'bad' ? fix.find(x => x.itemId === itemId)?.frames ?? null : itemLen(f0.it), blocked, fix: ok ? fix : null }
       },
       setItemStep: (itemId, on) => tryEdit(p => {
         const f = findItem(p, itemId)
@@ -990,7 +1090,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         return cut
       },
       deleteClip: clipId => tryEdit(p => {
-        if (!p.clips[clipId] || p.sequence.tracks.some(t => t.items.some(i => i.refId === clipId))) return false
+        if (!p.clips[clipId] || p.sequence.tracks.some(t => t.items.some(i => i.refId === clipId || i.overlays?.some(o => o.src === clipId)))) return false // used by a piece or a 부위 얹기
         delete p.clips[clipId]
         return true
       }),

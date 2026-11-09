@@ -29,7 +29,7 @@ function axis([x0, y0, z0]: Vec3, t: number): R3 {
 }
 
 // the parts and their links. The shoulder pitch link sits on the torso (always touching it): not part of the upper arm.
-const PARTS: Record<string, string[]> = { torso: ['torso_link'] }
+const PARTS: Record<string, string[]> = { torso: ['torso_link'] } // G1
 for (const [s, S] of [['left', 'L'], ['right', 'R']] as const) {
   PARTS[`${S}_upper`] = [`${s}_shoulder_roll_link`, `${s}_shoulder_yaw_link`]
   PARTS[`${S}_fore`] = [`${s}_elbow_link`, `${s}_wrist_roll_link`]
@@ -41,6 +41,17 @@ export const BODY_PAIRS: [string, string][] = [['L_fore', 'torso'], ['L_hand', '
   ...(['upper', 'fore', 'hand'] as const).flatMap(a => (['upper', 'fore', 'hand'] as const).filter(b => !(a === 'hand' && b === 'hand')).map(b => [`L_${a}`, `R_${b}`] as [string, string]))]
 export const HAND_PAIR: [string, string] = ['L_hand', 'R_hand']
 const KO: Record<string, string> = { torso: '몸통', L_upper: '왼위팔', L_fore: '왼아래팔', L_hand: '왼손', R_upper: '오른위팔', R_fore: '오른아래팔', R_hand: '오른손' }
+// GO2 (부위 얹기 §26: 앞다리 교차): each leg's thigh and its calf + foot; checked between the two front legs, the two rear legs and the
+// front and rear leg of a side (the hip and thigh sit on the body: always touching it, not checked against it)
+const GO2_PARTS: Record<string, string[]> = {}
+const GO2_KO: Record<string, string> = { FL: '왼앞', FR: '오른앞', RL: '왼뒤', RR: '오른뒤' }
+for (const L of ['FL', 'FR', 'RL', 'RR']) {
+  GO2_PARTS[`${L}_thigh`] = [`${L}_thigh`]; GO2_PARTS[`${L}_calf`] = [`${L}_calf`, `${L}_foot`]
+  KO[`${L}_thigh`] = `${GO2_KO[L]} 허벅지`; KO[`${L}_calf`] = `${GO2_KO[L]} 종아리`
+}
+export const GO2_LEG_PAIRS: [string, string][] = [['FL', 'FR'], ['RL', 'RR'], ['FL', 'RL'], ['FR', 'RR']]
+  .flatMap(([a, b]) => [[`${a}_thigh`, `${b}_thigh`], [`${a}_thigh`, `${b}_calf`], [`${a}_calf`, `${b}_thigh`], [`${a}_calf`, `${b}_calf`]] as [string, string][])
+const partsOf = (def: RobotDef) => def.kind === 'go2' ? GO2_PARTS : PARTS
 export const pairName = ([a, b]: [string, string]) => `${KO[a]}×${KO[b]}`
 
 // ---- shapes: a link's hull points (link frame), its bounding sphere, and a cube map of directions → farthest point (fast support) ----
@@ -109,7 +120,7 @@ function planOf(def: RobotDef): Plan | null {
   }
   const shapes: Record<string, Shape> = {}
   let ok = true
-  for (const l of Object.values(PARTS).flat()) { visit(l); const s = shapeOf(def, l); if (s) shapes[l] = s; else ok = false }
+  for (const l of Object.values(partsOf(def)).flat()) { visit(l); const s = shapeOf(def, l); if (s) shapes[l] = s; else ok = false }
   const plan = ok ? { steps, shapes } : null // a G1 without one of these meshes: not checked
   plans.set(def, plan)
   return plan
@@ -167,15 +178,16 @@ function depth(a: Placed, b: Placed, floor: number): number {
 }
 
 /** Overlap depth in mm (> 0 = into each other, ≤ 0 = clear) of each part pair (the deepest of its links), per pose, and for each the
- *  links that go deepest. Values at or under `floorMm` are only known to be there (searched no further). G1 only (null otherwise). */
+ *  links that go deepest. Values at or under `floorMm` are only known to be there (searched no further). null when a pair is not one
+ *  of this robot's (G1: BODY_PAIRS · HAND_PAIR, GO2: GO2_LEG_PAIRS) or its meshes are missing. */
 export function pairDepths(poses: Pose[], def: RobotDef, pairs: [string, string][], floorMm = 0): number[][] | null {
-  const plan = def.kind === 'g1' ? planOf(def) : null
+  const parts = partsOf(def), plan = pairs.every(([a, b]) => parts[a] && parts[b]) ? planOf(def) : null // a pair of another robot: not checked
   if (!plan) return null
   return poses.map(ps => {
     const fr = linkFrames(def, plan, ps.q)
     return pairs.map(([A, B]) => {
       let best = -Infinity
-      for (const la of PARTS[A]) for (const lb of PARTS[B]) best = Math.max(best, depth({ s: plan.shapes[la], f: fr[la] }, { s: plan.shapes[lb], f: fr[lb] }, floorMm / 1000))
+      for (const la of parts[A]) for (const lb of parts[B]) best = Math.max(best, depth({ s: plan.shapes[la], f: fr[la] }, { s: plan.shapes[lb], f: fr[lb] }, floorMm / 1000))
       return best * 1000
     })
   })
@@ -183,10 +195,10 @@ export function pairDepths(poses: Pose[], def: RobotDef, pairs: [string, string]
 
 /** The links of these part pairs that overlap in this pose (the 3D view paints them). */
 export function overlapLinks(pose: Pose, def: RobotDef, pairs: [string, string][]): string[] {
-  const plan = def.kind === 'g1' ? planOf(def) : null
+  const parts = partsOf(def), plan = pairs.every(([a, b]) => parts[a] && parts[b]) ? planOf(def) : null
   if (!plan) return []
   const fr = linkFrames(def, plan, pose.q), out = new Set<string>()
-  for (const [A, B] of pairs) for (const la of PARTS[A]) for (const lb of PARTS[B]) {
+  for (const [A, B] of pairs) for (const la of parts[A]) for (const lb of parts[B]) {
     if (depth({ s: plan.shapes[la], f: fr[la] }, { s: plan.shapes[lb], f: fr[lb] }, 0) > 0) { out.add(la); out.add(lb) }
   }
   return [...out]

@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import PinMenu from './PinMenu'
 import { trackDrag } from './drag'
 import { onHandleArrow } from '../layout/useLayout'
 import { actorOf, ASSET, clampDf, clipLocked, editingItem, editTarget, getEditor, keyOwner, keyTarget, targetItem, type KeyRef } from '../store/store'
@@ -21,6 +22,9 @@ interface Drag { keys: KeyRef[]; df: number; dv: number }
 type Lim = { name: string; lower: number; upper: number; velocity: number }
 
 export default function GraphCanvas() {
+  const [pin, setPin] = useState<{ x: number; y: number } | null>(null) // 재생헤드 고정 menu (§24: right-click, as in the sequence)
+  const pinOpen = useRef(false)
+  pinOpen.current = !!pin
   const cv = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -288,7 +292,8 @@ export default function GraphCanvas() {
     }
     const onLeave = () => { if (!edgeDrag) edge.stop() }
 
-    const hoverOff = () => { const s = ed.getState(); return s.playing || s.playheadPinned || !editingItem(s) }
+    const hoverOff = () => { const s = ed.getState(); return s.playing || s.playheadPinned || pinOpen.current || !editingItem(s) }
+    const onContext = (e: MouseEvent) => { e.preventDefault(); if (pos(e).x >= LABEL_W) setPin({ x: e.clientX, y: e.clientY }) }
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       markUserScroll()
@@ -316,8 +321,10 @@ export default function GraphCanvas() {
     canvas.addEventListener('mousemove', onMove)
     canvas.addEventListener('mouseleave', onLeave)
     canvas.addEventListener('wheel', onWheel, { passive: false })
+    canvas.addEventListener('contextmenu', onContext)
     window.addEventListener('keydown', onKey)
     return () => {
+      canvas.removeEventListener('contextmenu', onContext)
       ro.disconnect(); document.fonts?.removeEventListener('loadingdone', schedule); unsub(); cancelAnimationFrame(raf); hover.stop(); edge.stop()
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)
@@ -327,5 +334,8 @@ export default function GraphCanvas() {
     }
   }, [])
 
-  return <canvas ref={cv} tabIndex={0} className="track-canvas" />
+  return <>
+    <canvas ref={cv} tabIndex={0} className="track-canvas" />
+    {pin && <PinMenu at={pin} close={() => setPin(null)} refocus={() => cv.current?.focus()} />}
+  </>
 }

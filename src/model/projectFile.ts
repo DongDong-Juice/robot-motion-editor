@@ -147,6 +147,15 @@ export function parseProject(text: string, defs: RobotDefs): Project {
         if (it.inertia !== undefined && !(int(it.inertia) && it.inertia >= 0)) fail(`${it_}.inertia`)
         for (const k of ['tailHold', 'tailBlend', 'seam']) if (it[k] !== undefined && !(int(it[k]) && it[k] >= 0)) fail(`${it_}.${k}`)
         if (it.step !== undefined && typeof it.step !== 'boolean') fail(`${it_}.step`)
+        if (it.overlays !== undefined) { // 부위 얹기 (§26)
+          if (!Array.isArray(it.overlays) || t.kind !== 'motion' || it.walk !== undefined) fail(`${it_}.overlays`)
+          for (const o of it.overlays) {
+            if (!isObj(o) || typeof o.id !== 'string' || typeof o.src !== 'string' || !['replace', 'add'].includes(o.mode)
+              || !Array.isArray(o.parts) || !o.parts.length || !o.parts.every((x: unknown) => typeof x === 'string')
+              || ![o.srcA, o.srcB, o.at, o.len, o.fade].every(int) || !(o.srcA >= 0 && o.srcB > o.srcA && o.len >= 2 && o.fade >= 0 && o.at >= 0)
+              || !(num(o.weight) && o.weight > 0 && o.weight <= 1) || (o.loop !== undefined && o.loop !== true)) fail(`${it_}.overlays`)
+          }
+        }
         if (it.walk !== undefined) { // 걷기 (§20)
           const w = it.walk
           if (!isObj(w) || !Array.isArray(w.to) || w.to.length !== 2 || !w.to.every(num) || !['travel', 'keep', 'audience'].includes(w.face)
@@ -163,6 +172,9 @@ export function parseProject(text: string, defs: RobotDefs): Project {
         if (!str(it.refId) || !Object.hasOwn(p.clips, it.refId)) fail(`${it_}.refId`, '클립이 없습니다')
         if (t.kind === 'motion' && p.clips[it.refId].robot !== actorRobot[t.actorId]) fail(`${it_}.refId`, '클립의 로봇이 액터와 다릅니다')
         if (it.trimOut > p.clips[it.refId].length) fail(`${it_}.trimOut`, '클립 길이를 넘습니다')
+        for (const o of it.overlays ?? []) { // 부위 얹기: the source is a clip of this robot in the project, its range inside it
+          if (!Object.hasOwn(p.clips, o.src) || p.clips[o.src].robot !== p.clips[it.refId].robot || o.srcB > p.clips[o.src].length) fail(`${it_}.overlays`, '얹은 동작의 원본 블록이 없습니다')
+        }
         if (it.use !== undefined && it.use !== 'original') fail(`${it_}.use`)
         if (it.offset !== undefined) { if (!isObj(it.offset)) fail(`${it_}.offset`); curves(it.offset, `${it_}.offset`, p.clips[it.refId].robot, false) }
       })

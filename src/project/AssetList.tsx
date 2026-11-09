@@ -172,7 +172,7 @@ export default function AssetList({ tab, query, setQuery }: { tab: 'clip' | 'med
   }
 
   const sec = (f: number) => `${(f / 60).toFixed(2)}s`
-  const uses = (id: string) => project.sequence.tracks.reduce((n, t) => n + t.items.filter(i => i.refId === id).length, 0)
+  const uses = (id: string) => project.sequence.tracks.reduce((n, t) => n + t.items.filter(i => i.refId === id || i.overlays?.some(o => o.src === id)).length, 0) // 부위 얹기 원본 (§26) too
   const cells = (id: string) => {
     if (tab === 'media') {
       const m = project.media.find(m => m.id === id)!, off = mediaUrl(id) == null

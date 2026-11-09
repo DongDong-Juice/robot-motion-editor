@@ -6,11 +6,14 @@ import { getEditor, trackLocked, useEditor } from '../store/store'
 import { dropAsset, setDragged } from '../timeline/assetDrop'
 import { RowMenu, type Entry as MenuEntry } from './AssetList'
 import { WalkAddPanel } from '../inspector/WalkPanel'
+import UserBlockPanel, { USER_DIR, USER_NOTE, userMenuEntries } from './UserBlockPanel'
+import { blockClip, loadUserBlocks, useUserBlocks, type UserBlock } from '../userBlocks'
 
 const KIND = { fixed: '고정', meters: '거리', degrees: '각도', empty: '길이' } as const
 export const filterBlocks = (query: string) => { const q = query.trim().toLowerCase(); return GO2_BLOCKS.filter(b => b.label.toLowerCase().includes(q)) }
 
 type Entry = { kind: 'dir'; key: string; name: string; n: number; open: boolean } | { kind: 'block'; key: string; b: Block; inDir: boolean } | { kind: 'walk'; key: string }
+  | { kind: 'user'; key: string; u: UserBlock } // §26: a 사용자 블록 (this browser), in its folder
 const WALK_ROW = 'walk', WALK_LABEL = '걷기 (가상)' // §20: a made walk, not a logged block
 
 /** 라이브러리 tab: the GO2 blocks by folder (public/go2-blocks/<folder>, folded until opened; a name filter opens the folders it hits),
@@ -32,9 +35,19 @@ export default function LibraryList({ query }: { query: string }) {
   // a loop block's chosen step value, per block: the 설정 칸 and the right-click menu add the same one (none yet = the smallest)
   const [values, setValues] = useState<Record<string, string>>({})
   const [menu, setMenu] = useState<{ b: Block; x: number; y: number; row: HTMLElement } | null>(null)
+  const [uMenu, setUMenu] = useState<{ u: UserBlock; x: number; y: number; row: HTMLElement } | null>(null)
+  const users = useUserBlocks(s => s.list)
+  useEffect(() => { void loadUserBlocks() }, [])
   const hits = filterBlocks(query), filtered = !!query.trim()
   const entries: Entry[] = hits.filter(b => !b.folder).map(b => ({ kind: 'block', key: b.id, b, inDir: false }))
   if (WALK_LABEL.includes(query.trim().toLowerCase())) entries.push({ kind: 'walk', key: WALK_ROW }) // under Empty
+  { // §26 사용자 블록: always there (empty = where saved ones go); a name filter opens it
+    const us = users.filter(u => u.name.toLowerCase().includes(query.trim().toLowerCase())), o = filtered || open.has(USER_DIR)
+    if (us.length || !filtered) {
+      entries.push({ kind: 'dir', key: `dir:${USER_DIR}`, name: USER_DIR, n: us.length, open: o })
+      if (o) for (const u of us) entries.push({ kind: 'user', key: `user:${u.id}`, u })
+    }
+  }
   for (const name of GO2_FOLDERS) {
     const bs = hits.filter(b => b.folder === name), o = filtered || open.has(name)
     if (!bs.length) continue
@@ -108,6 +121,11 @@ export default function LibraryList({ query }: { query: string }) {
 
   // ↑↓ the shown rows; on a folder → opens / ← closes; ← on a block in a folder goes to its folder
   const onKey = (e: React.KeyboardEvent, en: Entry) => {
+    if (en.kind === 'user' && (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey))) {
+      e.preventDefault(); e.stopPropagation()
+      const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+      pick(en.key); setUMenu({ u: en.u, x: r.left + 8, y: r.top + 24, row: e.currentTarget as HTMLElement }); return
+    }
     if (en.kind === 'block' && (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey))) {
       e.preventDefault(); e.stopPropagation()
       const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -117,6 +135,7 @@ export default function LibraryList({ query }: { query: string }) {
       e.preventDefault(); e.stopPropagation()
       if (en.kind === 'dir') toggle(en.name, e.key === 'ArrowRight')
       else if (e.key === 'ArrowLeft' && en.kind === 'block' && en.b.folder) goTo(`dir:${en.b.folder}`)
+      else if (e.key === 'ArrowLeft' && en.kind === 'user') goTo(`dir:${USER_DIR}`)
       return
     }
     if (en.kind === 'dir' && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggle(en.name); return }
@@ -132,17 +151,30 @@ export default function LibraryList({ query }: { query: string }) {
     <>
       <div className="pp-cols" aria-hidden="true"><span>이름</span><span className="pp-col-kind">종류</span></div>
       <div ref={treeRef} role="tree" aria-label="라이브러리" className="pp-tree">
-        {entries.map(en => en.kind === 'walk' ? (
+        {entries.map(en => en.kind === 'user' ? (
+          <div key={en.key} role="treeitem" className="pp-row in" data-kind="user" data-id={en.key} aria-selected={sel === en.key}
+            tabIndex={en.key === tabStop ? 0 : -1} onClick={() => pick(en.key)} onKeyDown={e => onKey(e, en)}
+            onContextMenu={e => { e.preventDefault(); pick(en.key); setUMenu({ u: en.u, x: e.clientX, y: e.clientY, row: e.currentTarget }) }}
+            draggable onDragStart={e => {
+              const { clip, have } = blockClip(getEditor().getState().project, en.u) // the same one in 목록: reuse it
+              e.dataTransfer.setData('application/x-motion-block', en.key); e.dataTransfer.effectAllowed = 'copy'
+              setDragged(have ? { kind: 'clip', id: clip.id } : { kind: 'clip', id: clip.id, clip })
+            }}
+            onDragEnd={() => setDragged(null)}>
+            <span className="pp-name" title={`${en.u.name} — ${USER_NOTE}`}>{en.u.name}</span>
+            <span className="pp-col-kind">사용자</span>
+          </div>
+        ) : en.kind === 'walk' ? (
           <div key={en.key} role="treeitem" className="pp-row" data-kind="walk" data-id={en.key} aria-selected={sel === en.key}
             tabIndex={en.key === tabStop ? 0 : -1} onClick={() => pick(en.key)} onKeyDown={e => onKey(e, en)}>
             <span className="pp-name" title="도착 위치와 시간으로 걸음을 계산해 만드는 이동 조각">{WALK_LABEL}</span>
             <span className="pp-col-kind">이동</span>
           </div>
         ) : en.kind === 'dir' ? (
-          <div key={en.key} role="treeitem" className="pp-row pp-bin" data-kind="blockdir" data-id={en.key} aria-expanded={en.open}
+          <div key={en.key} role="treeitem" className="pp-row pp-bin" data-kind={en.name === USER_DIR ? 'userdir' : 'blockdir'} data-id={en.key} aria-expanded={en.open}
             tabIndex={en.key === tabStop ? 0 : -1} onClick={() => { setFocus(en.key); toggle(en.name) }} onKeyDown={e => onKey(e, en)}>
             <span className="pp-twisty" aria-hidden="true">{en.open ? '▾' : '▸'}</span>
-            <span className="pp-name" title={en.name}>{en.name}</span>
+            <span className="pp-name" title={en.name === USER_DIR ? `${en.name} — ${USER_NOTE}` : en.name}>{en.name}</span>
             <span className="pp-count">{en.n}</span>
           </div>
         ) : (({ b }) => (
@@ -181,7 +213,11 @@ export default function LibraryList({ query }: { query: string }) {
         <WalkAddPanel actorId={walkTo === 'new' ? null : walkTo} onAdded={(actorId, text) => { setChoice(actorId); setMsg(text) }} />
         {msg && <p className="pp-msg" aria-live="polite">{msg}</p>}
       </div>}
-      {sel && sel !== WALK_ROW && <div className="pp-blk">
+      {sel?.startsWith('user:') && (u => u ? <div className="pp-blk">
+        <UserBlockPanel key={u.id} u={u} onMsg={setMsg} />
+        {msg && <p className="pp-msg" aria-live="polite">{msg}</p>}
+      </div> : msg ? <div className="pp-blk"><p className="pp-msg" aria-live="polite">{msg}</p></div> : null)(users.find(x => `user:${x.id}` === sel))}
+      {sel && sel !== WALK_ROW && !sel.startsWith('user:') && <div className="pp-blk">
         {sel !== 'empty' && <label className="pp-blk-field"><span>붙일 로봇</span>
           <select aria-label="붙일 로봇" value={t} onChange={e => { setChoice(e.target.value); setMsg('') }}>
             {go2s.map(a => <option key={a.id} value={a.id}>{a.name} (트랙 끝에 붙임)</option>)}
@@ -198,6 +234,9 @@ export default function LibraryList({ query }: { query: string }) {
       </div>}
       {menu && <RowMenu label="라이브러리" x={menu.x} y={menu.y} head={menuHead(menu.b)} entries={menuEntries(menu.b)}
         close={refocus => { if (refocus) menu.row.focus(); setMenu(null) }} />}
+      {uMenu && <RowMenu label="라이브러리" x={uMenu.x} y={uMenu.y} head={[uMenu.u.name, '이 브라우저에만 저장된 사용자 블록']}
+        entries={userMenuEntries(uMenu.u, getEditor().getState().project.actors.filter(a => a.robot === uMenu.u.robot), setMsg)}
+        close={refocus => { if (refocus) uMenu.row.focus(); setUMenu(null) }} />}
     </>
   )
 }

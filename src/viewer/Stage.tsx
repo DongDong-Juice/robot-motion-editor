@@ -179,7 +179,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       if (ei && ei.actorId !== a.id) return null // the other actors are ghosts already
       const t = s.project.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === a.id)
       const it = ei ? ei.item : t && resolve(sortedItems(t), s.frame)?.item
-      if (!it || it.use === 'original' || !offsetKeyCount(it)) return null
+      if (!it || it.use === 'original' || (!offsetKeyCount(it) && !it.overlays?.length)) return null // 수정 층 or 부위 얹기 (§26): the original under it
       return () => mainPose(s, withUse(s.project, it.id, 'original'), a)
     }
     const applyOverlay = (s: S) => {
@@ -612,7 +612,8 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
         stop()
         if (!at || (at[0] === g.to[0] && at[1] === g.to[1]) || store.getState().setWalk(g.itemId, { to: at })) return
         const pv = store.getState().previewWalk(g.itemId, { to: at }) // §22: refused — why
-        setWalkMsg(pv?.report.tone === 'bad' ? `한계 초과가 되어 옮기지 않았습니다${pv.minFrames ? ` (그 자리는 최소 ${(pv.minFrames / 60).toFixed(1)}초 필요 — 인스펙터에서 찍으면 바로 고칠 수 있음)` : ''}` : '도착 위치를 바꿀 수 없습니다')
+        const own = pv?.fix?.length === 1 && pv.fix[0].itemId === g.itemId ? pv.fix[0].frames : null
+        setWalkMsg(pv?.blocked.length ? `한계 초과가 되어 옮기지 않았습니다${own ? ` (그 자리는 최소 ${(own / 60).toFixed(1)}초 필요` : pv.fix ? ' (뒤 걷기 시간도 늘려야 함' : ' (시간으로는 못 고침'} — 인스펙터에서 찍으면 추천 수정이 나옴)` : '도착 위치를 바꿀 수 없습니다')
       }, stop)
       return true
     }
