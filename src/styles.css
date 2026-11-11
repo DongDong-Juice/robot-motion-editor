@@ -598,6 +598,23 @@ body {
 .wk-refused b { color: #E5484D; font-weight: 600; }
 .pp-blk .wk-via { color: #F0883E; }
 .wk-who { font-weight: 600; font-size: 12px; color: var(--text); margin-top: 2px; }
+/* 걷기 고치는 중 (§29): the one-sentence reason, the folded details, 적용 / 취소 */
+.wk-head { font-weight: 600; }
+.wk-more { font-size: 11.5px; color: var(--dim); }
+.wk-more summary { cursor: pointer; user-select: none; }
+.wk-more .wk-why.bad { font-size: 11.5px; margin-top: 2px; }
+.wk-draft-tag { margin-left: 8px; padding: 0 6px; border: 1px solid var(--accent); border-radius: 8px; color: var(--accent); font-size: 10.5px; font-weight: 500; }
+.wk-apply { margin-top: 8px; border-top: 0; padding-top: 0; }
+/* 바꿀 예정 (§30): what a draft would change (no verdict until 적용), the changed boxes marked */
+.wk-plan { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; border: 1px solid var(--accent); border-radius: 3px; padding: 7px 9px; line-height: 1.45; }
+.wk-plan-t { color: var(--accent); font-weight: 600; font-size: 12px; }
+.wk-plan-row { display: grid; grid-template-columns: 64px 1fr; gap: 6px; font-size: 11.5px; align-items: baseline; }
+.wk-plan-row > span:first-child { color: var(--dim); }
+.wk-old { color: var(--dim); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--dim) 60%, transparent); }
+.wk-new { color: var(--text); font-weight: 600; }
+.wk-arrow { color: var(--accent); margin: 0 4px; }
+.wk-num.wk-chg, .wk-seg.wk-chg, select.wk-chg { box-shadow: inset 2px 0 0 var(--accent); }
+.wk-refused .wk-state { border: 0; padding: 0; font-size: 12px; }
 /* 부위 얹기 (§26): the inspector's 얹은 동작 list and form (walk fields' look) */
 .ov-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 3px; }
 .ov-row { display: flex; align-items: center; gap: 6px; padding: 4px 8px; font-size: 12px; min-width: 0; cursor: pointer; }

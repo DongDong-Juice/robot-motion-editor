@@ -274,14 +274,14 @@ describe('걷기 조각 on the timeline', () => {
     const pv = walkPreview(s().project, defs, null, { to: [-1, 1.5], face: 'keep' }, 120, false, place)!
     expect([pv.start.rootPos[0], pv.start.rootPos[1]].map(v => +v.toFixed(6))).toEqual([-1, 0.5])
     expect(pv.report.tone).not.toBe('bad') // 1 m straight ahead (facing +y)
-    const w = s().addWalk(null, { to: [-1, 1.5], face: 'keep' }, 120, undefined, place)!
+    const w = s().addWalk(null, { to: [-1, 1.5], face: 'keep' }, 120, undefined, { place })!
     const a = s().project.actors[0], it = s().project.sequence.tracks.flatMap(t => t.items).find(i => i.id === w)!
     expect(a.placement).toEqual(place)
     const e = evaluate(s().project, defs, a.id, endF(it)).rootPos
     expect(e[0]).toBeCloseTo(-1, 2); expect(e[1]).toBeCloseTo(1.5, 2)
     s().undo(); expect(s().project.actors).toHaveLength(0) // the robot and its spot: one undo
     s().redo()
-    expect(s().addWalk(s().project.actors[0].id, { to: [0, 1.5], face: 'keep' }, 120, undefined, place)).toBeNull() // not the first piece
+    expect(s().addWalk(s().project.actors[0].id, { to: [0, 1.5], face: 'keep' }, 120, undefined, { place })).toBeNull() // not the first piece
   })
   test('§27 배치 (출발 위치) that would make a walk 한계 초과 is refused, with the 최소 시간 that passes; already-held walks do not block it', () => {
     const st = createEditorStore(defs, emptyProject()), s = () => st.getState()
@@ -300,6 +300,76 @@ describe('걷기 조각 on the timeline', () => {
     expect(walkOf(s().project, defs, it)!.report.tone).not.toBe('bad')
     s().undo(); expect(s().project.actors[0].placement.x).toBe(0.6)
     expect(s().setPlacement(actor, { x: Number.NaN })).toBe(false)
+  })
+  test('§28 붙일 자리: a walk put right after a piece in the middle — starts where it ends, the later pieces start later, the next walk keeps its target; one undo', () => {
+    const { s, actor, item, world } = stage()
+    const a = s().project.sequence.tracks.flatMap(t => t.items)[0].id
+    const w1 = s().addWalk(actor, { to: [1, 0], face: 'keep' }, 150)!
+    const c = s().appendClip(actor, hold(STAND, 'c', 60, facingX))!
+    const w1Start = item(w1).start, cStart = item(c).start, cAt = world(item(c).start + 10).rootPos
+    const spec = { to: [0.5, 0.3] as [number, number], face: 'keep' as const }
+    const pv = s().previewAddWalk(actor, spec, 120, undefined, { after: a })!
+    const aEnd = world(endF(item(a))).rootPos
+    expect(Math.hypot(pv.start.rootPos[0] - aEnd[0], pv.start.rootPos[1] - aEnd[1])).toBeLessThan(0.005) // from where the piece ends
+    expect(pv.report.tone).not.toBe('bad'); expect(pv.blocked).toEqual([]); expect(pv.shift).toBe(120)
+    const w = s().addWalk(actor, spec, 120, undefined, { after: a })!
+    expect(item(w).start).toBe(endF(item(a)) + 1)
+    expect([item(w1).start, item(c).start]).toEqual([w1Start + 120, cStart + 120]) // later by its length
+    const e = world(endF(item(w))).rootPos
+    expect(Math.hypot(e[0] - 0.5, e[1] - 0.3)).toBeLessThan(0.01)
+    world(item(c).start + 10).rootPos.forEach((v, i) => expect(v).toBeCloseTo(cAt[i], 2)) // after the next walk: in place (its target is fixed)
+    s().undo()
+    expect(s().project.sequence.tracks.flatMap(t => t.items).some(i => i.id === w)).toBe(false)
+    expect(item(w1).start).toBe(w1Start)
+  })
+  test('§28 a walk put in the middle that would leave the next walk 한계 초과: refused; previewAddWalk gives the next walk\'s 최소 시간, added with it', () => {
+    const { s, actor, item } = stage()
+    const a = s().project.sequence.tracks.flatMap(t => t.items)[0].id
+    const w1 = s().addWalk(actor, { to: [1, 0], face: 'keep' }, 120)!
+    const spec = { to: [-1.5, 0] as [number, number], face: 'keep' as const }
+    const pv = s().previewAddWalk(actor, spec, 360, undefined, { after: a })!
+    expect(pv.report.tone).not.toBe('bad') // the new walk itself (1.5 m back in 6 s) is fine
+    expect(pv.blocked.map(b => b.itemId)).toEqual([w1]) // the next walk now has 2.5 m in 2 s
+    expect(s().addWalk(actor, spec, 360, undefined, { after: a })).toBeNull()
+    expect(pv.fix).toHaveLength(1)
+    const w = s().addWalk(actor, spec, 360, undefined, { after: a, fix: pv.fix! })!
+    expect(w).not.toBeNull()
+    expect(item(w1).trimOut - item(w1).trimIn).toBe(pv.fix![0].frames)
+    s().undo(); expect(item(w1).trimOut - item(w1).trimIn).toBe(120)
+  })
+  test('§29 고치는 중: the draft keeps 한계 초과 values without touching the project; 적용 = one check of 출발 + 도착 + 시간, one undo', () => {
+    const st = createEditorStore(defs, emptyProject()), s = () => st.getState()
+    const w = s().addWalk(null, { to: [1, 0], face: 'keep' }, 120)!
+    const it = () => s().project.sequence.tracks.flatMap(t => t.items).find(i => i.id === w)!
+    const p0 = s().project
+    // a far start: each on its own would be refused (§27) — the draft just keeps it
+    s().patchWalkDraft(w, undefined, { x: -3 })
+    expect(s().walkDraft).toEqual({ itemId: w, patch: {}, place: { x: -3 } })
+    expect(s().project).toBe(p0) // nothing applied, nothing on the undo stack
+    const bad = s().previewWalk(w, s().walkDraft!.patch, s().walkDraft!.place)!
+    expect(bad.blocked.map(b => b.itemId)).toEqual([w])
+    expect(bad.start!.rootPos[0]).toBeCloseTo(-3, 6)
+    expect(s().setWalk(w, s().walkDraft!.patch, [], s().walkDraft!.place)).toBe(false) // 적용: not applied, the draft stays
+    expect(s().walkDraft).not.toBeNull()
+    // the target moved next to the new start: together they pass, though the old target with the new start did not
+    s().patchWalkDraft(w, { to: [-2, 0] })
+    const d = s().walkDraft!
+    expect(d).toEqual({ itemId: w, patch: { to: [-2, 0] }, place: { x: -3 } })
+    expect(s().previewWalk(w, d.patch, d.place)!.blocked).toEqual([])
+    expect(s().setWalk(w, d.patch, [], d.place)).toBe(true)
+    expect([s().project.actors[0].placement.x, it().walk!.to]).toEqual([-3, [-2, 0]])
+    s().undo() // one undo: both back
+    expect([s().project.actors[0].placement.x, it().walk!.to]).toEqual([0, [1, 0]])
+    // back to the piece's own values = no draft; another piece's draft replaces it; clear
+    s().clearWalkDraft()
+    s().patchWalkDraft(w, { to: [2, 0], frames: 200 }); s().patchWalkDraft(w, { to: [1, 0], frames: 120 })
+    expect(s().walkDraft).toBeNull()
+    // 최소 시간 하고 적용: the fix of the draft's plan goes in with it
+    s().patchWalkDraft(w, { to: [3, 0] })
+    const pv = s().previewWalk(w, s().walkDraft!.patch, s().walkDraft!.place)!
+    expect(pv.fix).toHaveLength(1)
+    expect(s().setWalk(w, s().walkDraft!.patch, pv.fix!, s().walkDraft!.place)).toBe(true)
+    expect(it().trimOut - it().trimIn).toBe(pv.fix![0].frames)
   })
   test('saved and opened again; a bad walk entry is refused', () => {
     const { s, actor } = stage()

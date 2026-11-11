@@ -3,7 +3,7 @@ import { evalCurve, makeKey } from '../model/curve'
 import { simplifyCurve, simplifyTolerance } from '../model/simplify'
 import { addActor as addActorTo, emptyProject, newProject, nextClipName, stageOf } from '../model/defaults'
 import { evaluateClip, type RobotDefs } from '../model/evaluate'
-import { inCrossfade, itemLen, resolve, sortedItems, validTrack } from '../model/sequence'
+import { applyXf, inCrossfade, itemLen, resolve, sortedItems, validTrack } from '../model/sequence'
 import type { Actor, Bin, Item, Clip, Curve, Interp, Project, ReviewVerdict, StageSize, Tan, Track } from '../model/types'
 import { reviewSame } from '../model/review'
 import { validVideoTrack, videoTrack } from '../model/video'
@@ -22,6 +22,7 @@ export const BLOCK_PREVIEW_ID = 'library-preview'
 export interface BlockPreview { blockId: string; value: string; clip: Clip }
 import type { PhysicsSettings } from '../physics/settings'
 import { minWalkFrames, type WalkReport, type WalkSpec } from '../model/walk'
+import type { Pose } from '../model/pose'
 
 // Bumped whenever a different project is loaded; async work started against one project checks it before landing.
 let generation = 0
@@ -58,6 +59,10 @@ export interface EditorState {
   /** 걷기 도착점 찍기 (§21, editor state, not saved / not undoable): the next left click on the main stage's floor goes to `apply`
    * (stage x, y); `key` = which 설정 칸 asked ('add' = 라이브러리, else the walk piece's id), `from` = where the walk starts (stage). */
   walkPick: WalkPick | null; setWalkPick(p: WalkPick | null): void
+  /** 붙일 자리 (§28): the piece the 라이브러리 걷기 panel inserts after (null = the track end) — the timeline outlines it. `open`
+   * (the piece's right-click 이 조각 뒤에 걷기 넣기…) also asks the panel to show itself (walkAfterOpen counts the asks). */
+  walkAfter: { actorId: string; itemId: string } | null; walkAfterOpen: number
+  setWalkAfter(v: { actorId: string; itemId: string } | null, open?: boolean): void
   playheadPinned: boolean; setPlayheadPinned(on: boolean): void // 재생헤드 고정(사용자): 마우스 따라가기만 끔, 화면 전용·저장 안 함
   /** 재생 fps(사용자): 초당 재생 프레임 수 1~240(정수, 기본 60 = 원래 속도). 데이터·CSV는 60fps 그대로, 재생 시계(playClock)만 바뀜. 저장 안 함. */
   playFps: number; setPlayFps(fps: number): void
@@ -178,8 +183,14 @@ export interface EditorState {
   /** 걷기 블록 추가 (§20): a 걷기 piece of `frames` frames at the end of `actorId`'s track (null = a new GO2 robot). Returns the piece id. */
   /** `bridge` = a 기본서기 경유 전이 조각 (model/bridge.ts standBridgeAfter) put at the track end first, in the same undo.
    * Refused (null) when the walk would be 한계 초과 (§22, 안정성 우선: a walk that breaks the pose is never made by an edit). */
-  /** `place` (§27) = where the robot stands when the walk is its track's first piece (a new robot, or one with no piece yet): its 배치. */
-  addWalk(actorId: string | null, spec: WalkSpec, frames: number, bridge?: Clip, place?: Actor['placement']): string | null
+  /** `place` (§27) = where the robot stands when the walk is its track's first piece (a new robot, or one with no piece yet): its 배치.
+   * `after` (§28) = put it right after that piece instead of at the track end: the pieces after it start later by its length (and the
+   * bridge's), the walk starts where that piece ends; refused when a piece overlaps that end (크로스페이드). `fix` = 최소 시간 of the
+   * later walks it would make 한계 초과 (previewAddWalk), in the same undo. */
+  addWalk(actorId: string | null, spec: WalkSpec, frames: number, bridge?: Clip, opts?: AddWalkOpts): string | null
+  /** What addWalk would make (the same edit on a copy, §25 미리보기 = 실제): the new walk's start (stage), report and 최소 시간, the later
+   * walks it would make 한계 초과 with the 최소 시간 that pass (null = time cannot fix them), and how much later the pieces after it start. */
+  previewAddWalk(actorId: string | null, spec: WalkSpec, frames: number, bridge?: Clip, opts?: Omit<AddWalkOpts, 'fix'>): AddWalkPlan | null
   /** 걷기 설정 (§20): spec fields; `frames` = its new length — the pieces after it on the track move by the difference (asked for by
    * the user: time is changed on purpose). One undo; false = locked / not a 걷기 piece / the result would be 한계 초과 (§22). */
   /** 부위 얹기 (§26): add `ov` to the piece (or replace the one with its id). `srcClip` = a block not in 목록 yet (라이브러리): put in
@@ -191,12 +202,19 @@ export interface EditorState {
    * largest 세기, the shortest 섞임). null = not a valid overlay for this piece. */
   previewOverlay(itemId: string, ov: Overlay, srcClip?: Clip): OverlayPlan | null
   /** `fix` = 추천 수정 from previewWalk (other 걷기 lengths set in the same undo, §23). */
-  setWalk(itemId: string, patch: Partial<WalkSpec> & { frames?: number }, fix?: WalkFix[]): boolean
+  setWalk(itemId: string, patch: Partial<WalkSpec> & { frames?: number }, fix?: WalkFix[], place?: Partial<Actor['placement']>): boolean
+  /** (§29) `place` = the robot's 배치 changed in the same edit (출발 위치 of a first walk): one check, one undo. */
   /** What `setWalk(itemId, patch)` would make, without changing anything (§23): this walk's report; `blocked` = the walks it leaves
    * 한계 초과 (this one, and later ones of the track that were not), with their reports; `fix` = the lengths (0.1 s steps, this walk
    * and later walks of the track in order) that make it go through — null when no length does (출발 불가 …); `minFrames` = this
    * walk's length in it (or its own when the walk is fine). null = not a 걷기 piece / not a valid change. */
-  previewWalk(itemId: string, patch: Partial<WalkSpec> & { frames?: number }): WalkPlan | null
+  previewWalk(itemId: string, patch: Partial<WalkSpec> & { frames?: number }, place?: Partial<Actor['placement']>): WalkPlan | null
+  /** 고치는 중 (§29): the 걷기 inspector's values not applied yet — the piece's spec / length (`patch`) and the robot's 배치 (`place`,
+   * 출발 위치) as changed in the boxes, by 찍기 or by the rings on the stage. Nothing in the project changes until 적용 (setWalk with
+   * both: checked once there); the stage and the bar show it. Only what differs from the piece is kept; nothing left = null. */
+  walkDraft: WalkDraft | null
+  patchWalkDraft(itemId: string, patch?: Partial<WalkSpec> & { frames?: number }, place?: Partial<Actor['placement']>): void
+  clearWalkDraft(itemId?: string): void
   beginGesture(): void; endGesture(): void
   inGesture: boolean // a slider/gizmo drag is under way (views may skip heavy recomputation until it ends)
   // Drop the current gesture's changes (back to the pre-gesture project, nothing on redo); no-op outside a gesture.
@@ -240,8 +258,11 @@ function addUniqueClip(p: Project, clip: Clip) {
 export const WALK_CLIP = '걷기'
 export interface WalkPick { key: string; from: [number, number]; label?: string /* the tag's distance text (default 출발점에서) */; apply(to: [number, number]): void }
 export interface OverlayPlan { report: OverlayReport; walks: string[] /* 걷기 pieces it would make 한계 초과 */; fix: { weight?: number; fade?: number } }
+export interface AddWalkOpts { place?: Actor['placement']; after?: string; fix?: WalkFix[] }
+export interface AddWalkPlan { start: Pose; report: WalkReport; minFrames: number | null; blocked: WalkPlan['blocked']; fix: WalkFix[] | null; shift: number }
 export interface WalkFix { itemId: string; frames: number; d: number /* frames added (− = shorter) */ }
-export interface WalkPlan { report: WalkReport; minFrames: number | null; blocked: { itemId: string; report: WalkReport }[]; fix: WalkFix[] | null }
+export interface WalkPlan { report: WalkReport; minFrames: number | null; blocked: { itemId: string; report: WalkReport }[]; fix: WalkFix[] | null; start?: Pose /* where it would start (stage) */ }
+export interface WalkDraft { itemId: string; patch: Partial<WalkSpec> & { frames?: number }; place: Partial<Actor['placement']> }
 export const trackLocked = (p: Project, actorId: string) => p.sequence.tracks.some(t => t.kind === 'motion' && t.actorId === actorId && t.locked)
 // (also takes an item id: that piece's 수정 층 is locked with its track)
 export const clipLocked = (p: Project, clipId: string) => p.sequence.tracks.some(t => t.locked && t.items.some(i => i.refId === clipId || i.id === clipId))
@@ -470,13 +491,61 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       }
       return validTrack(f.t.items)
     }
-    // 부위 얹기 (§26): put `ov` on the draft's piece (validated; a 라이브러리 block goes into 목록 first)
+    // 걷기 조각 into the draft (§20 · §27 · §28): at the track end, or right after `opts.after` (the later pieces start later); the new
+    // piece's id, or null when it cannot go there. 한계 초과 is the caller's check (walkBad / previewAddWalk).
+    const insertWalk = (p: Project, actorId: string | null, spec: WalkSpec, frames: number, bridge: Clip | undefined, opts: AddWalkOpts): string | null => {
+      const n = Math.max(2, Math.round(frames)), place = opts.place
+      if (actorId === null) Object.assign(p, addActorTo(p, 'go2', false))
+      const id = actorId ?? p.actors.at(-1)!.id
+      const actor = p.actors.find(a => a.id === id), track = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === id)
+      if (!actor || !track || track.locked || actor.robot !== 'go2') return null
+      if (place) { // 출발 위치 (§27): only for the track's first piece — after a piece the walk starts where that one ends
+        if (track.items.length || ![place.x, place.y, place.yaw].every(Number.isFinite)) return null
+        actor.placement = { x: place.x, y: place.y, yaw: place.yaw }
+      }
+      // 붙일 자리 (§28): the track end, or right after a piece — nothing may overlap its end, the pieces from there start later
+      let at = Math.max(0, ...track.items.map(i => i.start + itemLen(i)))
+      if (opts.after) {
+        const a = track.items.find(i => i.id === opts.after)
+        if (!a) return null
+        at = a.start + itemLen(a)
+        if (track.items.some(o => o !== a && o.start < at && o.start + itemLen(o) > at)) return null // a 크로스페이드 across its end
+        if (track.items.some(o => o !== a && o.start > a.start && o.start < at)) return null // (a piece inside it)
+        const shift = n + (bridge?.length ?? 0)
+        for (const o of track.items) if (o.start >= at) o.start += shift
+      }
+      if (bridge) { // 기본서기 경유 넣고 추가: the 전이 조각 first, where the walk goes
+        if (bridge.robot !== 'go2' || bridge.length < 2 || !track.items.length) return null
+        addUniqueClip(p, bridge)
+        track.items.push({ id: crypto.randomUUID(), refId: bridge.id, start: at, trimIn: 0, trimOut: bridge.length })
+        at += bridge.length
+      }
+      let base = Object.values(p.clips).find(c => c.robot === 'go2' && c.hold && c.name === WALK_CLIP)
+      if (!base) { // the 걷기 clip: length only (차렷 held, like Empty) — every 걷기 piece shares it, the walk itself is made per piece
+        const g = defs.go2
+        base = { id: crypto.randomUUID(), name: WALK_CLIP, robot: 'go2', length: n, hold: true,
+          channels: Object.fromEntries([['root.z', { keys: [makeKey(0, g.rest.z, 'linear')] }], ...g.joints.map((j, i) => [j.name, { keys: [makeKey(0, g.rest.q[i], 'linear')] }])]) }
+        addUniqueClip(p, base)
+      }
+      if (base.length < n) p.clips[base.id] = { ...p.clips[base.id], length: n }
+      const item: Item = { id: crypto.randomUUID(), refId: base.id, start: at, trimIn: 0, trimOut: n,
+        walk: { to: [spec.to[0], spec.to[1]], face: spec.face, ...(spec.yaw !== undefined ? { yaw: spec.yaw } : {}), ...(spec.slow && spec.slow !== 'walk' ? { slow: spec.slow } : {}) } }
+      track.items.push(item)
+      return validTrack(track.items) ? item.id : null
+    }
+    // (§29) the robot of a 걷기 piece moved in the same edit as the piece (출발 위치): nothing given = nothing to do
+    const applyWalkPlace = (p: Project, itemId: string, pl?: Partial<Actor['placement']>): boolean => {
+      if (!pl || !Object.keys(pl).length) return true
+      const f = findItem(p, itemId), a = f && p.actors.find(a => a.id === f.t.actorId)
+      return !!f && !f.t.locked && !!a && applyPlacement(a, pl)
+    }
     const applyPlacement = (a: Actor, pl: Partial<Actor['placement']>): boolean => {
       const v = { ...a.placement, ...pl }
       if (![v.x, v.y, v.yaw].every(Number.isFinite)) return false
       a.placement = v
       return true
     }
+    // 부위 얹기 (§26): put `ov` on the draft's piece (validated; a 라이브러리 block goes into 목록 first)
     const applyOverlay = (p: Project, itemId: string, ov: Overlay, srcClip?: Clip): boolean => {
       const f = findItem(p, itemId)
       if (!f || f.t.locked || f.t.kind !== 'motion' || f.it.walk) return false
@@ -737,6 +806,8 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       setPlayheadPinned: on => set({ playheadPinned: on }),
       walkMode: false,
       walkPick: null, setWalkPick: walkPick => set({ walkPick }),
+      walkAfter: null, walkAfterOpen: 0,
+      setWalkAfter: (walkAfter, open) => set(s => ({ walkAfter, walkAfterOpen: open ? s.walkAfterOpen + 1 : s.walkAfterOpen })),
       setWalkMode: on => {
         set({ walkMode: on })
         const s = get()
@@ -890,41 +961,59 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         f.t.items.push({ id: crypto.randomUUID(), refId: clip.id, start: at, trimIn: 0, trimOut: clip.length })
         return validTrack(f.t.items)
       }),
-      addWalk: (actorId, spec, frames, bridge, place) => {
+      addWalk: (actorId, spec, frames, bridge, opts = {}) => {
         let out: string | null = null
-        const n = Math.max(2, Math.round(frames))
+        const fix = opts.fix ?? []
         const ok = tryEdit(p => {
-          if (actorId === null) Object.assign(p, addActorTo(p, 'go2', false))
-          const id = actorId ?? p.actors.at(-1)!.id
-          const actor = p.actors.find(a => a.id === id), track = p.sequence.tracks.find(t => t.kind === 'motion' && t.actorId === id)
-          if (!actor || !track || track.locked || actor.robot !== 'go2') return false
-          if (place) { // 출발 위치 (§27): only for the track's first piece — after a piece the walk starts where that one ends
-            if (track.items.length || ![place.x, place.y, place.yaw].every(Number.isFinite)) return false
-            actor.placement = { x: place.x, y: place.y, yaw: place.yaw }
-          }
-          if (bridge) { // 기본서기 경유 넣고 추가: the 전이 조각 first, at the track end
-            if (bridge.robot !== 'go2' || bridge.length < 2 || !track.items.length) return false
-            addUniqueClip(p, bridge)
-            track.items.push({ id: crypto.randomUUID(), refId: bridge.id, start: Math.max(0, ...track.items.map(i => i.start + itemLen(i))), trimIn: 0, trimOut: bridge.length })
-          }
-          let base = Object.values(p.clips).find(c => c.robot === 'go2' && c.hold && c.name === WALK_CLIP)
-          if (!base) { // the 걷기 clip: length only (차렷 held, like Empty) — every 걷기 piece shares it, the walk itself is made per piece
-            const g = defs.go2
-            base = { id: crypto.randomUUID(), name: WALK_CLIP, robot: 'go2', length: n, hold: true,
-              channels: Object.fromEntries([['root.z', { keys: [makeKey(0, g.rest.z, 'linear')] }], ...g.joints.map((j, i) => [j.name, { keys: [makeKey(0, g.rest.q[i], 'linear')] }])]) }
-            addUniqueClip(p, base)
-          }
-          if (base.length < n) p.clips[base.id] = { ...p.clips[base.id], length: n }
-          const item: Item = { id: crypto.randomUUID(), refId: base.id, start: Math.max(0, ...track.items.map(i => i.start + itemLen(i))), trimIn: 0, trimOut: n,
-            walk: { to: [spec.to[0], spec.to[1]], face: spec.face, ...(spec.yaw !== undefined ? { yaw: spec.yaw } : {}), ...(spec.slow && spec.slow !== 'walk' ? { slow: spec.slow } : {}) } }
-          track.items.push(item)
-          out = item.id
-          return validTrack(track.items) && !walkBad(p, item.id)
+          const id = insertWalk(p, actorId, spec, frames, bridge, opts)
+          if (!id || !fix.every(x => applyWalk(p, x.itemId, { frames: x.frames }))) return false
+          out = id
+          return !walkBad(p, id, ...fix.map(x => x.itemId))
         })
         return ok ? out : null
       },
-      setWalk: (itemId, patch, fix = []) => tryEdit(p => applyWalk(p, itemId, patch) && fix.every(x => applyWalk(p, x.itemId, { frames: x.frames }))
-        && !walkBad(p, itemId, ...fix.map(x => x.itemId))),
+      previewAddWalk: (actorId, spec, frames, bridge, opts = {}) => {
+        let p = draft([])
+        const id = insertWalk(p, actorId, spec, frames, bridge, opts)
+        const f = id && findItem(p, id), w = f && walkOf(p, defs, f.it)
+        const actor = f && p.actors.find(a => a.id === f.t.actorId)
+        if (!f || !w || !actor) return null
+        const n = itemLen(f.it), own = w.report.tone === 'bad' ? minWalkFrames(defs.go2, w.start, w.end, n, f.it.walk!.face, f.it.walk!.slow ?? 'walk') : null
+        // the later walks of the track it would make 한계 초과 (not the ones already held), each with its shortest passing length (§23)
+        const before = get().project, blocked: WalkPlan['blocked'] = [], fix: WalkFix[] = []
+        let ok = true
+        for (const o of sortedItems(f.t).filter(i => i.walk && i.id !== id && i.start > f.it.start).map(i => i.id)) {
+          const b = findItem(before, o)
+          if (b && isBad(before, b.it)) continue
+          const g = findItem(p, o)!, wo = walkOf(p, defs, g.it)
+          if (!wo || wo.report.tone !== 'bad') continue
+          blocked.push({ itemId: o, report: wo.report })
+          const m = ok ? minWalkFrames(defs.go2, wo.start, wo.end, itemLen(g.it), g.it.walk!.face, g.it.walk!.slow ?? 'walk') : null
+          if (!m || !applyWalk(p, o, { frames: m })) { ok = false; continue }
+          fix.push({ itemId: o, frames: m, d: m - itemLen(g.it) }); p = { ...p }
+        }
+        const shift = opts.after && f.t.items.some(i => i.start > f.it.start) ? n + (bridge?.length ?? 0) : 0
+        return { start: applyXf(w.start, actor.placement), report: w.report, minFrames: own, blocked, fix: ok ? fix : null, shift }
+      },
+      setWalk: (itemId, patch, fix = [], place) => tryEdit(p => applyWalkPlace(p, itemId, place) && applyWalk(p, itemId, patch)
+        && fix.every(x => applyWalk(p, x.itemId, { frames: x.frames })) && !walkBad(p, itemId, ...fix.map(x => x.itemId))),
+      walkDraft: null,
+      patchWalkDraft: (itemId, patch = {}, place = {}) => {
+        const p = get().project, f = findItem(p, itemId), actor = f && p.actors.find(a => a.id === f.t.actorId)
+        if (!f?.it.walk || !actor) return
+        const d = get().walkDraft, old = d?.itemId === itemId ? d : null
+        const np: WalkDraft['patch'] = { ...old?.patch, ...patch }, pl: WalkDraft['place'] = { ...old?.place, ...place }
+        // only what differs from the piece / the robot stays
+        const w = f.it.walk, same = (a?: number, b?: number) => a === b || (a !== undefined && b !== undefined && Math.abs(a - b) < 1e-9)
+        if (np.to && same(np.to[0], w.to[0]) && same(np.to[1], w.to[1])) delete np.to
+        if (np.face === w.face) delete np.face
+        if ('yaw' in np && same(np.yaw, w.yaw)) delete np.yaw
+        if (np.slow !== undefined && np.slow === (w.slow ?? 'walk')) delete np.slow
+        if (np.frames !== undefined && np.frames === itemLen(f.it)) delete np.frames
+        for (const k of ['x', 'y', 'yaw'] as const) if (pl[k] !== undefined && (same(pl[k], actor.placement[k]) || !Number.isFinite(pl[k]))) delete pl[k]
+        set({ walkDraft: Object.keys(np).length || Object.keys(pl).length ? { itemId, patch: np, place: pl } : null })
+      },
+      clearWalkDraft: itemId => { const d = get().walkDraft; if (d && (!itemId || d.itemId === itemId)) set({ walkDraft: null }) },
       setOverlay: (itemId, ov, srcClip) => tryEdit(p => applyOverlay(p, itemId, ov, srcClip) && overlayOk(p, itemId, ov.id)),
       removeOverlay: (itemId, ovId) => tryEdit(p => {
         const f = findItem(p, itemId)
@@ -957,14 +1046,17 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
         }
         return { report: { ...r.report, held: undefined }, walks: r.walks, fix }
       },
-      previewWalk: (itemId, patch) => {
+      previewWalk: (itemId, patch, place) => {
         // the walk and the later walks of its track one by one: each 한계 초과 one (this, or a later one that was not before) gets the
         // shortest length that is not; the project object is renewed after each change (walkOf caches by project and item)
         let p = draft([])
-        if (!applyWalk(p, itemId, patch)) return null
+        if (!applyWalkPlace(p, itemId, place) || !applyWalk(p, itemId, patch)) return null
         const before = get().project, f0 = findItem(p, itemId), w0 = f0 && walkOf(p, defs, f0.it)
-        if (!f0 || !w0) return null
-        const order = sortedItems(f0.t), from = order.indexOf(f0.it), ids = order.slice(from).filter(i => i.walk).map(i => i.id)
+        const actor0 = f0 && p.actors.find(a => a.id === f0.t.actorId)
+        if (!f0 || !w0 || !actor0) return null
+        // (a 배치 change moves every walk of the track against its stage target: all of them are looked at, this one first)
+        const order = sortedItems(f0.t), from = order.indexOf(f0.it)
+        const ids = place && Object.keys(place).length ? [itemId, ...order.filter(i => i.walk && i.id !== itemId).map(i => i.id)] : order.slice(from).filter(i => i.walk).map(i => i.id)
         const blocked: WalkPlan['blocked'] = [], fix: WalkFix[] = []
         let ok = true
         for (const id of ids) {
@@ -979,7 +1071,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
           fix.push({ itemId: id, frames: m, d: m - n }); p = { ...p }
         }
         if (ok && fix.length && walkBad({ ...p }, itemId, ...fix.map(x => x.itemId))) ok = false
-        return { report: w0.report, minFrames: w0.report.tone === 'bad' ? fix.find(x => x.itemId === itemId)?.frames ?? null : itemLen(f0.it), blocked, fix: ok ? fix : null }
+        return { report: w0.report, minFrames: w0.report.tone === 'bad' ? fix.find(x => x.itemId === itemId)?.frames ?? null : itemLen(f0.it), blocked, fix: ok ? fix : null, start: applyXf(w0.start, actor0.placement) }
       },
       setItemStep: (itemId, on) => tryEdit(p => {
         const f = findItem(p, itemId)
@@ -1305,7 +1397,7 @@ export function createEditorStore(defs: RobotDefs, initial: Project = newProject
       loadProject: (project, fileName) => {
         generation++
         undoS = []; redoS = []; gesture = false; gestureMoved = false; suspended = false
-        set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] }, comparePanes: [], blockPreview: null, spanPreview: null, itemPreview: null, walkPick: null, clipEdit: null, clipEditDraft: null, clipEditReturn: null, range: null, layer: get().clipEditReturn?.layer ?? get().layer })
+        set({ project: freezeClips(project), fileName, dirty: false, frame: 0, playing: false, editing: null, selItem: null, sel: { actorId: null, channel: null, keys: [] }, comparePanes: [], blockPreview: null, spanPreview: null, itemPreview: null, walkPick: null, walkAfter: null, walkDraft: null, clipEdit: null, clipEditDraft: null, clipEditReturn: null, range: null, layer: get().clipEditReturn?.layer ?? get().layer })
       },
       markSaved: fileName => set({ fileName, dirty: false }),
       newProjectFile: () => get().loadProject(emptyProject(), null),

@@ -37,6 +37,23 @@ export default function LibraryList({ query }: { query: string }) {
   const [menu, setMenu] = useState<{ b: Block; x: number; y: number; row: HTMLElement } | null>(null)
   const [uMenu, setUMenu] = useState<{ u: UserBlock; x: number; y: number; row: HTMLElement } | null>(null)
   const users = useUserBlocks(s => s.list)
+  // §28: the timeline's 이 조각 뒤에 걷기 넣기… — the 걷기 row picked for that robot (its 붙일 자리 is set in the store); the outline goes
+  // when the 걷기 row is not the picked one
+  const askOpen = useEditor(s => s.walkAfterOpen)
+  useEffect(() => {
+    const wa = getEditor().getState().walkAfter
+    if (!askOpen || !wa) return
+    setSel(WALK_ROW); setFocus(WALK_ROW); setMsg(''); setChoice(wa.actorId)
+    requestAnimationFrame(() => treeRef.current?.querySelector<HTMLElement>(`[data-id="${WALK_ROW}"]`)?.scrollIntoView({ block: 'nearest' }))
+  }, [askOpen])
+  // the outline goes when the 걷기 row is left or another robot is picked there (changes only: an ask above sets both at once)
+  const was = useRef({ sel, walkTo })
+  useEffect(() => {
+    const st = getEditor().getState(), wa = st.walkAfter, w0 = was.current
+    was.current = { sel, walkTo }
+    if (!wa) return
+    if ((w0.sel === WALK_ROW && sel !== WALK_ROW) || (sel === WALK_ROW && w0.walkTo !== walkTo && wa.actorId !== walkTo)) st.setWalkAfter(null)
+  }, [sel, walkTo])
   useEffect(() => { void loadUserBlocks() }, [])
   const hits = filterBlocks(query), filtered = !!query.trim()
   const entries: Entry[] = hits.filter(b => !b.folder).map(b => ({ kind: 'block', key: b.id, b, inDir: false }))

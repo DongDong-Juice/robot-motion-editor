@@ -26,6 +26,8 @@ export default function ProjectPanel() {
   const [query, setQuery] = useState('')
   const res = useImportUi(s => s.res)
   useEffect(() => { if (res) setTab('clip') }, [res]) // show what was just imported
+  const walkAsk = useEditor(s => s.walkAfterOpen)
+  useEffect(() => { if (walkAsk) setTab('block') }, [walkAsk]) // §28 이 조각 뒤에 걷기 넣기…: the 라이브러리 걷기 panel
   useEffect(() => { if (res) { const t = setTimeout(() => setImportResult(null), 10000); return () => clearTimeout(t) } }, [res])
   const count = tab === 'block' ? filterBlocks(query).length : filterTree(tab === 'clip' ? Object.values(project.clips) : project.media, [], query, new Set()).count
 

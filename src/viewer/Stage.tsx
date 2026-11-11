@@ -119,7 +119,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
     if (mainView || editPane) scene.add(tc.getHelper())
     // dev/e2e hook
     // dev/e2e hook: __stage = main pane, __stages = every pane by key ('main' or the compare clip id)
-    const hook = { stage: () => (stageG?.visible ? stageG : null), walkGuide: () => guide, walkPickShown: () => pickG.visible,
+    const hook = { stage: () => (stageG?.visible ? stageG : null), walkGuide: () => guide, walkDraftGuide: () => draftG, walkPickShown: () => pickG.visible,
       screenOf: (x: number, y: number) => { const v = new THREE.Vector3(x, y, 0).project(camera), r = renderer.domElement.getBoundingClientRect(); return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height] }, camera, tc, entries: () => entries, renderer, camTarget: () => orbit.target.toArray(), overlay: () => overlays.values().next().value?.rig ?? null, overlays: () => overlays }
     const syncStage = () => {
       const { width, depth } = stageOf(store.getState().project), key = `${width}x${depth}`
@@ -246,7 +246,7 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       o.traverse(c => {
         const m = c as THREE.Mesh
         m.geometry?.dispose()
-        for (const x of [m.material].flat()) x?.dispose()
+        for (const x of [m.material].flat()) { (x as THREE.SpriteMaterial | undefined)?.map?.dispose(); x?.dispose() }
       })
     const disposeEntry = (e: Entry) => {
       scene.remove(e.rig.root, e.trail, e.dot)
@@ -351,13 +351,41 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
     const guide = new THREE.Group(), GUIDE_TONE = { ok: '#3FB950', warn: '#F0883E', bad: '#E5484D' } as const
     guide.renderOrder = 997
     if (mainView) scene.add(guide)
-    let guideKey: [Project | null, string | null] = [null, null]
+    // 고치는 중 (§29): the inspector's draft of that walk (not applied) — its start / target rings and a straight dashed line in the
+    // accent color, over the walk as it is; the rings are dragged from where the draft has them
+    const draftG = new THREE.Group()
+    draftG.renderOrder = 998; draftG.visible = false
+    if (mainView) scene.add(draftG)
+    // a name over a spot on the floor: a sprite (follows the camera by itself), the same size on screen at any distance
+    const nameTag = (text: string, at: [number, number], planned: boolean) => {
+      const c = document.createElement('canvas'), g = c.getContext('2d')!, font = '600 22px system-ui, "Noto Sans KR", sans-serif', padX = 14, h = 36
+      g.font = font
+      const w = Math.ceil(g.measureText(text).width) + padX * 2
+      c.width = w; c.height = h
+      const col = css('--accent') || '#F0A43A', dim = css('--dim') || '#8b949e'
+      g.font = font; g.textBaseline = 'middle'; g.textAlign = 'center'
+      g.beginPath(); g.roundRect(1, 1, w - 2, h - 2, h / 2)
+      if (planned) { g.fillStyle = col; g.fill(); g.fillStyle = '#16181d' }
+      else { g.fillStyle = 'rgba(22,24,29,.75)'; g.fill(); g.setLineDash([5, 4]); g.strokeStyle = dim; g.lineWidth = 1.5; g.stroke(); g.fillStyle = dim }
+      g.fillText(text, w / 2, h / 2 + 1)
+      const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, sizeAttenuation: false }))
+      const k = 18 / Math.max(el.clientHeight, 1) * 2 * Math.tan(Math.PI * camera.fov / 360) // 18 px tall on screen
+      sp.scale.set(k * w / h, k, 1); sp.center.set(0.5, -0.9); sp.position.set(at[0], at[1], 0.01)
+      sp.renderOrder = 999; sp.userData.text = text
+      return sp
+    }
+    let guideKey: [Project | null, string | null, unknown] = [null, null, null]
     let guideAt: { itemId: string; actorId: string; to: [number, number]; from: [number, number]; first: boolean } | null = null // the ring 끌기 (§21, §27) reads it
     const syncGuide = () => {
-      const s = store.getState(), id = !s.editing && !s.clipEdit ? s.selItem : null
-      if (guideKey[0] === s.project && guideKey[1] === id) return
-      guideKey = [s.project, id]
+      // the walk being changed in the inspector (its draft, §31: shown whether or not the piece is the selected one — the inspector
+      // also shows the walk at the playhead), else the selected piece
+      const s = store.getState(), id = !s.editing && !s.clipEdit ? s.walkDraft?.itemId ?? s.selItem : null
+      if (guideKey[0] === s.project && guideKey[1] === id && guideKey[2] === s.walkDraft) return
+      guideKey = [s.project, id, s.walkDraft]
       for (const c of [...guide.children]) { guide.remove(c); disposeObj(c) }
+      for (const c of [...draftG.children]) { draftG.remove(c); disposeObj(c) }
+      draftG.visible = false
       const track = id ? s.project.sequence.tracks.find(t => t.kind === 'motion' && t.items.some(i => i.id === id)) : undefined
       const it = track?.items.find(i => i.id === id), w = it && walkOf(s.project, s.defs, it)
       guide.visible = !!w && !track!.hidden
@@ -383,7 +411,25 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
         st.position.set(pts[0], pts[1], 0.005); st.renderOrder = 997
         guide.add(st)
       }
-      if (guide.visible) guideAt = { itemId: it.id, actorId: track.actorId, to: [it.walk!.to[0], it.walk!.to[1]], from: [pts[0], pts[1]], first }
+      const d = s.walkDraft?.itemId === it.id ? s.walkDraft : null
+      const to: [number, number] = d?.patch.to ? [d.patch.to[0], d.patch.to[1]] : [it.walk!.to[0], it.walk!.to[1]]
+      const from: [number, number] = first && d && actor ? [d.place.x ?? actor.placement.x, d.place.y ?? actor.placement.y] : [pts[0], pts[1]]
+      if (d && guide.visible) {
+        const col = css('--accent') || '#F0A43A', mat = () => new THREE.MeshBasicMaterial({ color: col, side: THREE.DoubleSide, depthTest: false, transparent: true })
+        const dl = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(from[0], from[1], 0.007), new THREE.Vector3(to[0], to[1], 0.007)]),
+          new THREE.LineDashedMaterial({ color: col, dashSize: 0.06, gapSize: 0.04, depthTest: false, transparent: true }))
+        dl.computeLineDistances()
+        const tr = new THREE.Mesh(new THREE.RingGeometry(0.13, 0.16, 48), mat()); tr.position.set(to[0], to[1], 0.008)
+        const fr = new THREE.Mesh(new THREE.RingGeometry(0.09, 0.115, 40), mat()); fr.position.set(from[0], from[1], 0.008)
+        for (const o of [dl, tr, fr]) o.renderOrder = 998
+        draftG.add(dl, tr, fr); draftG.visible = true
+        // §30 바꿀 예정: the planned spots named, where the walk is now named faintly; the walk as it is drawn faint under them
+        const movedTo = !!d.patch.to, movedFrom = first && (d.place.x !== undefined || d.place.y !== undefined)
+        if (movedFrom) draftG.add(nameTag('출발 (예정)', from, true), nameTag('지금 출발', [pts[0], pts[1]], false))
+        if (movedTo) draftG.add(nameTag('도착 (예정)', to, true), nameTag('지금 도착', [it.walk!.to[0], it.walk!.to[1]], false))
+        guide.traverse(o => { const m = (o as THREE.Mesh).material as THREE.Material | undefined; if (m) { m.transparent = true; m.opacity = 0.3 } })
+      }
+      if (guide.visible) guideAt = { itemId: it.id, actorId: track.actorId, to, from, first }
     }
 
     // crossfade (displayed pose is a blend, not invertible) or stitched first frame (root x/y/yaw pinned): no gizmo
@@ -614,26 +660,21 @@ export default function Stage({ compareClipId: cid, range, itemId, span, childre
       const dTo = Math.hypot(hitP.x - g.to[0], hitP.y - g.to[1]), dFrom = Math.hypot(hitP.x - g.from[0], hitP.y - g.from[1])
       const startRing = g.first && dFrom <= 0.2 && dFrom < dTo // 출발 고리 (§27): the robot's 배치
       if (!startRing && dTo > 0.25) return false
-      ringDragging = true; consumed = true; orbit.enabled = false; dom.style.cursor = 'grabbing'; guide.visible = false
+      ringDragging = true; consumed = true; orbit.enabled = false; dom.style.cursor = 'grabbing'; guide.visible = false; draftG.visible = false
       let at: [number, number] | null = null
-      const stop = () => { ringDragging = false; hidePick(); orbit.enabled = true; dom.style.cursor = ''; guideKey = [null, null]; syncGuide() }
+      const stop = () => { ringDragging = false; hidePick(); orbit.enabled = true; dom.style.cursor = ''; guideKey = [null, null, null]; syncGuide() }
+      // §29: a ring let go changes the inspector's draft only (적용 there checks and applies); the robot is picked so the inspector shows it
+      const toDraft = (patch: { to: [number, number] } | undefined, place?: { x: number; y: number }) => {
+        const s2 = store.getState()
+        s2.patchWalkDraft(g.itemId, patch, place)
+        if (s2.sel.actorId !== g.actorId) s2.select(g.actorId)
+        setWalkMsg('고치는 중 — 인스펙터에서 적용을 눌러야 바뀝니다')
+      }
       if (startRing) {
-        trackDrag(m => { at = showPick(m, g.to, '도착점까지') ?? at }, () => {
-          stop()
-          const s2 = store.getState()
-          if (!at || (at[0] === g.from[0] && at[1] === g.from[1]) || s2.setPlacement(g.actorId, { x: at[0], y: at[1] })) return
-          const pv = s2.previewPlacement(g.actorId, { x: at[0], y: at[1] })
-          setWalkMsg(pv?.blocked.length ? `걷기가 한계 초과가 되어 출발 위치를 옮기지 않았습니다${pv.fix ? ' (시간을 늘려야 함' : ' (시간으로는 못 고침'} — 인스펙터에서 찍으면 추천 수정이 나옴)` : '출발 위치를 바꿀 수 없습니다')
-        }, stop)
+        trackDrag(m => { at = showPick(m, g.to, '도착점까지') ?? at }, () => { stop(); if (at && (at[0] !== g.from[0] || at[1] !== g.from[1])) toDraft(undefined, { x: at[0], y: at[1] }) }, stop)
         return true
       }
-      trackDrag(m => { at = showPick(m, g.from) ?? at }, () => {
-        stop()
-        if (!at || (at[0] === g.to[0] && at[1] === g.to[1]) || store.getState().setWalk(g.itemId, { to: at })) return
-        const pv = store.getState().previewWalk(g.itemId, { to: at }) // §22: refused — why
-        const own = pv?.fix?.length === 1 && pv.fix[0].itemId === g.itemId ? pv.fix[0].frames : null
-        setWalkMsg(pv?.blocked.length ? `한계 초과가 되어 옮기지 않았습니다${own ? ` (그 자리는 최소 ${(own / 60).toFixed(1)}초 필요` : pv.fix ? ' (뒤 걷기 시간도 늘려야 함' : ' (시간으로는 못 고침'} — 인스펙터에서 찍으면 추천 수정이 나옴)` : '도착 위치를 바꿀 수 없습니다')
-      }, stop)
+      trackDrag(m => { at = showPick(m, g.from) ?? at }, () => { stop(); if (at && (at[0] !== g.to[0] || at[1] !== g.to[1])) toDraft({ to: at }) }, stop)
       return true
     }
     const onPickKey = (e: KeyboardEvent) => { // Esc: 찍기 off (before the app's own Esc), or the ring drag cancelled

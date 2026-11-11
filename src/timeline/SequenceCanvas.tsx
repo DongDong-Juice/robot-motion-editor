@@ -297,6 +297,13 @@ export default function SequenceCanvas() {
           if (video && !mediaUrl(it.refId)) hatch(x, x + w, y, 0.25) // offline
           ctx.strokeStyle = it.id === s.selItem ? C.accent : video ? C.line : color; ctx.lineWidth = 1
           ctx.strokeRect(x + 0.5, by + 0.5, w - 1, bh - 1)
+          if (!video && s.walkAfter?.itemId === it.id) { // 붙일 자리 (§28): the 라이브러리 걷기 goes right after this piece — a dashed accent frame and its end marked
+            ctx.save(); ctx.strokeStyle = C.accent; ctx.lineWidth = 2; ctx.setLineDash([5, 3])
+            ctx.strokeRect(x + 1, by + 1, w - 2, bh - 2); ctx.setLineDash([])
+            ctx.fillStyle = C.accent; ctx.fillRect(Math.round(x + w) - 2, by - 2, 4, bh + 4)
+            ctx.beginPath(); ctx.moveTo(x + w + 2, by + bh / 2 - 5); ctx.lineTo(x + w + 9, by + bh / 2); ctx.lineTo(x + w + 2, by + bh / 2 + 5); ctx.fill()
+            ctx.restore()
+          }
           if (it.id === s.itemPreview) { // the piece open in the clip preview: a light dashed frame inside the bar
             ctx.save(); ctx.strokeStyle = C.text; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3])
             ctx.strokeRect(x + 2.5, by + 2.5, w - 5, bh - 5); ctx.restore()
@@ -333,7 +340,7 @@ export default function SequenceCanvas() {
           }
           const nr = bw ? br - bw : right
           const wl = video ? null : walkRep(it)
-          if (nr > x && wl) ctx.fillText(walkLabel(wl), x + 6, ty, nr - x - 6) // past the state mark
+          if (nr > x && wl) ctx.fillText(walkLabel(wl) + (s.walkDraft?.itemId === it.id ? ' · 고치는 중 (적용 전)' : ''), x + 6, ty, nr - x - 6) // past the state mark
           else if (nr > x) ctx.fillText((video ? refName(it) : pieceName(t, it, ed.getState().project.clips[it.refId], projectTitle(ed.getState().fileName)) + (hasEdit(it) ? ' · 수정됨' : '')) + (video && !mediaUrl(it.refId) ? ' (오프라인)' : ''), x, ty, nr - x)
         }
         ctx.restore()
@@ -796,6 +803,7 @@ export default function SequenceCanvas() {
     const t = project.sequence.tracks.find(t => t.id === c.trackId)
     if (t) void runItems((c.itemId ? [c.itemId] : sortedItems(t).map(i => i.id)).map(itemId => ({ actorId: c.actorId, itemId })))
   }
+  const ctxLocked = !!ctx && project.sequence.tracks.find(t => t.id === ctx.trackId)?.locked
   const ctxItem = ctx?.itemId ? project.sequence.tracks.find(t => t.id === ctx.trackId)?.items.find(i => i.id === ctx.itemId) ?? null : null
   // 발 걸음 이음매 (§19): GO2 only; the piece's own switch where it starts right after another piece, the project default on any GO2 menu
   const go2Menu = !!ctx && robotOf(ctx.actorId) === 'go2'
@@ -883,6 +891,9 @@ export default function SequenceCanvas() {
           {ctx.itemId && <button role="menuitem" tabIndex={-1} onClick={() => { closeCtx(false); void runExport(ctx) }}>CSV 내보내기</button>}
           {ctxItem && hasEdit(ctxItem) && <button role="menuitem" tabIndex={-1} title="이 조각의 수정을 모두 지우고 원본 클립대로 되돌립니다"
             onClick={() => { closeCtx(false); if (!getEditor().getState().clearOffset(ctxItem.id)) seqFlash.fn?.(LOCKED, ctxItem.id) }}>수정 지우기</button>}
+          {go2Menu && ctxItem && ctx.actorId && <button role="menuitem" tabIndex={-1} aria-disabled={!!ctxLocked}
+            title={ctxLocked ? '잠긴 트랙입니다' : '라이브러리의 걷기 (가상) 설정 칸을 열고, 이 조각이 끝나는 자리에서 출발하도록 붙일 자리를 정합니다 (추가는 설정 칸에서)'}
+            onClick={() => { if (ctxLocked) return; closeCtx(false); getEditor().getState().setWalkAfter({ actorId: ctx.actorId!, itemId: ctxItem.id }, true) }}>이 조각 뒤에 걷기 넣기…</button>}
           {ctxItem && !ctxItem.walk && <button role="menuitem" tabIndex={-1} title="이 조각이 재생하는 동작(얹은 동작 · 수정 포함)을 새 블록으로 굳혀 라이브러리 › 사용자 블록에 둡니다 — 이 브라우저에만 저장"
             onClick={() => { closeCtx(false); saveAsUserBlock(ctxItem) }}>사용자 블록으로 저장…</button>}
           <button role="menuitem" tabIndex={-1} aria-disabled={noModel} title={noModel ? '미지원' : undefined}
